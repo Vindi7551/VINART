@@ -1,0 +1,63 @@
+import { useState } from 'react';
+import { Header } from './Header';
+import { PreviewPanel } from './PreviewPanel';
+import { ConversationPanel } from './ConversationPanel';
+import { MOCK_MESSAGES, MOCK_PREVIEW_SVG } from './mock';
+import type { Message } from './types';
+
+export function App() {
+  const [messages, setMessages] = useState<Message[]>(MOCK_MESSAGES);
+  const [selectedElements, setSelectedElements] = useState<Set<string>>(new Set());
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(MOCK_PREVIEW_SVG);
+
+  return (
+    <div className="app">
+      <Header onNewChat={() => {
+        setMessages([]);
+        setPreviewUrl(null);
+        setSelectedElements(new Set());
+      }} />
+      <div className="main">
+        <PreviewPanel
+          previewUrl={previewUrl}
+          selectedElements={selectedElements}
+          onToggleElement={(id) => {
+            setSelectedElements((prev) => {
+              const next = new Set(prev);
+              next.has(id) ? next.delete(id) : next.add(id);
+              return next;
+            });
+          }}
+          onRegenerateSelected={() => {
+            /* TODO: wire to agent pipeline */
+          }}
+        />
+        <ConversationPanel
+          messages={messages}
+          isGenerating={isGenerating}
+          onSend={(text, files) => {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: 'user',
+                text,
+                attachments: files?.map((f) => URL.createObjectURL(f)) ?? [],
+              },
+            ]);
+            // Simulate a response
+            const replyId = crypto.randomUUID();
+            setIsGenerating(false);
+            setTimeout(() => {
+              setMessages((prev) => [
+                ...prev,
+                { id: replyId, role: 'assistant', text: '已收到你的调整意见，正在重新生成...（此阶段为 mock 回复）' },
+              ]);
+            }, 400);
+          }}
+        />
+      </div>
+    </div>
+  );
+}
