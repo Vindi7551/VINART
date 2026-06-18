@@ -25,7 +25,9 @@ function buildRegistry(): ModelEntry[] {
   for (const provider of keys.providers ?? []) {
     const { apiKey, baseURL, type, protocol } = provider;
 
-    for (const { model, priority } of provider.models ?? []) {
+    for (const entry of provider.models ?? []) {
+      const { model, priority } = entry;
+      const contextWindow = 'contextWindow' in entry ? (entry as { contextWindow: number }).contextWindow : undefined;
       if (!model) continue;
 
       entries.push({
@@ -36,6 +38,7 @@ function buildRegistry(): ModelEntry[] {
         model,
         apiKey,
         priority,
+        contextWindow,
       });
     }
   }

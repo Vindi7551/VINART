@@ -27,4 +27,6 @@ export interface ModelEntry {
   apiKey: string;
   /** 优先级，数字越小越优先（1 = 主模型，2 = 降级，以此类推） */
   priority: number;
+  /** 上下文窗口大小（token 数），仅 chat 模型需要，如 131072（128K） */
+  contextWindow?: number;
 }

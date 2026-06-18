@@ -7,8 +7,8 @@
       "apiKey": "你的 DeepSeek API Key",
       "baseURL": "https://api.deepseek.com",
       "models": [
-        { "model": "deepseek-v4-flash", "priority": 1 },
-        { "model": "deepseek-v3",         "priority": 2 }
+        { "model": "deepseek-v4-flash", "priority": 1, "contextWindow": 1000000 },
+        { "model": "deepseek-v3",         "priority": 2, "contextWindow": 65536 }
       ]
     },
     {

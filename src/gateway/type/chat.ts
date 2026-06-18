@@ -10,8 +10,10 @@ export interface ChatMessage {
 
 /** 流式对话中每次 yield 的数据块 */
 export interface ChatChunk {
-  /** 增量文本内容 */
+  /** 增量文本内容（最终回答） */
   content: string;
+  /** 思维链 / 推理过程（DeepSeek V4 thinking mode） */
+  reasoningContent?: string;
   /** 流结束时的终止原因，仅在最后一个 chunk 出现 */
   finishReason?: 'stop' | 'length' | 'error';
   /** Token 用量统计，仅在最后一个 chunk 出现（需 stream_options.include_usage） */

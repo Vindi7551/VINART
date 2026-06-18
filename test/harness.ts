@@ -13,6 +13,7 @@
 
 import { getChatGateway, getImageGateway } from '../src/config';
 import { createChatSession } from '../src/session';
+import { createChatContext } from '../src/context';
 
 const chatGateway = getChatGateway();
 const imageGateway = getImageGateway();
@@ -31,6 +32,7 @@ const imageGateway = getImageGateway();
     const session = createChatSession({
       systemPrompt: '你是一个资深前端工程师。只输出代码，不要解释。',
       gateway: chatGateway,
+      context: createChatContext(),
     });
 
     console.log('── stream start ──');

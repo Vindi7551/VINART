@@ -6,6 +6,7 @@
  * - fallback/image.ts  图片降级链（createImageGateway）
  * - client/error.ts       GatewayError
  * - client/http-client.ts  纯 HTTP 传输（fetch + 超时）
+ * - client/sse-parser.ts   通用 SSE 流解析
  * - client/retry.ts        重试策略 + 指数退避
  * - provider/          协议适配器（ChatProvider / ImageProvider 接口 + 各实现）
  * - registry/            模型注册表（启动时注册所有模型）
@@ -36,6 +37,8 @@ export type { ModelEntry, ModelType, Protocol } from './registry/types';
 
 // ── HTTP 传输 ──
 export { GatewayError } from './client/error';
+export { parseSSE } from './client/sse-parser';
+export type { SSEEvent } from './client/sse-parser';
 
 // ── 治理 ──
 export { createCircuitBreaker, CircuitBreakerOpenError, CircuitBreakerTrippedError } from './resilience/circuit-breaker';
