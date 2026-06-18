@@ -1,0 +1,25 @@
+{
+  "providers": [
+    {
+      "name": "deepseek",
+      "type": "chat",
+      "protocol": "openai",
+      "apiKey": "你的 DeepSeek API Key",
+      "baseURL": "https://api.deepseek.com",
+      "models": [
+        { "model": "deepseek-v4-flash", "priority": 1 },
+        { "model": "deepseek-v3",         "priority": 2 }
+      ]
+    },
+    {
+      "name": "volcano-ark",
+      "type": "image",
+      "protocol": "volcano-ark",
+      "apiKey": "你的火山方舟 API Key",
+      "baseURL": "https://ark.cn-beijing.volces.com/api/v3",
+      "models": [
+        { "model": "doubao-seedream-5-0-260128", "priority": 1 }
+      ]
+    }
+  ]
+}

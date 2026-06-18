@@ -27,10 +27,18 @@ Input (reference image + text description + use case)
   - `designAgent/` — Analyzes reference images, text descriptions (e.g., selling points), and usage scenarios to produce a design concept.
   - `translateAgent/` — Translation layer. Converts the abstract design concept into concrete style requirements and layout heuristics for code generation.
   - `codeAgent/` — Generates HTML+CSS code from the translateAgent's output.
-- **`src/gateway/`** — External request gateway. Handles traffic control, proxy/network configuration, timeout and retry logic for outbound API calls.
+- **`src/gateway/`** — External request gateway. Protocol adapters (OpenAI, Volcano Ark), HTTP client with retry/timeout, fallback chain.
+- **`src/session/`** — Chat session management. Maintains message history, calls gateway for streaming responses.
+- **`src/config.ts`** — API key configuration. Reads from environment variables and provides pre-built gateway instances.
 - **`src/render/`** — Rendering layer. Takes codeAgent output and renders it through the Blink engine into previewable images for the frontend.
 - **`src/template/`** — Template library. Stores curated, proven design templates (both descriptions and reference code) that agents can draw from.
 - **`src/ui/`** — Frontend. Expected to include a chat/dialog interface, a material upload area, and a render preview panel.
+
+## Development Rules
+
+- **禁止自行提交代码**：除非用户明确要求，不要执行 `git commit`。代码写完后，等用户测试通过再由用户决定是否提交。
+- **提交流程**：用户测试通过 → 用户要求提交 → 才执行 `git add` + `git commit`。commit message 使用中文。
+- **编译检查**：提交前必须确保 `npx tsc --noEmit` 零错误。
 
 ## Key Design Decisions
 
