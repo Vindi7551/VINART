@@ -76,6 +76,7 @@ export function createVolcanoArk(config: VolcanoArkConfig): ImageProvider {
       }
 
       return {
+        model: json.model ?? model,
         images: json.data.map((d: { url: string; size?: string }) => ({
           url: d.url,
           size: d.size ?? 'unknown',

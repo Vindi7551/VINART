@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Header } from './Header';
 import { PreviewPanel } from './PreviewPanel';
 import { ConversationPanel } from './ConversationPanel';
@@ -10,16 +10,32 @@ export function App() {
   const [selectedElements, setSelectedElements] = useState<Set<string>>(new Set());
   const [isGenerating, setIsGenerating] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(MOCK_PREVIEW_SVG);
+  const [htmlCode, setHtmlCode] = useState<string | undefined>(undefined);
+
+  // Dev: 加载设计师产出的 HTML 做预览测试
+  useEffect(() => {
+    fetch('/designer-output.html')
+      .then((res) => res.text())
+      .then((html) => {
+        setHtmlCode(html);
+        setPreviewUrl(null); // 隐藏占位图
+      })
+      .catch(() => {
+        // 文件不存在就用占位图
+      });
+  }, []);
 
   return (
     <div className="app">
       <Header onNewChat={() => {
         setMessages([]);
         setPreviewUrl(null);
+        setHtmlCode(undefined);
         setSelectedElements(new Set());
       }} />
       <div className="main">
         <PreviewPanel
+          htmlCode={htmlCode}
           previewUrl={previewUrl}
           selectedElements={selectedElements}
           onToggleElement={(id) => {

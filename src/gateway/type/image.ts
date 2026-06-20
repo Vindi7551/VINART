@@ -16,6 +16,8 @@ export interface ImageGenerateParams {
 
 /** 图片生成返回结果 */
 export interface ImageResult {
+  /** 使用的模型名 */
+  model?: string;
   images: { url: string; size: string }[];
   usage: { generatedImages: number; totalTokens: number };
 }
