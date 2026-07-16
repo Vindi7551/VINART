@@ -13,6 +13,12 @@
 export { embedImagesInHtml, getCompletedImageRefs } from './embed-images';
 export type { ImageRef } from './embed-images';
 
-// ── Blink 导出（待实现）──
-// export { createBlinkRenderer } from './blink-renderer';
-// export type { BlinkRenderer, RenderConfig, RenderInput, RenderOutput } from './blink-renderer';
+// ── Blink 导出（仅 Node.js，浏览器不应 import）──
+// 不要在此 barrel 中 export createBlinkRenderer —— 它依赖 playwright
+// （Node.js 专有）。浏览器走 iframe preview，不需要 Blink 渲染。
+export type {
+  BlinkRenderer,
+  RenderConfig,
+  RenderInput,
+  RenderOutput,
+} from './blink-renderer';

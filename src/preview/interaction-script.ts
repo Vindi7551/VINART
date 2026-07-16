@@ -188,6 +188,27 @@ export function createInteractionScript(): string {
   // ── 启动 ──
   function init() {
     ensureOverlay();
+    // 延迟上报真实画布尺寸，确保 CSS 布局完成
+    setTimeout(reportCanvasSize, 100);
+  }
+
+  // ── 向父窗口上报真实内容尺寸 ──
+  // 遍历 body 子元素，找最大的非脚本/非 overlay 容器
+  function reportCanvasSize() {
+    var w = 0, h = 0;
+    var children = document.body.children;
+    for (var i = 0; i < children.length; i++) {
+      var c = children[i];
+      if (c.tagName === 'SCRIPT') continue;
+      if (c.id === '__vinart_hl__') continue;  // 忽略高亮 overlay
+      var cw = Math.max(c.scrollWidth || 0, c.offsetWidth || 0);
+      var ch = Math.max(c.scrollHeight || 0, c.offsetHeight || 0);
+      if (cw > w) w = cw;
+      if (ch > h) h = ch;
+    }
+    if (w > 0 && h > 0) {
+      window.parent.postMessage({ type: 'vinart:canvas-size', width: w, height: h }, '*');
+    }
   }
 
   if (document.readyState === 'loading') {

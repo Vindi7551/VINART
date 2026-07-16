@@ -249,6 +249,28 @@ html, body, #root {
   font-size: 18px;
 }
 
+.export-btn {
+  height: 32px;
+  padding: 0 12px;
+  margin-left: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+
+.export-btn:hover {
+  background: var(--accent-hover);
+}
+
 .preview-placeholder {
   display: flex;
   flex-direction: column;
@@ -422,6 +444,59 @@ html, body, #root {
   padding: 0 4px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+/* ===== Delegation list in chat bubble ===== */
+.delegation-list {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-light);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.delegation-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: var(--bg-surface);
+}
+
+.delegation-item.running {
+  color: var(--accent);
+  animation: delegation-pulse 1.5s ease-in-out infinite;
+}
+
+.delegation-item.done {
+  color: var(--text-secondary);
+  opacity: 0.8;
+}
+
+.delegation-icon {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.delegation-agent {
+  font-weight: 600;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.delegation-task {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes delegation-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 /* ===== Thumbnails in chat ===== */

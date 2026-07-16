@@ -8,7 +8,11 @@
  * 这是管线的最后一步，产出用户看到的图片。
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import type { AssetBatch, CopyDeck } from '../../schema/index';
+import type { BlinkRenderer } from '../../render/index';
+import { embedImagesInHtml, getCompletedImageRefs } from '../../render/index';
 
 // ══════════════════════════════════════════
 // 配置
@@ -21,6 +25,8 @@ export interface ProductionConfig {
   format?: 'png' | 'jpeg';
   /** 输出图片质量（jpeg 时有效） */
   quality?: number;
+  /** Blink 渲染器实例 */
+  renderer?: BlinkRenderer;
 }
 
 /** 制作 Agent 输入 */
@@ -31,6 +37,8 @@ export interface ProductionInput {
   copyDeck: CopyDeck;
   /** 素材批次 */
   assetBatch: AssetBatch;
+  /** 画布尺寸 */
+  canvas?: { width: number; height: number };
 }
 
 /** 制作 Agent 产出 */
@@ -53,54 +61,49 @@ export interface ProductionOutput {
  * 创建制作 Agent。
  *
  * 纯程序化步骤，不涉及 LLM 调用。
- * Blink 渲染的具体实现由 render 层提供，此处只定义接口。
+ * 如果提供了 BlinkRenderer，组装完成后自动渲染为成品图。
  */
-export function createProductionAgent(_config: ProductionConfig) {
+export function createProductionAgent(config: ProductionConfig) {
+  const { outputDir, format = 'png', quality = 95, renderer } = config;
+
   return {
     name: 'production',
 
     /**
-     * 组装：回填素材 → 准备渲染。
-     *
-     * 1. 遍历 assetBatch 中的每个成功的 ImageAsset
-     * 2. 在 HTML 中找到对应的 data-image-slot="slotId"
-     * 3. 将占位 div 替换为 <img src="localPath">
-     * 4. 保存最终 HTML
-     * 5. 调用 Blink 渲染（TODO：对接 render 层）
+     * 组装：回填素材 → 保存 HTML → Blink 渲染。
      */
-    assemble(input: ProductionInput): ProductionOutput {
+    async assemble(input: ProductionInput): Promise<ProductionOutput> {
       try {
-        let html = input.htmlCode;
+        fs.mkdirSync(outputDir, { recursive: true });
 
-        // 回填素材
-        for (const asset of input.assetBatch.assets) {
-          if (asset.status !== 'completed' || !asset.localPath) {
-            continue;
-          }
+        // 1. 使用 embedImagesInHtml 回填素材
+        const imageRefs = getCompletedImageRefs(input.assetBatch.assets);
+        let html = embedImagesInHtml(input.htmlCode, imageRefs);
 
-          // 查找 data-image-slot="slotId" 的占位元素，替换为 img 标签
-          const slotPattern = new RegExp(
-            `<[^>]*data-image-slot="${escapeRegExp(asset.slotId)}"[^>]*>[\\s\\S]*?<\\/[^>]+>`,
-            'gi',
-          );
+        // 2. 保存组装后的 HTML
+        const htmlPath = path.join(outputDir, 'index.html');
+        fs.writeFileSync(htmlPath, html, 'utf-8');
 
-          const replacement = `<img src="${asset.localPath}"
-            data-image-slot="${asset.slotId}"
-            alt="${asset.slotType}"
-            style="width:${asset.targetSize.width}px;height:${asset.targetSize.height}px;object-fit:cover;" />`;
-
-          html = html.replace(slotPattern, replacement);
-        }
-
-        // 保存组装后的 HTML（TODO: 实际写文件 + Blink 渲染）
-        // const htmlPath = `${outputDir}/index.html`;
-
-        return {
+        const result: ProductionOutput = {
           assembledHtml: html,
           success: true,
-          // TODO: Blink 渲染
-          // renderedImagePath = await renderBlink(htmlPath, outputDir, format)
         };
+
+        // 3. Blink 渲染
+        if (renderer) {
+          const width = input.canvas?.width ?? 800;
+          const height = input.canvas?.height ?? 1200;
+
+          const renderOutput = await renderer.render(
+            { html: htmlPath, isFilePath: true },
+            outputDir,
+            { width, height, deviceScaleFactor: 2, format, quality },
+          );
+
+          result.renderedImagePath = renderOutput.imagePath;
+        }
+
+        return result;
       } catch (err) {
         return {
           assembledHtml: input.htmlCode,
@@ -110,9 +113,4 @@ export function createProductionAgent(_config: ProductionConfig) {
       }
     },
   };
-}
-
-/** 转义正则特殊字符 */
-function escapeRegExp(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

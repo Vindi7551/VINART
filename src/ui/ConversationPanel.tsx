@@ -54,7 +54,24 @@ export function ConversationPanel({ messages, isGenerating, onSend }: Conversati
                 ))}
               </div>
             )}
-            <div className="chat-bubble">{msg.text}</div>
+            <div className="chat-bubble">
+              {msg.text}
+              {msg.delegations && msg.delegations.length > 0 && (
+                <div className="delegation-list">
+                  {msg.delegations.map((d, i) => (
+                    <div key={i} className={`delegation-item ${d.status}`}>
+                      <span className="delegation-icon">
+                        {d.status === 'running' ? '⏳' : '✅'}
+                      </span>
+                      <span className="delegation-agent">@{d.agent}</span>
+                      <span className="delegation-task">
+                        {d.task.slice(0, 60)}{d.task.length > 60 ? '...' : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         ))}
 

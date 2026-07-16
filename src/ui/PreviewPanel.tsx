@@ -8,6 +8,7 @@ interface PreviewPanelProps {
   selectedElements: Set<string>;
   onToggleElement: (id: string) => void;
   onRegenerateSelected: () => void;
+  onExport?: () => void;
 }
 
 export interface ElementSelectEvent {
@@ -29,6 +30,7 @@ export function PreviewPanel({
   selectedElements,
   onToggleElement,
   onRegenerateSelected,
+  onExport,
 }: PreviewPanelProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -41,7 +43,7 @@ export function PreviewPanel({
   const [panY, setPanY] = useState(0);
   const [dragging, setDragging] = useState(false);
   const dragStart = useRef({ x: 0, y: 0, px: 0, py: 0 });
-  const [canvasSize] = useState({ w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT });
+  const [canvasSize, setCanvasSize] = useState({ w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT });
 
   // ── 动态提取元素 ──
   const elements: ExtractedElement[] = useMemo(
@@ -84,6 +86,16 @@ export function PreviewPanel({
   useEffect(() => {
     if (htmlCode) fitToCanvas();
   }, [htmlCode, fitToCanvas]);
+
+  // htmlCode 变更时重置画布尺寸，等 iframe 上报真实尺寸
+  useEffect(() => {
+    if (htmlCode) setCanvasSize({ w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT });
+  }, [htmlCode]);
+
+  // 画布尺寸更新后重新适应
+  useEffect(() => {
+    fitToCanvas();
+  }, [canvasSize, fitToCanvas]);
 
   // ── 鼠标拖拽平移 ──
   const onMouseDown = useCallback(
@@ -195,6 +207,10 @@ export function PreviewPanel({
       if (msg.type === 'vinart:deselect') {
         selectedElements.forEach((id) => onToggleElement(id));
       }
+
+      if (msg.type === 'vinart:canvas-size' && msg.width > 0 && msg.height > 0) {
+        setCanvasSize({ w: msg.width, h: msg.height });
+      }
     }
 
     window.addEventListener('message', handleMessage);
@@ -274,7 +290,7 @@ export function PreviewPanel({
           </div>
         )}
 
-        {/* 缩放控件 */}
+        {/* 缩放控件 + 导出 */}
         {htmlCode && (
           <div className="zoom-controls">
             <button className="zoom-btn" onClick={() => setZoom((z) => Math.min(5, z * 1.2))} title="放大">
@@ -289,6 +305,11 @@ export function PreviewPanel({
             <button className="zoom-btn zoom-fit" onClick={fitToCanvas} title="适应窗口">
               ⊡
             </button>
+            {onExport && (
+              <button className="export-btn" onClick={onExport} title="渲染导出为成品图">
+                ⬇ 导出
+              </button>
+            )}
           </div>
         )}
       </div>
