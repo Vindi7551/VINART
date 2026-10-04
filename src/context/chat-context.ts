@@ -1,4 +1,4 @@
-import type { ChatMessage, Attachment } from '../gateway/type/chat';
+import type { ChatMessage, Attachment, ContentPart, TextPart } from '../gateway/type/chat';
 import type { ChatContextConfig, BuildResult, TruncationStrategy } from './types';
 
 /**
@@ -26,13 +26,15 @@ export function createChatContext(config: ChatContextConfig = {}): ChatContext {
     truncation = 'oldest-first',
     keepLastN = 10,
     compaction,
+    imageTokenCost = DEFAULT_IMAGE_TOKEN_COST,
+    imageDetail = 'original',
   } = config;
 
   // 精确 token 数（来自 API usage），初始为 0 表示用估算
   let lastRealPromptTokens = 0;
 
   return {
-    estimateTokens,
+    estimateTokens: (messages) => estimateTokens(messages, imageTokenCost),
 
     updateUsage(promptTokens: number) {
       lastRealPromptTokens = promptTokens;
@@ -40,7 +42,7 @@ export function createChatContext(config: ChatContextConfig = {}): ChatContext {
 
     async build(history: ChatMessage[], userMessage: string, attachments?: Attachment[]) {
       // 1. 组装用户消息
-      const userMsg = buildUserMessage(userMessage, attachments);
+      const userMsg = buildUserMessage(userMessage, attachments, imageDetail);
 
       // 2. 拼完整列表
       let messages = [...history, userMsg];
@@ -106,16 +108,52 @@ export function createChatContext(config: ChatContextConfig = {}): ChatContext {
  * session 在每次 send() 后调用 context.updateUsage() 喂入精确值，
  * 后续决策用精确值而非此估算。
  */
-export function estimateTokens(messages: ChatMessage[]): number {
+export function estimateTokens(
+  messages: ChatMessage[],
+  imageTokenCost: number = DEFAULT_IMAGE_TOKEN_COST,
+): number {
   let total = 0;
   for (const msg of messages) {
-    const text = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-    // content token：字符数 ÷ 3
-    total += Math.ceil(text.length / 3);
+    // 文本部分：字符数 ÷ 3
+    total += Math.ceil(contentToText(msg.content).length / 3);
+    // 图片部分：按固定成本计，不能按 base64 字符数算
+    total += countImageParts(msg.content) * imageTokenCost;
   }
   // 每消息 overhead：〈User〉/〈Assistant〉/begin/end of sentence 等特殊 token
   total += messages.length * 8;
   return total;
+}
+
+/**
+ * 单张图片 token 成本的**兜底默认值**。
+ *
+ * ⚠️ 这是供应商相关的数值，不是通用常数。1000 来自 DeepSeek 实测
+ * （1024×1024 @ detail='original' → 图片本身约 932 token，取整为保守上限），
+ * 权威定义在 `gateway/type/deepseek-chat.ts` 的 `DEEPSEEK_IMAGE_TOKEN_COST`。
+ * 换供应商或换图像档位时，应通过 `ChatContextConfig.imageTokenCost` 注入正确值。
+ *
+ * ⚠️ 绝不能对图片内容做 `JSON.stringify(...).length / 3`：
+ * 一张 2 MB 图的 base64 有 273 万字符，会算出约 **91 万 token** 的假数字，
+ * 直接摧毁 token 预算与压缩触发逻辑。
+ *
+ * 注：同一张图在**一个请求内被引用多次时不去重**，token 线性叠加
+ * （实测：引用 2 次 → 972 → 1905）。要复用请靠 prompt 前缀缓存。
+ */
+export const DEFAULT_IMAGE_TOKEN_COST = 1000;
+
+/** 从消息内容中抽取纯文本（图片/其他块被忽略） */
+export function contentToText(content: ChatMessage['content']): string {
+  if (typeof content === 'string') return content;
+  return content
+    .filter((part): part is TextPart => part.type === 'text' && 'text' in part)
+    .map((part) => part.text)
+    .join('\n');
+}
+
+/** 统计消息内容里的图片/文件块数量 */
+export function countImageParts(content: ChatMessage['content']): number {
+  if (typeof content === 'string') return 0;
+  return content.filter((part) => part.type !== 'text').length;
 }
 
 // ── 策略 1: Compaction ──
@@ -233,15 +271,29 @@ function truncateByLastN(history: ChatMessage[], userMsg: ChatMessage, n: number
 
 // ── 用户消息组装 ──
 
-function buildUserMessage(text: string, attachments?: Attachment[]): ChatMessage {
+function buildUserMessage(
+  text: string,
+  attachments?: Attachment[],
+  defaultDetail?: string,
+): ChatMessage {
   if (!attachments?.length) {
     return { role: 'user', content: text };
   }
 
-  const parts = [text];
-  for (const { name, url } of attachments) {
-    parts.push(`[附件: ${name} (${url})]`);
+  // 有附件 → 必须用内容块数组，否则图片无法到达模型。
+  // （旧实现把附件拼成 "[附件: name (url)]" 一行文字，图片被静默丢弃。）
+  const parts: ContentPart[] = [{ type: 'text', text }];
+  for (const att of attachments) {
+    parts.push({
+      type: 'image_url',
+      image_url: {
+        url: att.url,
+        // 附件可自带 detail 覆盖默认档位；
+        // 默认值由 ChatContextConfig.imageDetail 注入（供应商相关）
+        detail: att.detail ?? defaultDetail,
+      },
+    });
   }
 
-  return { role: 'user', content: parts.join('\n') };
+  return { role: 'user', content: parts };
 }

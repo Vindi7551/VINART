@@ -40,10 +40,41 @@ export { GatewayError } from './client/error';
 export { parseSSE } from './client/sse-parser';
 export type { SSEEvent } from './client/sse-parser';
 
+// ── 图片编码工具 ──
+export { fileToDataUrl, bufferToDataUrl, isSupportedImagePath, SUPPORTED_IMAGE_EXTS } from './util/data-url';
+
 // ── 治理 ──
 export { createCircuitBreaker, CircuitBreakerOpenError, CircuitBreakerTrippedError } from './resilience/circuit-breaker';
 export { createRateLimiter } from './resilience/rate-limiter';
 
-// ── 类型 ──
-export type { ChatMessage, ChatChunk, ChatOptions } from './type/chat';
+// ── 类型：协议中立 ──
+export type {
+  ChatMessage,
+  ChatRole,
+  ChatChunk,
+  ChatOptions,
+  ContentPart,
+  TextPart,
+  ImagePart,
+  VendorPart,
+  TokenUsage,
+  Attachment,
+} from './type/chat';
+
+// ── 类型：DeepSeek 专有 ──
+export type {
+  DeepSeekImageDetail,
+  DeepSeekFilePart,
+  DeepSeekFileRefPart,
+  DeepSeekFileDataPart,
+  DeepSeekContentPart,
+  DeepSeekMessage,
+} from './type/deepseek-chat';
+export {
+  DEEPSEEK_VISION_MODEL,
+  DEEPSEEK_LEGACY_VISION_MODEL,
+  DEEPSEEK_DEFAULT_IMAGE_DETAIL,
+  DEEPSEEK_LIMITS,
+  DEEPSEEK_IMAGE_TOKEN_COST,
+} from './type/deepseek-chat';
 export type { ImageGenerateParams, ImageResult } from './type/image';

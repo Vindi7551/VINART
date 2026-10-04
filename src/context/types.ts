@@ -36,6 +36,22 @@ export interface ChatContextConfig {
   keepLastN?: number;
   /** Compaction 配置（压缩+截断双策略） */
   compaction?: CompactionConfig;
+  /**
+   * 单张图片的 token 成本估算（每张）。
+   *
+   * ⚠️ 供应商相关，不是通用常数：不同模型、分辨率、图像档位差异很大。
+   * 不传则用 `DEFAULT_IMAGE_TOKEN_COST`（1000，取自 DeepSeek 实测）。
+   * DeepSeek 的权威值见 `gateway/type/deepseek-chat.ts` 的
+   * `DEEPSEEK_IMAGE_TOKEN_COST`，由上层注入。
+   */
+  imageTokenCost?: number;
+  /**
+   * 发送图片时的默认图像档位（透传为 Attachment.detail 的兜底值）。
+   *
+   * ⚠️ 供应商相关。默认 'original' 是 DeepSeek 的扩展档位
+   * （OpenAI 官方只有 low/high/auto）。取值集合见供应商类型文件。
+   */
+  imageDetail?: string;
 }
 
 /** ChatContext 要产出的结构 */

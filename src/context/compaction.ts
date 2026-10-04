@@ -1,5 +1,6 @@
 import type { ChatMessage } from '../gateway/type/chat';
 import type { ChatGateway } from '../gateway/index';
+import { contentToText } from './chat-context';
 
 /** Compaction 配置 */
 export interface CompactionFnConfig {
@@ -29,10 +30,14 @@ export function createCompactionFn(config: CompactionFnConfig): (messages: ChatM
     // 过滤 assistant 里的 tool_call 内容（纯 JSON）——
     // 参数动辄几千 token，保留原文无意义。
     // assistant 的思考文本已描述"我在做什么"，压缩模型据此概括即可。
+    //
+    // ⚠️ 必须用 contentToText 抽取纯文本：消息内容可能是多模态内容块数组，
+    // 直接模板插值会变成 "[object Object]"，JSON.stringify 则会把整张图的
+    // base64（数百万字符）灌进摘要 prompt。图片块在这里一律丢弃。
     // TODO: 等 ChatMessage.role 扩展 'tool' 后，同时过滤 role==='tool' 的消息
     const transcript = messages
       .filter((m) => m.role !== 'assistant' || !isToolCallContent(m.content))
-      .map((m) => `[${m.role === 'user' ? '用户' : 'AI'}]: ${m.content}`)
+      .map((m) => `[${m.role === 'user' ? '用户' : 'AI'}]: ${contentToText(m.content)}`)
       .join('\n\n');
 
     const compactionSystemPrompt = systemPrompt ?? [
@@ -73,11 +78,12 @@ export function createCompactionFn(config: CompactionFnConfig): (messages: ChatM
 }
 
 /**
- * 判断 assistant 消息内容是否为 tool call（而非自然语言）。
+ * 判断消息内容是否为 tool call（而非自然语言）。
+ * 多模态内容块数组按其中的纯文本判断。
  * 后续 ChatMessage 类型扩展 tool_calls 字段后用结构化判断替代。
  */
-function isToolCallContent(content: string): boolean {
+function isToolCallContent(content: ChatMessage['content']): boolean {
   // tool call 通常是纯 JSON 或以特定标记开头
-  const trimmed = content.trim();
+  const trimmed = contentToText(content).trim();
   return trimmed.startsWith('{') || trimmed.startsWith('[');
 }

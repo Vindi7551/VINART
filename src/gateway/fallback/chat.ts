@@ -32,17 +32,24 @@ export function createChatGateway(providers: ChatProvider[]): ChatGateway {
 
   return {
     async *stream(messages: ChatMessage[], opts?: ChatOptions) {
+      // 收集每个 provider 的失败原因再抛。
+      // ⚠️ 只抛"全部失败"会把真正的原因（鉴权、额度、模型名写错、
+      // context 超限）全部吞掉。这与 image 网关是同一类缺陷。
+      const failures: string[] = [];
+
       for (const provider of providers) {
         try {
           yield* provider.stream(messages, opts);
           return; // 成功，不再尝试后续 provider
-        } catch {
-          // 当前 provider 失败 → 静默尝试下一个
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          failures.push(`${provider.name}: ${msg}`);
         }
       }
 
       throw new GatewayError(
-        `All ${providers.length} chat provider(s) exhausted`,
+        `全部 ${providers.length} 个 chat provider 都失败：\n` +
+          failures.map((f) => `  - ${f}`).join('\n'),
         undefined,
         false,
         'chat-gateway',

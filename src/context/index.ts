@@ -1,5 +1,11 @@
 // ── Chat Context ──
-export { createChatContext, estimateTokens } from './chat-context';
+export {
+  createChatContext,
+  estimateTokens,
+  contentToText,
+  countImageParts,
+  DEFAULT_IMAGE_TOKEN_COST,
+} from './chat-context';
 export type { ChatContext } from './chat-context';
 
 // ── Compaction ──
