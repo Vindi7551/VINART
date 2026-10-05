@@ -1,0 +1,10 @@
+{
+  "_comment": "暖铜调。三个参考图（G03 / 图片1 / 图片2）共用这一套。改配色改这里，不要改代码里的兜底值。",
+  "_usedBy": ["banner-topleft", "split-diagonal"],
+  "ink": "#120C07",
+  "copper": "#B8722F",
+  "copperLight": "#D9A05B",
+  "amber": "#E8A24A",
+  "cream": "#F2E8DA",
+  "white": "#FFFFFF"
+}

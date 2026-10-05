@@ -1,0 +1,11 @@
+<!-- 示意图：刀刃顺木纤维切削（线稿）
+     上：刀刃（楔形，刃口平直）
+     下：三条波浪线 = 木纤维
+     用 currentColor，方便在不同底色上换色 -->
+<svg viewBox="0 0 200 130" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M18 26 L150 26 Q176 26 188 46 L18 46 Z" fill="currentColor" fill-opacity=".10"/>
+  <path d="M18 46 L188 46"/>
+  <path d="M14 72 q22 -10 44 0 t44 0 t44 0 t42 0"/>
+  <path d="M14 94 q22 -10 44 0 t44 0 t44 0 t42 0"/>
+  <path d="M14 116 q22 -10 44 0 t44 0 t44 0 t42 0"/>
+</svg>

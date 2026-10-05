@@ -1,0 +1,15 @@
+[
+  {
+    "size": "2048x2048",
+    "prompt": "Fotorealistische Aufnahme einer fröhlichen Geburtstagsfeier in einem warmen, gemütlich eingerichteten Wohnzimmer am Abend. Im Vordergrund hält ein dunkelhaariger Mann mit kurzem Bart das Akazienholzbrett aus dem Referenzbild mit beiden Händen hoch und lacht herzlich in die Kamera. Links neben ihm lacht eine braunhaarige Frau ihn an. Hinter den beiden stehen weitere Gäste, stark unscharf. Rechts oben schwebt ein goldener Folienballon in Form der Zahl 40. Links unten auf dem Tisch eine Geburtstagstorte mit brennenden Kerzen. Warmes, weiches Innenlicht, viele goldene Bokeh-Lichter im Hintergrund, sehr geringe Schärfentiefe, festliche Stimmung. Der obere linke Bildbereich bleibt ruhig und unaufgeregt, damit dort später Text Platz findet. WICHTIG: Gesichter müssen natürlich und scharf sein, keine verzerrten oder verschmolzenen Gesichter, Hände mit korrekt fünf Fingern. Auf dem Brett steht exakt die Gravur aus dem Referenzbild: «SCHONEND BEHANDELN», darunter «KLASSIKER», darunter gross die Zahl «40», darunter in Schreibschrift «Zustand entspricht Alter und Laufleistung», darunter drei kleine Symbole mit Text. Die Buchstaben müssen korrekt sein, kein Fantasietext. Ausser der Gravur auf dem Brett enthält das Bild keine Schriftzeichen.",
+    "references": [
+      {
+        "ref": "@product",
+        "role": "subject",
+        "note": "商品实物照，外观必须一致"
+      }
+    ],
+    "useSketchRef": true,
+    "file": "scene.png"
+  }
+]

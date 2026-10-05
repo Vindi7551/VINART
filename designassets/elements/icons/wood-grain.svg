@@ -1,0 +1,10 @@
+<!-- 木纹年轮（对应 Jede Maserung ein Unikat）
+     3 道比 4 道在徽章尺寸下更清楚。 -->
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <defs><clipPath id="grainClip"><circle cx="32" cy="32" r="28"/></clipPath></defs>
+  <g clip-path="url(#grainClip)" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round">
+    <path d="M-4 16 C12 6 26 26 40 16 C54 6 64 22 72 14"/>
+    <path d="M-4 32 C12 22 26 42 40 32 C54 22 64 38 72 30"/>
+    <path d="M-4 48 C12 38 26 58 40 48 C54 38 64 54 72 46"/>
+  </g>
+</svg>

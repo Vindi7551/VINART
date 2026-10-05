@@ -1,0 +1,19 @@
+{
+  "family": "Zilla Slab",
+  "dir": "ZillaSlab",
+  "weights": [
+    400,
+    600,
+    700
+  ],
+  "files": {
+    "400": "400.woff2",
+    "600": "600.woff2",
+    "700": "700.woff2"
+  },
+  "license": "OFL-1.1",
+  "source": "Google Fonts",
+  "subset": "latin (U+0000-00FF) — 覆盖德语 ä/ö/ü/ß",
+  "character": "尖角板衬线、略窄、带人文书法细节。Mozilla 品牌字体。",
+  "bestFor": "需要有个性但不想太重的标题；⚠️ 最高只到 700"
+}

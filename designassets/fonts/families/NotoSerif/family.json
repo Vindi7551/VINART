@@ -1,0 +1,19 @@
+{
+  "family": "Noto Serif",
+  "dir": "NotoSerif",
+  "weights": [
+    400,
+    700,
+    900
+  ],
+  "files": {
+    "400": "400.woff2",
+    "700": "700.woff2",
+    "900": "900.woff2"
+  },
+  "license": "OFL-1.1",
+  "source": "Google Fonts",
+  "subset": "latin (U+0000-00FF) — 覆盖德语 ä/ö/ü/ß",
+  "character": "⚠️ 不是板衬线，是过渡衬线（细横笔、高对比）。",
+  "bestFor": "对照用；不要当板衬线选"
+}

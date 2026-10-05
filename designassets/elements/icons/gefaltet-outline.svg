@@ -1,0 +1,7 @@
+<!-- 折叠后的支架轮廓（侧视示意，非实拍）
+     木板平放折叠 + 支架收拢在下 -->
+<svg viewBox="0 0 200 70" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="16" y="12" width="168" height="28" rx="4"/>
+  <path d="M36 40 L28 58 M164 40 L172 58"/>
+  <path d="M16 26 h168" stroke-dasharray="6 6" stroke-width="2"/>
+</svg>

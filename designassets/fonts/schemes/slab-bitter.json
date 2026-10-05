@@ -1,0 +1,24 @@
+{
+  "name": "slab-bitter",
+  "title": "Bitter 重板衬线（编辑气质，字重最全）",
+  "heading": {
+    "family": "Bitter",
+    "weight": 900,
+    "letterSpacing": "-0.012em"
+  },
+  "body": {
+    "family": "Bitter",
+    "weight": 400,
+    "letterSpacing": "0.008em"
+  },
+  "faces": [
+    {
+      "family": "Bitter",
+      "weights": [
+        400,
+        900
+      ]
+    }
+  ],
+  "note": "低对比、大 x-height，笔画扎实。三档：可撑起标题也能当正文。"
+}

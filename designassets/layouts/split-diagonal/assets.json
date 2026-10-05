@@ -1,0 +1,28 @@
+[
+  {
+    "size": "1440x2560",
+    "prompt": "Fotorealistische Nahaufnahme auf einem hellen Holztisch bei freundlichem Tageslicht. Das Akazienholzbrett aus dem Referenzbild liegt FLACH auf dem Tisch, von schräg oben fotografiert, sodass die Gravur «SCHONEND BEHANDELN / KLASSIKER / 40 / Zustand entspricht Alter und Laufleistung» gut lesbar ist. Rund um das Brett liegen frische Zutaten: Kirschtomaten, rote Paprika, Gurkenscheiben und frische Kräuter. BILDAUFBAU: Das Brett liegt VOLLSTÄNDIG sichtbar in der LINKEN Bildhälfte, mit deutlichem Randabstand zu allen Bildkanten, und nimmt etwa ein Drittel der Bildbreite ein. Die rechte Bildhälfte bleibt ruhig, leer und unscharf. Helle, frische Lichtstimmung, hohe Farbbrillanz, geringe Schärfentiefe. Auf dem Brett steht exakt die Gravur aus dem Referenzbild, die Buchstaben müssen korrekt sein, kein Fantasietext. Ausser der Gravur auf dem Brett enthält das Bild keine Schriftzeichen.",
+    "references": [
+      {
+        "ref": "@product",
+        "role": "subject",
+        "note": "商品实物照，外观必须一致"
+      }
+    ],
+    "useSketchRef": true,
+    "file": "scene-prep.png"
+  },
+  {
+    "size": "1440x2560",
+    "prompt": "Fotorealistische Aufnahme einer fröhlichen Runde am Esstisch in warmem Abendlicht. Ein dunkelhaariger Mann mit kurzem Bart steht hinter dem Akazienholzbrett aus dem Referenzbild, das aufrecht im schwarzen Metallständer steht, und lacht in die Kamera. Daneben und dahinter weitere Gäste, stark unscharf. Das Brett mit der Gravur «KLASSIKER 40» ist gut sichtbar. BILDAUFBAU: Das Brett steht VOLLSTÄNDIG sichtbar in der RECHTEN Bildhälfte, mit deutlichem Randabstand zu allen Bildkanten, und nimmt etwa ein Drittel der Bildbreite ein. Es steht im unteren Bereich der rechten Hälfte, sodass oben Platz bleibt. Die linke Bildhälfte bleibt ruhig, leer und unscharf. Warmes Innenlicht, goldene Bokeh-Lichter, festliche Stimmung, geringe Schärfentiefe. WICHTIG: Gesichter natürlich und scharf, keine verzerrten oder verschmolzenen Gesichter, Hände mit korrekt fünf Fingern. Die Buchstaben der Gravur müssen korrekt sein, kein Fantasietext. Ausser der Gravur auf dem Brett enthält das Bild keine Schriftzeichen.",
+    "references": [
+      {
+        "ref": "@product",
+        "role": "subject",
+        "note": "商品实物照，外观必须一致"
+      }
+    ],
+    "useSketchRef": true,
+    "file": "scene-serve.png"
+  }
+]

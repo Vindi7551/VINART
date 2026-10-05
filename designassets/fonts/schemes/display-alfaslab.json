@@ -1,0 +1,29 @@
+{
+  "name": "display-alfaslab",
+  "title": "Alfa Slab One 超重标题 + Rokkitt 正文",
+  "heading": {
+    "family": "Alfa Slab One",
+    "weight": 400,
+    "letterSpacing": "-0.01em"
+  },
+  "body": {
+    "family": "Rokkitt",
+    "weight": 400,
+    "letterSpacing": "0.008em"
+  },
+  "faces": [
+    {
+      "family": "Alfa Slab One",
+      "weights": [
+        400
+      ]
+    },
+    {
+      "family": "Rokkitt",
+      "weights": [
+        400
+      ]
+    }
+  ],
+  "note": "海报式极重标题。⚠️ 词一多就糊，适合两三个词的短标题。"
+}

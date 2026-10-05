@@ -1,0 +1,7 @@
+<!-- 人形 + 领带（Papa） -->
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="32" cy="17" r="9"/>
+  <path d="M13 54 C13 40 22 34 32 34 C42 34 51 40 51 54"/>
+  <path d="M29 34 h6 l-3 5 z" fill="currentColor" stroke="none"/>
+  <path d="M29 39 h6 l-2 8 h-2 z" fill="currentColor" stroke="none"/>
+</svg>

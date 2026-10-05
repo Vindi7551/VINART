@@ -1,0 +1,19 @@
+{
+  "family": "Bitter",
+  "dir": "Bitter",
+  "weights": [
+    400,
+    700,
+    900
+  ],
+  "files": {
+    "400": "400.woff2",
+    "700": "700.woff2",
+    "900": "900.woff2"
+  },
+  "license": "OFL-1.1",
+  "source": "Google Fonts",
+  "subset": "latin (U+0000-00FF) — 覆盖德语 ä/ö/ü/ß",
+  "character": "低对比、大 x-height、有墨陷细节。编辑/新闻气质，笔画扎实。",
+  "bestFor": "需要字重全、观感稳重的标题"
+}

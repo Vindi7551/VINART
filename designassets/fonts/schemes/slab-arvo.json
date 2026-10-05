@@ -1,0 +1,24 @@
+{
+  "name": "slab-arvo",
+  "title": "Arvo 几何方块衬线（最接近 Rockwell）",
+  "heading": {
+    "family": "Arvo",
+    "weight": 700,
+    "letterSpacing": "-0.006em"
+  },
+  "body": {
+    "family": "Arvo",
+    "weight": 400,
+    "letterSpacing": "0.008em"
+  },
+  "faces": [
+    {
+      "family": "Arvo",
+      "weights": [
+        400,
+        700
+      ]
+    }
+  ],
+  "note": "衬线方块状、硬朗。⚠️ 只有 400/700 两档，层级手段少。"
+}

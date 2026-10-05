@@ -1,0 +1,25 @@
+{
+  "name": "slab-rokkitt",
+  "title": "Rokkitt 几何板衬线（零品牌包袱）",
+  "heading": {
+    "family": "Rokkitt",
+    "weight": 900,
+    "letterSpacing": "-0.008em"
+  },
+  "body": {
+    "family": "Rokkitt",
+    "weight": 400,
+    "letterSpacing": "0.008em"
+  },
+  "faces": [
+    {
+      "family": "Rokkitt",
+      "weights": [
+        400,
+        700,
+        900
+      ]
+    }
+  ],
+  "note": "几何构造干净现代，不带任何既有品牌联想。三档字重，可表达层级。"
+}

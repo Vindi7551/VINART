@@ -8,3 +8,17 @@ keys.json
 .playwright-mcp/
 *.png
 *.yml
+.backup/
+.tmp-paper/
+.tmp-run/
+
+# 链 A 产物与工作数据(每个产品一个目录,不入库)
+test_product/
+# 会话数据
+.workbuddy/
+# 构建缓存
+tsconfig.tsbuildinfo
+# 一次性补丁脚本(已过时)
+_patch2.py
+_patch3.py
+

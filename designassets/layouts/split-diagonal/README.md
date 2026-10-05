@@ -1,0 +1,34 @@
+# split-diagonal
+
+图片2 复刻 — Schneiden und Servieren（斜切双场景：备料 / 上菜）
+
+## 版式结构
+
+- 画布：2000×2000
+- 配色：`warm-copper`
+- 背景：斜切分区双场景
+- 覆盖层：
+  - 斜切分区双场景
+  - 笔刷横幅「SCHNEIDEN UND SERVIEREN」
+  - 标签「Vorbereiten」
+  - 标签「Anrichten」
+  - 笔刷横幅「Für Brot, Käse, Obst und Snacks」
+
+## 文件
+
+| 文件 | 用途 |
+|---|---|
+| `design-sketch.json` | **版式契约实例**（改版式改这个） |
+| `assets.json` | 素材订单：生图提示词与参考图角色（没有则无需生成素材） |
+| `sketch.png` | 版式草图渲染，挑版式时看这个 |
+| `sketch.html` | 草图源文件（无图片引用，单份即用） |
+
+> 草图是**通用蓝图**：商品位置只用虚线框（`PRODUKT`）标注，**不含任何具体商品图**。
+> 具体商品由生图阶段单独传的**商品参考图**交代——所以同一份版式可以直接套用到别的产品。
+
+## 用法
+
+```bash
+# 用这个版式出图（草图 → 生图 → 成品）
+npm run step scripts/step-layout.ts -- designassets/layouts/split-diagonal/design-sketch.json sketch gen final
+```

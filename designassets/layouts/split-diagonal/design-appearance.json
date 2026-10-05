@@ -1,0 +1,12 @@
+{
+  "palette": "warm-copper",
+  "fontScheme": "legacy-system",
+  "layers": {
+    "bg": {
+      "edgeHighlight": {
+        "color": "rgba(226,216,202,.62)",
+        "width": 6
+      }
+    }
+  }
+}

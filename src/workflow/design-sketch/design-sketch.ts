@@ -247,6 +247,16 @@ export interface TextNode extends NodeBase {
   weight?: number;
   /** 对齐方式。省略 left */
   align?: 'left' | 'center' | 'right';
+  /**
+   * 弧形排布：文字沿**向上拱的弧线**排（弧顶抬升 = curve × 容器高，0–1）。
+   * curve > 0 时整个节点**合并为单行**沿弧排布（多行会被空格合并），
+   * 水平对齐固定为居中——只对标题类短文字用。
+   *
+   * 为什么是渲染器特性而不是 CSS：CSS 没有沿路径排字的能力，
+   * 渲染为内嵌 SVG `<textPath>`（标准能力、确定性、零 API）；
+   * 字体沿用已内联的 @font-face，强调色照常生效（tspan）。
+   */
+  curve?: number;
 }
 
 /**

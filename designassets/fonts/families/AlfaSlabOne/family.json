@@ -1,0 +1,15 @@
+{
+  "family": "Alfa Slab One",
+  "dir": "AlfaSlabOne",
+  "weights": [
+    400
+  ],
+  "files": {
+    "400": "400.woff2"
+  },
+  "license": "OFL-1.1",
+  "source": "Google Fonts",
+  "subset": "latin (U+0000-00FF) — 覆盖德语 ä/ö/ü/ß",
+  "character": "极重、近乎无可视内部空间，海报式展示字。",
+  "bestFor": "只要两三个词的超重标题；⚠️ 仅一档，句子一长就糊"
+}

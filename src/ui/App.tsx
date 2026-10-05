@@ -1,8 +1,12 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { Header } from './Header';
 import { PreviewPanel } from './PreviewPanel';
 import { ConversationPanel } from './ConversationPanel';
+import { ArtifactGallery } from './ArtifactGallery';
+import { EditPanel } from './EditPanel';
+import type { PipelineFormValues } from './NewPipelineForm';
 import type { Message } from './types';
+import type { LayoutData, HostSignal, LayerAppearance } from './types';
 
 // ══════════════════════════════════════════════════════════
 // ⚠️ Agent 层已清空，等待重新设计
@@ -42,6 +46,188 @@ export function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [htmlCode, setHtmlCode] = useState<string | undefined>(undefined);
+  /** 产物可能有新图时 +1,画廊据此重新拉清单 */
+  const [galleryKey, setGalleryKey] = useState(0);
+
+  // ── 版式编辑状态(产物点击 → 加载 → 逐元素修改 → 保存/重渲)──
+  const [layout, setLayout] = useState<LayoutData | null>(null);
+  const [layoutBusy, setLayoutBusy] = useState(false);
+  const [editPanelOpen, setEditPanelOpen] = useState(true);
+  /** 选中的图层(右栏面板与 iframe 双向同步) */
+  const [selectedLayer, setSelectedLayer] = useState<string | null>(null);
+  /** 当前激活的染色词(点图上染色片段切换;面板单行颜色跟随它) */
+  const [activeWord, setActiveWord] = useState<string | null>(null);
+  /** 宿主→iframe 的统一信号(面板发起的选中/patch;图上操作不走这里防回环) */
+  const [hostSignal, setHostSignal] = useState<HostSignal | null>(null);
+  const seqRef = useRef(0);
+
+  /** 权威数据引用 + 防抖自动保存(1.5s 无操作静默写盘,刷新页面不丢) */
+  const layoutRef = useRef<LayoutData | null>(null);
+  const saveTimer = useRef<number | undefined>(undefined);
+
+  function commitLayout(next: LayoutData) {
+    layoutRef.current = next;
+    setLayout(next);
+  }
+
+  function scheduleAutoSave() {
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => {
+      void autoSaveNow();
+    }, 1500);
+  }
+
+  async function autoSaveNow() {
+    const cur = layoutRef.current;
+    if (!cur) return;
+    try {
+      await fetch(`/api/layout/${cur.name}/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ spec: cur.spec, appearance: cur.appearance }),
+      });
+    } catch {
+      /* 静默:网络抖动时下次操作会再触发 */
+    }
+  }
+
+  function mergePatch(prev: LayoutData, id: string, patch: Record<string, unknown>): LayoutData {
+    const spec = { ...prev.spec, layers: prev.spec.layers.slice() };
+    const li = spec.layers.findIndex((x) => x.id === id);
+    if (li < 0) return prev;
+    const merged = { ...spec.layers[li] } as Record<string, unknown>;
+    for (const [k, v] of Object.entries(patch)) {
+      if (k === 'rect' && typeof v === 'object' && v)
+        merged.rect = { ...(merged.rect as object), ...(v as object) };
+      else merged[k] = v;
+    }
+    spec.layers[li] = merged as (typeof prev.spec.layers)[number];
+    const appearance = { ...prev.appearance, layers: { ...prev.appearance.layers } };
+    const cur = { ...(appearance.layers[id] ?? {}) } as LayerAppearance & Record<string, unknown>;
+    if ('color' in patch) cur.color = patch.color as string;
+    if ('fill' in patch) cur.fill = patch.fill as string;
+    if ('accent' in patch) {
+      // accent 归外观层(与 color/fill 同层);空 words = 取消强调
+      const a = patch.accent as { words?: string[]; color?: string } | undefined;
+      if (a && a.words && a.words.length)
+        cur.accent = {
+          words: a.words,
+          color: a.color ?? cur.accent?.color ?? 'accent',
+        } as LayerAppearance['accent'];
+      else if ('accent' in patch) delete cur.accent;
+    }
+    if ('opacity' in patch) {
+      const o = patch.opacity as number;
+      if (o >= 1) delete cur.opacity;
+      else cur.opacity = o;
+    }
+    appearance.layers[id] = cur;
+    return { ...prev, spec, appearance };
+  }
+
+  /** 统一的 patch 入口:合并进持久数据 + 通知 iframe(参数面板发起) */
+  const handleLayerPatch = useCallback((id: string, patch: Record<string, unknown>) => {
+    const prev = layoutRef.current;
+    if (!prev) return;
+    commitLayout(mergePatch(prev, id, patch));
+    seqRef.current += 1;
+    setHostSignal({ seq: seqRef.current, type: 'patch', id, patch });
+    scheduleAutoSave();
+  }, []);
+
+  /** 图上操作(iframe 内)→ 只合并数据,不经 hostSignal(iframe 已自应用,防回环) */
+  const handleLayerChanged = useCallback((id: string, patch: Record<string, unknown>) => {
+    const prev = layoutRef.current;
+    if (!prev) return;
+    commitLayout(mergePatch(prev, id, patch));
+    scheduleAutoSave();
+  }, []);
+
+  const handleLayerSelect = useCallback((id: string) => {
+    setSelectedLayer(id);
+    setActiveWord(null); // 点元素其他部分 → 回到基色上下文
+  }, []);
+
+  /** 产物条点击:拉取版式数据(可交互编辑的来源) */
+  const handleOpenArtifact = useCallback(async (url: string, name: string, _dir: string) => {
+    setPreviewUrl(url); // 兜底:数据没到之前先给 PNG
+    try {
+      const resp = await fetch(`/api/layout/${name}/data`);
+      if (!resp.ok) return; // 没有版式数据的产物保持 PNG 预览
+      const data = (await resp.json()) as LayoutData;
+      if (!data.html) return;
+      commitLayout(data);
+      setSelectedLayer(null);
+    } catch {
+      /* API 服务没跑——保持 PNG 预览 */
+    }
+  }, []);
+
+  /** 保存编辑改动落盘(spec/appearance)——手动按钮触发 */
+  const handleSaveLayoutLive = useCallback(async () => {
+    const cur = layoutRef.current;
+    if (!cur) return;
+    setLayoutBusy(true);
+    try {
+      const resp = await fetch(`/api/layout/${cur.name}/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ spec: cur.spec, appearance: cur.appearance }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: 'assistant', text: `💾 已保存 ${cur.name} 的 spec/appearance` },
+      ]);
+    } catch (e) {
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: 'assistant', text: `✗ 保存失败:${(e as Error).message}` },
+      ]);
+    } finally {
+      setLayoutBusy(false);
+    }
+  }, []);
+
+  /** 触发 final 重渲(几秒,零 API),完成后刷新画廊与 PNG 预览 */
+  const handleRenderLayoutLive = useCallback(async () => {
+    const cur = layoutRef.current;
+    if (!cur) return;
+    setLayoutBusy(true);
+    setMessages((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), role: 'assistant', text: `⟳ 重渲 ${cur.name} → final…` },
+    ]);
+    try {
+      const resp = await fetch(`/api/layout/${cur.name}/render`, { method: 'POST' });
+      const result = (await resp.json()) as { ok: boolean; log?: string };
+      if (result.ok) {
+        setGalleryKey((k) => k + 1);
+        setPreviewUrl(`/files/test_product/layout/${cur.name}/final.png?t=${Date.now()}`);
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: 'assistant', text: '✓ 重渲完成,成品已更新' },
+        ]);
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            kind: 'log',
+            text: `✗ 重渲失败\n${result.log ?? ''}`,
+          },
+        ]);
+      }
+    } catch (e) {
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: 'assistant', text: `✗ 重渲请求失败:${(e as Error).message}` },
+      ]);
+    } finally {
+      setLayoutBusy(false);
+    }
+  }, [layout]);
 
   const handleSend = useCallback(async (text: string) => {
     if (!text.trim()) return;
@@ -60,11 +246,149 @@ export function App() {
     setMessages((prev) => [...prev, userMsg, noticeMsg]);
   }, []);
 
+  /**
+   * 跑一条管线步骤：点按钮 → API 服务 spawn 对应 step 脚本 →
+   * stdout/stderr 以 SSE 逐行流回，渲染成终端式的 log 消息。
+   */
+  const handleRunStep = useCallback((stepId: string, label: string, query?: string) => {
+    if (isGenerating) return;
+
+    const logId = crypto.randomUUID();
+    setMessages((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), role: 'user', text: `▶ ${label}` },
+      { id: logId, role: 'assistant', kind: 'log', text: '连接 API 服务…' },
+    ]);
+    setIsGenerating(true);
+
+    const es = new EventSource(`/api/run/${stepId}${query ? `?${query}` : ''}`);
+    let done = false; // 服务端正常收尾后 EventSource 会触发 error(流结束)，防双重收尾
+    let started = false;
+
+    const setLog = (fn: (t: string) => string) =>
+      setMessages((prev) =>
+        prev.map((m) => (m.id === logId ? { ...m, text: fn(m.text) } : m)),
+      );
+    const finish = (line: string) => {
+      if (done) return;
+      done = true;
+      setLog((t) => `${t}\n${line}`);
+      setIsGenerating(false);
+      es.close();
+    };
+
+    es.addEventListener('start', (e) => {
+      const { cmd } = JSON.parse((e as MessageEvent).data);
+      started = true;
+      setLog(() => `$ ${cmd}`);
+    });
+    es.addEventListener('log', (e) => {
+      const { line } = JSON.parse((e as MessageEvent).data);
+      if (started) setLog((t) => `${t}\n${line}`);
+    });
+    es.addEventListener('exit', (e) => {
+      const { code } = JSON.parse((e as MessageEvent).data);
+      if (code === 0) setGalleryKey((k) => k + 1); // 产物可能有新图,刷新画廊
+      finish(code === 0 ? '✓ 完成' : `✗ 失败 (exit code=${code})`);
+    });
+    es.onerror = () => finish('✗ 与 API 服务的连接中断');
+  }, [isGenerating]);
+
+  /** 一键编排:图 + 卖点 → 服务端落盘 → 顺序跑完整链,SSE 回流 */
+  const handleRunPipeline = useCallback(async (v: PipelineFormValues) => {
+    if (isGenerating) return;
+
+    // 1) 上传(图转 dataURL,卖点走 JSON)
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result as string);
+      r.onerror = () =>
+        reject(new Error('读取产品图失败——文件可能被移动/删除/还在下载中,重新选一次'));
+      r.readAsDataURL(v.imageFile);
+    });
+    let id: string;
+    try {
+      const resp = await fetch('/api/pipeline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: v.name,
+          lang: v.lang,
+          depth: v.depth,
+          slot: v.slot,
+          image: dataUrl,
+          bullets: v.bullets,
+        }),
+      });
+      if (!resp.ok) {
+        const detail = (await resp.text()).trim();
+        throw new Error(
+          `HTTP ${resp.status}${detail ? `:${detail}` : '(API 服务无响应,大概率没在跑,重启 npm run dev)'} `,
+        );
+      }
+      ({ id } = await resp.json());
+    } catch (e) {
+      const msg = (e as Error).message?.trim() || '(未知错误)';
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: 'assistant', text: `✗ 提交失败:${msg}` },
+      ]);
+      return;
+    }
+
+    // 2) 订阅执行流
+    const logId = crypto.randomUUID();
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        role: 'user',
+        text: `▶ 生成套图:${v.name}(槽位 ${v.slot === 'all' ? '全部' : v.slot},${v.depth === 'final' ? '到成品' : '到草图'})`,
+      },
+      { id: logId, role: 'assistant', kind: 'log', text: '排队中…' },
+    ]);
+    setIsGenerating(true);
+
+    const es = new EventSource(`/api/pipeline-run/${id}`);
+    let done = false;
+    const setLog = (fn: (t: string) => string) =>
+      setMessages((prev) =>
+        prev.map((m) => (m.id === logId ? { ...m, text: fn(m.text) } : m)),
+      );
+    const finish = (line: string, ok = false) => {
+      if (done) return;
+      done = true;
+      setLog((t) => `${t}\n${line}`);
+      if (ok) setGalleryKey((k) => k + 1);
+      setIsGenerating(false);
+      es.close();
+    };
+
+    es.addEventListener('phase', (e) => {
+      const { cmd } = JSON.parse((e as MessageEvent).data);
+      setLog((t) => `${t}\n$ ${cmd}`);
+    });
+    es.addEventListener('log', (e) => {
+      const { line } = JSON.parse((e as MessageEvent).data);
+      setLog((t) => `${t}\n${line}`);
+    });
+    es.addEventListener('exit', (e) => {
+      const { code, failed } = JSON.parse((e as MessageEvent).data);
+      finish(
+        code === 0 ? '✓ 全链完成' : `✗ 在「${failed ?? '?'}」阶段失败 (exit code=${code})`,
+        code === 0,
+      );
+    });
+    es.onerror = () => finish('✗ 与 API 服务的连接中断');
+  }, [isGenerating]);
+
   const handleNewChat = useCallback(() => {
     setMessages([]);
     setPreviewUrl(null);
     setHtmlCode(undefined);
     setSelectedElements(new Set());
+    commitLayout(null as unknown as LayoutData);
+    setSelectedLayer(null);
   }, []);
 
   const handleExport = useCallback(() => {
@@ -78,18 +402,26 @@ export function App() {
     URL.revokeObjectURL(url);
   }, [htmlCode]);
 
-  // 供 UI 判断：agent 层是否可用
+  // 供 UI 判断：agent 层(对话式生成)是否可用
   void AGENT_LAYER_EMPTY;
-  void setIsGenerating;
 
   return (
     <div className="app">
       <Header onNewChat={handleNewChat} />
+      <ArtifactGallery refreshKey={galleryKey} onOpen={handleOpenArtifact} />
       <div className="main">
         <PreviewPanel
-          htmlCode={htmlCode}
+          htmlCode={layout ? undefined : htmlCode}
           previewUrl={previewUrl}
           selectedElements={selectedElements}
+          layoutData={layout}
+          onLayerChange={handleLayerChanged}
+          onLayerSelect={handleLayerSelect}
+          onLayerWord={(id, word) => {
+            setSelectedLayer(id);
+            setActiveWord(word);
+          }}
+          hostSignal={hostSignal}
           onToggleElement={(id) => {
             setSelectedElements((prev) => {
               const next = new Set(prev);
@@ -102,11 +434,34 @@ export function App() {
           }}
           onExport={htmlCode ? handleExport : undefined}
         />
-        <ConversationPanel
-          messages={messages}
-          isGenerating={isGenerating}
-          onSend={handleSend}
-        />
+        <div className="right-col">
+          {layout && (
+            <EditPanel
+              layout={layout}
+              selectedLayer={selectedLayer}
+              activeWord={activeWord}
+              busy={layoutBusy}
+              open={editPanelOpen}
+              onToggle={() => setEditPanelOpen((o) => !o)}
+              onSelectLayer={(id) => {
+                setSelectedLayer(id);
+                seqRef.current += 1;
+                setHostSignal({ seq: seqRef.current, type: 'select', id });
+              }}
+              onActivateWord={(word) => setActiveWord(word)}
+              onLayerPatch={handleLayerPatch}
+              onSave={handleSaveLayoutLive}
+              onRender={handleRenderLayoutLive}
+            />
+          )}
+          <ConversationPanel
+            messages={messages}
+            isGenerating={isGenerating}
+            onSend={handleSend}
+            onRunStep={handleRunStep}
+            onRunPipeline={handleRunPipeline}
+          />
+        </div>
       </div>
     </div>
   );

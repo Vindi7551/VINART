@@ -1,0 +1,45 @@
+{
+  "name": "banner-topleft",
+  "title": "图片1 复刻 — Geschenk zum 40. Geburtstag（生日派对赠礼场景）",
+  "product": "test_product/af39f425-770e-472e-a21e-6964f7864974.png",
+  "canvas": {
+    "width": 2000,
+    "height": 2000
+  },
+  "layers": [
+    {
+      "id": "bg",
+      "type": "image",
+      "source": "ai",
+      "asset": "scene.png",
+      "fit": "cover"
+    },
+    {
+      "id": "headline",
+      "type": "banner",
+      "source": "html",
+      "lines": [
+        "GESCHENK ZUM",
+        "40. GEBURTSTAG"
+      ],
+      "x": 0.028,
+      "y": 0.032,
+      "w": 0.535,
+      "h": 0.195,
+      "align": "center",
+      "fontScale": 132,
+      "seed": 7
+    },
+    {
+      "id": "subtext",
+      "type": "subtext",
+      "source": "html",
+      "text": "Für Papa, Ehemann, Freund oder Kollegen",
+      "x": 0.045,
+      "y": 0.238,
+      "w": 0.62,
+      "align": "left",
+      "fontScale": 0.03
+    }
+  ]
+}

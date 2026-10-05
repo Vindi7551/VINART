@@ -25,7 +25,7 @@
 
 import type { Canvas, DesignSketch, ImageNode, Node, Rect, TextNode } from './design-sketch';
 import { DEFAULT_TYPOGRAPHY, PALETTE, type Palette, type Typography } from './render-style';
-import { assetKey, escapeAttr, escapeHtml, layerBox, wrap, type Painted } from './shared';
+import { assetKey, escapeAttr, escapeHtml, layerBox, wrap, type Box, type Painted } from './shared';
 import { renderSketchBody, SKETCH_CSS } from './sketch';
 
 // ══════════════════════════════════════════════════════════════════════
@@ -133,20 +133,60 @@ function plateFor(color: string): string {
 }
 
 /**
- * 单行文字 → HTML：先做**句中强调**分段（外观 accent 指定的词染强调色），
- * 再逐段 HTML 转义。分段在转义**前**做——在纯文本上按原词匹配，
- * 转义后的串里 `&` 已变成 `&amp;`，含特殊字符的词会匹配失败。
+ * 句中强调的**分段纯函数**:按 accents 多组把一行文本切成段,
+ * 每段带自己的颜色(经角色解析)。HTML(span)与 SVG(tspan)两个消费端共用。
+ * 分段在转义**前**做——在纯文本上按原词匹配,转义后的串里 `&` 已变成
+ * `&amp;`,含特殊字符的词会匹配失败。
+ *
+ * 多组:所有组的词合并成一个交替正则,命中哪个组的词就染哪个组的颜色
+ * (同词多组时先出现的组优先)。兼容旧版单组 accent(转成单元素数组)。
  */
-function renderLine(t: string, acc: Painted['accent'], pal: Palette): string {
-  const words = acc?.words?.filter(Boolean) ?? [];
-  if (!words.length) return escapeHtml(t);
-  const safe = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  const color = resolveColor({ color: acc!.color } as Painted, pal, acc!.color ?? '');
-  const re = new RegExp(`(${safe.join('|')})`, 'g');
+function accentSegments(
+  t: string,
+  acc: Painted['accent'],
+  accents: Painted['accents'],
+  pal: Palette,
+): { text: string; color?: string }[] {
+  // 兼容:accents 缺省时回退旧单组 accent
+  const groups = (accents?.length ? accents : acc ? [acc] : []).filter(
+    (g) => g.words?.filter(Boolean).length,
+  );
+  if (!groups.length) return [{ text: t }];
+
+  const wordColor = new Map<string, string>();
+  const parts: string[] = [];
+  for (const g of groups) {
+    const color = resolveColor({ color: g.color } as Painted, pal, g.color ?? '');
+    for (const w of g.words) {
+      if (!w) continue;
+      if (!wordColor.has(w)) {
+        wordColor.set(w, color);
+        parts.push(w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      }
+    }
+  }
+  if (!parts.length) return [{ text: t }];
+
+  const re = new RegExp(`(${parts.join('|')})`, 'g');
   return t
     .split(re)
     .map((seg, i) =>
-      i % 2 === 1 ? `<span style="color:${color}">${escapeHtml(seg)}</span>` : escapeHtml(seg),
+      i % 2 === 1 ? { text: seg, color: wordColor.get(seg) } : { text: seg },
+    );
+}
+
+/** 单行文字 → HTML(span 强调;染色段带 data-ve-word 供编辑器点选定位) */
+function renderLine(
+  t: string,
+  acc: Painted['accent'],
+  accents: Painted['accents'],
+  pal: Palette,
+): string {
+  return accentSegments(t, acc, accents, pal)
+    .map((seg) =>
+      seg.color
+        ? `<span data-ve-word="${escapeHtml(seg.text)}" style="color:${seg.color}">${escapeHtml(seg.text)}</span>`
+        : escapeHtml(seg.text),
     )
     .join('');
 }
@@ -201,7 +241,16 @@ function renderImage(l: ImageNode): string {
  * ⚠️ **一律不换行**（`nowrap`）——装不下时靠 `fits` 系数缩字号。
  * 折行会撑破版式，比字号小一点糟得多。
  */
-function renderText(l: TextNode, C: Canvas, p: Print, overlay: boolean): string {
+function renderText(
+  l: TextNode,
+  C: Canvas,
+  p: Print,
+  overlay: boolean,
+  box: Box,
+): string {
+  // 弧形排布：合并单行沿 SVG textPath 排——CSS 无沿路径排字能力
+  if (l.curve && l.curve > 0) return renderArcText(l, C, p, overlay, box);
+
   const app = l as Painted;
   const lines = Array.isArray(l.text) ? l.text : [l.text];
   const fit = p.fits[l.id] ?? 1;
@@ -214,7 +263,7 @@ function renderText(l: TextNode, C: Canvas, p: Print, overlay: boolean): string 
   // 不转义会把属性提前截断，后面整段声明（含 font-size）静默失效，
   // 文字回落浏览器默认 16px（实测 PT04 标题缩成小字）。
   const family = escapeAttr(app.fontFamily ?? p.typ.headingFamily);
-  const html = lines.map((t) => renderLine(t, app.accent, p.pal)).join('<br>');
+  const html = lines.map((t) => renderLine(t, app.accent, app.accents, p.pal)).join('<br>');
 
   // 压图兜底：底衬加在 data-fit 外层（宽度=设计区宽的横条）。
   // ⚠️ 不能包进 .btfit——测量逻辑量的是它的 scrollWidth/clientWidth，
@@ -240,6 +289,71 @@ function renderText(l: TextNode, C: Canvas, p: Print, overlay: boolean): string 
   );
 }
 
+/**
+ * 弧形标题：整节点合并为单行，沿**向上拱的弧线**排布（SVG `<textPath>`）。
+ *
+ * 几何：二次贝塞尔 `M 0 y0 Q w/2 (y0-lift) w y0`——弦在中线下方 lift/2、
+ * 控制点在中线下方再抬 lift，弧顶正好落回中线（lift = curve × 容器高）。
+ * 两端文字沿弧下沉、中央文字在中线上，视觉是「向上拱起的横幅」。
+ *
+ * 强调色走 tspan（SVG 里 span 无效）；字体沿用内联 @font-face；
+ * 对齐固定居中（startOffset 50% + text-anchor middle）。
+ */
+function renderArcText(
+  l: TextNode,
+  C: Canvas,
+  p: Print,
+  overlay: boolean,
+  box: Box,
+): string {
+  const app = l as Painted;
+  const lines = Array.isArray(l.text) ? l.text : [l.text];
+  const fit = p.fits[l.id] ?? 1;
+  const fs = Math.max(6, Math.round((l.fontScale ?? 0.03) * C.width * fit));
+  const weight = l.weight ?? p.typ.bodyWeight;
+  const color = resolveColor(app, p.pal, p.pal.ink);
+  // ⚠️ family 栈含双引号,内插属性前必须转义(实测:不转义截断 style 属性)
+  const family = escapeAttr(app.fontFamily ?? p.typ.headingFamily);
+  const ls = p.typ.headingLetterSpacing;
+
+  const w = box.w;
+  const h = box.h;
+  const lift = Math.min(Math.max(l.curve ?? 0, 0), 1) * h;
+  const y0 = h / 2 + lift / 2;
+  const path = `M 0 ${y0.toFixed(1)} Q ${(w / 2).toFixed(1)} ${(y0 - lift).toFixed(1)} ${w.toFixed(1)} ${y0.toFixed(1)}`;
+  const pathId = `arc-${escapeAttr(l.id)}`;
+
+  // 底衬（压图兜底）照常加在外层——弧形文字压照片时同样需要
+  const plate = overlay
+    ? `background:${plateFor(color)};border-radius:0.4em;padding:0.15em 0.55em;`
+    : '';
+
+  const tspans = lines
+    .join(' ')
+    .split(/(\s+)/)
+    .map((part) => {
+      const segs = accentSegments(part, app.accent, app.accents, p.pal);
+      return segs
+        .map((seg) =>
+          seg.color
+            ? `<tspan fill="${seg.color}">${escapeHtml(seg.text)}</tspan>`
+            : escapeHtml(seg.text),
+        )
+        .join('');
+    })
+    .join('');
+
+  return (
+    `<div data-fit="${l.id}" style="${plate}position:relative;width:100%;height:100%">` +
+    `<svg viewBox="0 0 ${w} ${h}" width="100%" height="100%" style="display:block;overflow:visible">` +
+    `<defs><path id="${pathId}" d="${path}" fill="none"/></defs>` +
+    `<text font-family="${family}" font-size="${fs}" font-weight="${weight}" fill="${color}"` +
+    ` letter-spacing="${ls}">` +
+    `<textPath href="#${pathId}" startOffset="50%" text-anchor="middle">${tspans}</textPath>` +
+    `</text></svg></div>`
+  );
+}
+
 function renderNodeFinal(
   l: Node,
   C: Canvas,
@@ -258,7 +372,7 @@ function renderNodeFinal(
       inner = renderImage(l);
       break;
     case 'text':
-      inner = renderText(l, C, p, overlay.has(l.id));
+      inner = renderText(l, C, p, overlay.has(l.id), box);
       break;
     case 'shape':
       // 形状**没有内容**——它就是一块色。轮廓与填充都由容器负责。
@@ -274,7 +388,10 @@ function renderNodeFinal(
 
 /** 需要实测文字宽度的节点 id（供驱动脚本做适配测量）*/
 export function fitTargets(spec: DesignSketch): string[] {
-  return spec.layers.filter((n) => n.type === 'text').map((n) => n.id);
+  // 弧形节点没有 .btfit 结构，且 SVG 按容器缩放——排除出 fits 流程
+  return spec.layers
+    .filter((n) => n.type === 'text' && !(n as TextNode).curve)
+    .map((n) => n.id);
 }
 
 /** 校验：id 必须唯一（拆层与适配都靠它） */

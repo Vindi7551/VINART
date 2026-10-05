@@ -1,0 +1,19 @@
+{
+  "family": "Roboto Slab",
+  "dir": "RobotoSlab",
+  "weights": [
+    400,
+    700,
+    900
+  ],
+  "files": {
+    "400": "400.woff2",
+    "700": "700.woff2",
+    "900": "900.woff2"
+  },
+  "license": "Apache-2.0",
+  "source": "Google Fonts",
+  "subset": "latin (U+0000-00FF) — 覆盖德语 ä/ö/ü/ß",
+  "character": "几何骨架、偏机械；与 Roboto 同度量，Material Design 血统。",
+  "bestFor": "需要 900 极重、且能接受 Google/安卓气质"
+}

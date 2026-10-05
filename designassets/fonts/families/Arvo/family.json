@@ -1,0 +1,17 @@
+{
+  "family": "Arvo",
+  "dir": "Arvo",
+  "weights": [
+    400,
+    700
+  ],
+  "files": {
+    "400": "400.woff2",
+    "700": "700.woff2"
+  },
+  "license": "OFL-1.1",
+  "source": "Google Fonts",
+  "subset": "latin (U+0000-00FF) — 覆盖德语 ä/ö/ü/ß",
+  "character": "几何方块衬线，硬朗不妥协——多个来源称其最接近 Rockwell。",
+  "bestFor": "要 Rockwell 那种几何板衬线观感；⚠️ 仅两档字重"
+}

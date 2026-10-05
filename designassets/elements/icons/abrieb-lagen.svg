@@ -1,0 +1,7 @@
+<!-- 耐磨（层叠结构） -->
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M12 18 h40"/>
+  <path d="M12 32 h40"/>
+  <path d="M12 46 h40"/>
+  <path d="M46 12 l8 6 -8 6"/>
+</svg>

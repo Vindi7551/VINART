@@ -1,19 +1,25 @@
 import { useRef, useState } from 'react';
 import type { Message } from './types';
 import { PipelineDebug } from './PipelineDebug';
-import { TemplateSection } from './TemplateSection';
+import { StepPanel } from './StepPanel';
+import { NewPipelineForm, type PipelineFormValues } from './NewPipelineForm';
 
 interface ConversationPanelProps {
   messages: Message[];
   isGenerating: boolean;
   onSend: (text: string, files?: File[]) => void;
+  /** 点管线步骤按钮 → App 里起 SSE 日志流 */
+  onRunStep: (id: string, label: string, query?: string) => void;
+  /** 一键生成:图 + 卖点 → 自动跑完整链 */
+  onRunPipeline: (v: PipelineFormValues) => void;
 }
 
-export function ConversationPanel({ messages, isGenerating, onSend }: ConversationPanelProps) {
+export function ConversationPanel({ messages, isGenerating, onSend, onRunStep, onRunPipeline }: ConversationPanelProps) {
   const [input, setInput] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const streamRef = useRef<HTMLDivElement>(null);
+  const [showForm, setShowForm] = useState(true);
 
   const handleSend = () => {
     const text = input.trim();
@@ -46,7 +52,7 @@ export function ConversationPanel({ messages, isGenerating, onSend }: Conversati
           </div>
         )}
         {messages.map((msg) => (
-          <div key={msg.id} className={`chat-msg ${msg.role}`}>
+          <div key={msg.id} className={`chat-msg ${msg.role}${msg.kind === 'log' ? ' log' : ''}`}>
             {msg.attachments && msg.attachments.length > 0 && (
               <div className="chat-attachments">
                 {msg.attachments.map((url, i) => (
@@ -75,10 +81,13 @@ export function ConversationPanel({ messages, isGenerating, onSend }: Conversati
           </div>
         ))}
 
-        {messages.length > 0 && (
-          <TemplateSection />
-        )}
       </div>
+
+      {showForm && (
+        <NewPipelineForm running={isGenerating} onSubmit={onRunPipeline} />
+      )}
+
+      <StepPanel running={isGenerating} onRun={onRunStep} />
 
       <PipelineDebug isGenerating={isGenerating} />
 
@@ -95,6 +104,13 @@ export function ConversationPanel({ messages, isGenerating, onSend }: Conversati
 
       <div className="input-area">
         <div className="input-toolbar">
+          <button
+            className={`btn-icon btn-ghost btn-sm${showForm ? ' active' : ''}`}
+            title="一键生成表单"
+            onClick={() => setShowForm((s) => !s)}
+          >
+            ＋ 新建套图
+          </button>
           <div className="agent-select">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z" />

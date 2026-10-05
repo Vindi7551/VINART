@@ -1,0 +1,11 @@
+{
+  "_comment": "秋收调（harvest fall）——秋季题材套图通用：南瓜橙、枫叶铜、奶油底板、橄榄绿。文字主色 ink 为深棕，压图时依赖渲染器的反相底衬兜底保证可读性。",
+  "_usedBy": ["goose-PT01", "goose-PT02", "goose-PT03", "goose-PT04", "goose-PT05", "goose-PT06", "goose-PT07", "goose-PT08"],
+  "ink": "#241A0F",
+  "copper": "#B8722F",
+  "maple": "#C05A2A",
+  "amber": "#E0973A",
+  "cream": "#F7F0E3",
+  "moss": "#5A5A3A",
+  "white": "#FFFFFF"
+}

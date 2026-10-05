@@ -1,0 +1,25 @@
+{
+  "name": "slab-bitter-round",
+  "title": "Bitter 重板标题 + Baloo 2 圆体标签（礼赠/玩具品类）",
+  "heading": {
+    "family": "Bitter",
+    "weight": 900,
+    "letterSpacing": "-0.012em"
+  },
+  "body": {
+    "family": "Baloo 2",
+    "weight": 700,
+    "letterSpacing": "0.01em"
+  },
+  "faces": [
+    {
+      "family": "Bitter",
+      "weights": [400, 900]
+    },
+    {
+      "family": "Baloo 2",
+      "weights": [700]
+    }
+  ],
+  "note": "标题保持 Bitter 900 的扎实板衬；标签/注记在 appearance 里配 fontFamily:'Baloo 2' 换圆体，衬线×圆体的对比拉开销级。Baloo 2 仅 700/800 两档。"
+}

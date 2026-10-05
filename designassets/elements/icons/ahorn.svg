@@ -1,0 +1,5 @@
+<!-- 枫叶（帽子上的枫叶主题呼应） -->
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <path fill="currentColor" d="M32 3 L35.5 13 L44.5 8 L42.5 19 L53 20 L45.5 28 L53.5 36 L42.5 36 L45.5 47 L35.5 42 L33.5 53 L29.5 44 L20.5 50 L23.5 38 L11.5 40 L18.5 30 L7.5 25 L19.5 22 L15.5 11 L26 15 Z"/>
+  <path fill="currentColor" d="M30.6 50 h2.8 v9 h-2.8 z"/>
+</svg>

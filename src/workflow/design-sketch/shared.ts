@@ -228,6 +228,8 @@ export function wrap(l: Painted, box: Box, inner: string, background?: string): 
     shapeCss(l, box),
     transformCss(l, box),
     strokeCss(l),
+    // 图层透明度(外观 opacity):作用在容器上,整层含描边/底衬一起淡出
+    (l as Painted).opacity != null ? `opacity:${(l as Painted).opacity}` : '',
   ].filter(Boolean);
   if (extra.length) style.push(extra.join(';'));
 

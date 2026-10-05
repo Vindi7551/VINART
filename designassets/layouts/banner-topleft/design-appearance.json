@@ -1,0 +1,9 @@
+{
+  "palette": "warm-copper",
+  "fontScheme": "legacy-system",
+  "layers": {
+    "subtext": {
+      "color": "amber"
+    }
+  }
+}

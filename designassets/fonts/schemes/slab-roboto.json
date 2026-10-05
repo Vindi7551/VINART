@@ -1,0 +1,24 @@
+{
+  "name": "slab-roboto",
+  "title": "Roboto Slab 几何板衬线（可到 900）",
+  "heading": {
+    "family": "Roboto Slab",
+    "weight": 900,
+    "letterSpacing": "-0.006em"
+  },
+  "body": {
+    "family": "Roboto Slab",
+    "weight": 400,
+    "letterSpacing": "0.008em"
+  },
+  "faces": [
+    {
+      "family": "Roboto Slab",
+      "weights": [
+        400,
+        900
+      ]
+    }
+  ],
+  "note": "能到 900。⚠️ Material Design / Google 关联强。"
+}

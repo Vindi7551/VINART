@@ -1,0 +1,24 @@
+{
+  "name": "slab-zilla",
+  "title": "Zilla Slab 尖角板衬线（有个性）",
+  "heading": {
+    "family": "Zilla Slab",
+    "weight": 700,
+    "letterSpacing": "0em"
+  },
+  "body": {
+    "family": "Zilla Slab",
+    "weight": 400,
+    "letterSpacing": "0.008em"
+  },
+  "faces": [
+    {
+      "family": "Zilla Slab",
+      "weights": [
+        400,
+        700
+      ]
+    }
+  ],
+  "note": "尖角衬线、略窄、带书法细节。⚠️ 最高 700，重标题可能不够分量。"
+}

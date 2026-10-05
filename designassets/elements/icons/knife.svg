@@ -1,0 +1,10 @@
+<!-- 刀（对应 Messerfreundlich）
+     旋转变体 -45° 才读得出是刀；-135° 会退化成"叶子"，水平会像钥匙孔。
+     用 scripts/_probe-icons.ts 放大到 240px 对比后选定的。 -->
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <g transform="rotate(-45 32 32)" fill="currentColor">
+    <rect x="10" y="27" width="14" height="11" rx="3"/>
+    <rect x="24" y="26" width="3" height="13" rx="1"/>
+    <path d="M27 25 L45 25 Q56 27 58 33 Q45 40 27 40 Z"/>
+  </g>
+</svg>

@@ -1,0 +1,7 @@
+<!-- 双人并列（Freund & Kollege） -->
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="23" cy="18" r="8"/>
+  <circle cx="43" cy="18" r="8"/>
+  <path d="M9 52 C9 40 15 34 23 34 C29 34 34 37 36 42"/>
+  <path d="M55 52 C55 40 49 34 43 34 C37 34 32 37 30 42"/>
+</svg>

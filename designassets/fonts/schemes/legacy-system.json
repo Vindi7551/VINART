@@ -1,0 +1,16 @@
+{
+  "name": "legacy-system",
+  "title": "遗留：系统字体栈（不自带字体）",
+  "heading": {
+    "family": "Bookman Old Style",
+    "weight": 700,
+    "letterSpacing": "0em"
+  },
+  "body": {
+    "family": "Bookman Old Style",
+    "weight": 400,
+    "letterSpacing": "0em"
+  },
+  "faces": [],
+  "note": "⚠️ 依赖系统字体，换机器会变样。留作对照，不是推荐项。"
+}

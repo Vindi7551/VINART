@@ -100,7 +100,17 @@ export interface LayerAppearance {
    * ⚠️ 放在外观而不是版式：哪些词高亮是「长什么样」的设计决策，
    * 不影响文字占多大。渲染时逐段 escape，词里的特殊字符安全。
    */
+  /**
+   * 强调组(旧版单组,兼容保留——编辑器读写用 accents)
+   */
   accent?: { words: string[]; color: string };
+
+  /**
+   * 多组强调:每组 = 词列表 + 颜色,渲染时按词匹配染色(同词多组时先组优先)。
+   * 支持「一个标题 4-5 个颜色」——每组在图上是一个可点击的染色片段,
+   * 编辑器单行颜色跟随点击的片段切换。
+   */
+  accents?: Array<{ words: string[]; color: string }>;
 
   /**
    * 本节点的字体族（须已包含在字体方案的 `faces` 里，否则没被内联、退回系统字体）。
@@ -109,6 +119,12 @@ export interface LayerAppearance {
    * 的机制根源；标签/注记换一族（如圆体），层级立刻拉开。不改布局，归外观。
    */
   fontFamily?: string;
+
+  /**
+   * 图层透明度（0–1）。作用在**节点容器**上——整层含描边/底衬一起淡出；
+   * 想只让文字色半透明而底板不透明，用 color 的 8 位 hex（#RRGGBBAA），两者语义不同。
+   */
+  opacity?: number;
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -143,7 +159,9 @@ export const APPEARANCE_KEYS = [
   'background',
   'radius',
   'accent',
+  'accents',
   'fontFamily',
+  'opacity',
   'stroke',
   'ring',
   'edgeLine',

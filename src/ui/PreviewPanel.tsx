@@ -1,15 +1,8 @@
 import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
 import { extractElements, type ExtractedElement } from '../preview/extract-elements';
 import { createInteractionScript } from '../preview/interaction-script';
-
-interface PreviewPanelProps {
-  htmlCode?: string;
-  previewUrl?: string | null;
-  selectedElements: Set<string>;
-  onToggleElement: (id: string) => void;
-  onRegenerateSelected: () => void;
-  onExport?: () => void;
-}
+import { createLayoutEditorScript } from '../preview/layout-editor-script';
+import type { LayoutData, HostSignal } from './types';
 
 export interface ElementSelectEvent {
   tag: string;
@@ -18,6 +11,25 @@ export interface ElementSelectEvent {
   text: string;
   slotId: string;
   rect: DOMRectReadOnly;
+}
+
+interface PreviewPanelProps {
+  htmlCode?: string;
+  previewUrl?: string | null;
+  selectedElements: Set<string>;
+  onToggleElement: (id: string) => void;
+  onRegenerateSelected: () => void;
+  onExport?: () => void;
+  /** 版式编辑模式:有值 = 加载 linked.html + 受控编辑器(逐元素修改) */
+  layoutData?: LayoutData | null;
+  /** 图上操作(拖拽/缩放/旋转/就地改字)→ App 合并进持久数据 */
+  onLayerChange?: (id: string, patch: Record<string, unknown>) => void;
+  /** 图上点选 → App 侧同步选中(右栏面板跟着切) */
+  onLayerSelect?: (id: string) => void;
+  /** 点在染色词上 → 面板单行颜色切换为该词的颜色 */
+  onLayerWord?: (id: string, word: string) => void;
+  /** 宿主信号:参数面板/图层清单发起的选中与 patch,转发给 iframe */
+  hostSignal?: HostSignal | null;
 }
 
 /** 默认画布尺寸，在解析不到 HTML 尺寸时使用 */
@@ -31,6 +43,11 @@ export function PreviewPanel({
   onToggleElement,
   onRegenerateSelected,
   onExport,
+  layoutData,
+  onLayerChange,
+  onLayerSelect,
+  onLayerWord,
+  hostSignal,
 }: PreviewPanelProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -51,14 +68,58 @@ export function PreviewPanel({
     [htmlCode],
   );
 
+  // ── 版式编辑模式:srcdoc 只在换版式时构建一次 ──
+  // base 快照与实时数据解耦:patch 走 postMessage + App 数据合并,
+  // 若让 srcdoc 跟随数据重建,iframe 整页重载会刷新掉实时编辑态(实测踩过)
+  const [base, setBase] = useState<{
+    name: string;
+    html: string;
+    spec: string;
+    appearance: string;
+  } | null>(null);
+  useEffect(() => {
+    if (layoutData && (!base || base.name !== layoutData.name)) {
+      setBase({
+        name: layoutData.name,
+        html: layoutData.html,
+        spec: JSON.stringify(layoutData.spec),
+        appearance: JSON.stringify(layoutData.appearance),
+      });
+    }
+  }, [layoutData, base]);
+  const layoutSrcdoc = useMemo(() => {
+    if (!base) return '';
+    // 防御:后端旧实例返回的 linked.html 可能带着独立编辑器的注入——
+    // 剥干净,否则两套脚本同屏互相吞事件(实测:交互全部失效)
+    let html = base.html;
+    const s0 = html.indexOf('<!--vinart-editor-start-->');
+    if (s0 >= 0) {
+      const e0 = html.indexOf('<!--vinart-editor-end-->', s0);
+      if (e0 >= 0) html = html.slice(0, s0) + html.slice(e0 + 26);
+    }
+    html = html.replace(
+      /<script type="application\/json" id="__vinart-data">[\s\S]*?<\/script>\s*/g,
+      '',
+    );
+    // 相对素材的基准:dev-server 的 /files 静态映射(必须进 head)
+    const baseTag = `<base href="/files/test_product/layout/${base.name}/">`;
+    // 数据块 + 编辑脚本必须注入 **body 末尾**——放 head 里执行时 body/canvas
+    // 还不存在,脚本会静默退出,交互全无(实测踩过)
+    const inject =
+      `<script type="application/json" id="__vinart-data">${base.spec}</script>` +
+      `<script type="application/json" id="__vinart-appearance">${base.appearance}</script>` +
+      createLayoutEditorScript();
+    return html
+      .replace('</head>', baseTag + '</head>')
+      .replace('</body>', inject + '</body>');
+  }, [base]);
+
   // ── iframe srcdoc ──
   const srcdoc = useMemo(() => {
+    if (layoutData) return layoutSrcdoc;
     if (!htmlCode) return '';
-    return htmlCode.replace(
-      '</body>',
-      `${createInteractionScript()}</body>`,
-    );
-  }, [htmlCode]);
+    return htmlCode.replace('</body>', `${createInteractionScript()}</body>`);
+  }, [layoutData, layoutSrcdoc, htmlCode]);
 
   // ── 自动适应画布 ──
   const fitToCanvas = useCallback(() => {
@@ -92,10 +153,10 @@ export function PreviewPanel({
     if (htmlCode) setCanvasSize({ w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT });
   }, [htmlCode]);
 
-  // 画布尺寸更新后重新适应
+  // 版式编辑模式:画布尺寸直接来自 spec
   useEffect(() => {
-    fitToCanvas();
-  }, [canvasSize, fitToCanvas]);
+    if (layoutData) setCanvasSize({ w: layoutData.spec.canvas.width, h: layoutData.spec.canvas.height });
+  }, [layoutData]);
 
   // ── 鼠标拖拽平移 ──
   const onMouseDown = useCallback(
@@ -147,15 +208,31 @@ export function PreviewPanel({
   );
 
   // ── 与 iframe 通信 ──
+  // 信封同时带 action(旧 interaction-script)与 type(受控编辑脚本)——两代脚本共用一个通道
   const sendToIframe = useCallback(
     (action: string, data?: Record<string, unknown>) => {
       iframeRef.current?.contentWindow?.postMessage(
-        { source: 'vinart', action, ...data },
+        { source: 'vinart', action, type: action, ...data },
         '*',
       );
     },
     [],
   );
+
+  // zoom 变化 → 编辑脚本换算鼠标 delta 用
+  useEffect(() => {
+    if (layoutData) sendToIframe('ve:viewport', { zoom });
+  }, [zoom, layoutData, sendToIframe]);
+
+  // 宿主信号(面板发起的选中/patch)转发给 iframe
+  const lastSeq = useRef(0);
+  useEffect(() => {
+    if (!hostSignal || hostSignal.seq === lastSeq.current) return;
+    lastSeq.current = hostSignal.seq;
+    if (hostSignal.type === 'select') sendToIframe('ve:select', { id: hostSignal.id });
+    if (hostSignal.type === 'patch')
+      sendToIframe('ve:patch', { id: hostSignal.id, patch: hostSignal.patch });
+  }, [hostSignal, sendToIframe]);
 
   // ── 列表→画布：选中新增元素时通知 iframe 高亮 ──
   const prevSelected = useRef<Set<string>>(new Set());
@@ -211,11 +288,21 @@ export function PreviewPanel({
       if (msg.type === 'vinart:canvas-size' && msg.width > 0 && msg.height > 0) {
         setCanvasSize({ w: msg.width, h: msg.height });
       }
+
+      // 版式编辑通路:图上点选/图上操作 → App 合并持久数据
+      if (layoutData && msg.source === 'vinart-editor') {
+        if (msg.type === 've:select' && msg.id) onLayerSelect?.(msg.id as string);
+        if (msg.type === 've:word' && msg.id) onLayerWord?.(msg.id as string, msg.word as string);
+        if (msg.type === 've:change' && msg.id) {
+          onLayerSelect?.(msg.id as string);
+          onLayerChange?.(msg.id as string, (msg.patch ?? {}) as Record<string, unknown>);
+        }
+      }
     }
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [elements, selectedElements, onToggleElement]);
+  }, [elements, selectedElements, onToggleElement, layoutData, onLayerChange, onLayerSelect]);
 
   const modifyElementStyle = useCallback(
     (property: string, value: string) => {
@@ -251,7 +338,7 @@ export function PreviewPanel({
         onMouseLeave={onMouseUp}
         onWheel={onWheel}
       >
-        {htmlCode ? (
+        {srcdoc ? (
           <div
             ref={wrapperRef}
             className="canvas-wrapper"
@@ -277,7 +364,7 @@ export function PreviewPanel({
             />
           </div>
         ) : previewUrl ? (
-          <img className="preview-image" src={previewUrl} alt="设计预览" />
+          <img className="preview-image" src={previewUrl ?? undefined} alt="设计预览" />
         ) : (
           <div className="preview-placeholder">
             <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -291,7 +378,7 @@ export function PreviewPanel({
         )}
 
         {/* 缩放控件 + 导出 */}
-        {htmlCode && (
+        {(htmlCode || layoutData) && (
           <div className="zoom-controls">
             <button className="zoom-btn" onClick={() => setZoom((z) => Math.min(5, z * 1.2))} title="放大">
               +
@@ -305,7 +392,7 @@ export function PreviewPanel({
             <button className="zoom-btn zoom-fit" onClick={fitToCanvas} title="适应窗口">
               ⊡
             </button>
-            {onExport && (
+            {onExport && htmlCode && (
               <button className="export-btn" onClick={onExport} title="渲染导出为成品图">
                 ⬇ 导出
               </button>
@@ -314,52 +401,54 @@ export function PreviewPanel({
         )}
       </div>
 
-      <div className="element-list">
-        <div className="element-list-header">
-          <span className="element-list-title">
-            {htmlCode ? `设计元素 (${elements.length})` : '图像元素'}
-          </span>
-          {hasSelection && (
-            <button className="btn btn-sm" onClick={onRegenerateSelected}>
-              重新生成 ({selectedElements.size})
-            </button>
-          )}
-        </div>
-        <div className="element-items">
-          {htmlCode ? (
-            elements.map((el) => (
-              <label
-                key={el.id}
-                className={`element-tag${selectedElements.has(el.id) ? ' selected' : ''}`}
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedElements.has(el.id)}
-                  onChange={() => onToggleElement(el.id)}
-                />
-                <span className="element-tag-type">{el.type}</span>
-                {el.label}
-              </label>
-            ))
-          ) : (
-            <>
-              {['背景', '主视觉', '标题', '副标题', '价格标签', 'CTA 按钮'].map((label, i) => (
+      {!layoutData && (
+        <div className="element-list">
+          <div className="element-list-header">
+            <span className="element-list-title">
+              {htmlCode ? `设计元素 (${elements.length})` : '图像元素'}
+            </span>
+            {hasSelection && (
+              <button className="btn btn-sm" onClick={onRegenerateSelected}>
+                重新生成 ({selectedElements.size})
+              </button>
+            )}
+          </div>
+          <div className="element-items">
+            {htmlCode ? (
+              elements.map((el) => (
                 <label
-                  key={i}
-                  className={`element-tag${selectedElements.has(label) ? ' selected' : ''}`}
+                  key={el.id}
+                  className={`element-tag${selectedElements.has(el.id) ? ' selected' : ''}`}
                 >
                   <input
                     type="checkbox"
-                    checked={selectedElements.has(label)}
-                    onChange={() => onToggleElement(label)}
+                    checked={selectedElements.has(el.id)}
+                    onChange={() => onToggleElement(el.id)}
                   />
-                  {label}
+                  <span className="element-tag-type">{el.type}</span>
+                  {el.label}
                 </label>
-              ))}
-            </>
-          )}
+              ))
+            ) : (
+              <>
+                {['背景', '主视觉', '标题', '副标题', '价格标签', 'CTA 按钮'].map((label, i) => (
+                  <label
+                    key={i}
+                    className={`element-tag${selectedElements.has(label) ? ' selected' : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedElements.has(label)}
+                      onChange={() => onToggleElement(label)}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </section>
   );
 }

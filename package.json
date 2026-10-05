@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:api": "node scripts/run-ts.mjs scripts/dev-server.ts",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "step": "node scripts/run-ts.mjs"
   },
   "dependencies": {
     "playwright": "^1.61.1",

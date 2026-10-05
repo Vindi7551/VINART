@@ -1,0 +1,73 @@
+{
+  "name": "split-diagonal",
+  "title": "图片2 复刻 — Schneiden und Servieren（斜切双场景：备料 / 上菜）",
+  "product": "test_product/af39f425-770e-472e-a21e-6964f7864974.png",
+  "canvas": {
+    "width": 2000,
+    "height": 2000
+  },
+  "layers": [
+    {
+      "id": "bg",
+      "type": "splitBackground",
+      "source": "ai",
+      "left": "scene-prep.png",
+      "right": "scene-serve.png",
+      "edge": {
+        "orientation": "vertical",
+        "topX": 0.42,
+        "bottomX": 0.52
+      }
+    },
+    {
+      "id": "headline",
+      "type": "banner",
+      "source": "html",
+      "lines": [
+        "SCHNEIDEN UND SERVIEREN"
+      ],
+      "x": 0.015,
+      "y": 0.016,
+      "w": 0.97,
+      "h": 0.104,
+      "align": "center",
+      "seed": 21
+    },
+    {
+      "id": "tab-vorbereiten",
+      "type": "tab",
+      "source": "html",
+      "text": "Vorbereiten",
+      "x": 0.022,
+      "y": 0.152,
+      "w": 0.235,
+      "h": 0.062,
+      "align": "left"
+    },
+    {
+      "id": "tab-anrichten",
+      "type": "tab",
+      "source": "html",
+      "text": "Anrichten",
+      "x": 0.7,
+      "y": 0.152,
+      "w": 0.235,
+      "h": 0.062,
+      "align": "left"
+    },
+    {
+      "id": "banner-3",
+      "type": "banner",
+      "source": "html",
+      "lines": [
+        "Für Brot, Käse, Obst und Snacks"
+      ],
+      "x": 0.015,
+      "y": 0.874,
+      "w": 0.97,
+      "h": 0.102,
+      "align": "center",
+      "seed": 33
+    }
+  ]
+}

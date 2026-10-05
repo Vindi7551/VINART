@@ -1,0 +1,8 @@
+<!-- 双人 + 心形（Partner） -->
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="20" cy="19" r="7"/>
+  <circle cx="44" cy="19" r="7"/>
+  <path d="M8 50 C8 41 13 36 20 36 C25 36 29 38 31 42"/>
+  <path d="M56 50 C56 41 51 36 44 36 C39 36 35 38 33 42"/>
+  <path d="M32 45 c-2.5 -4.5 -8 -3.5 -8 1 c0 3.5 5 6 8 8 c3 -2 8 -4.5 8 -8 c0 -4.5 -5.5 -5.5 -8 -1 z" fill="currentColor" stroke="none"/>
+</svg>

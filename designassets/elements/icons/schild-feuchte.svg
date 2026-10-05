@@ -1,0 +1,5 @@
+<!-- 防潮（盾形 + 向下箭头 = 水分被挡） -->
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M32 6 L54 14 V32 C54 46 44 56 32 60 C20 56 10 46 10 32 V14 Z"/>
+  <path d="M23 28 l9 9 9 -9"/>
+</svg>
