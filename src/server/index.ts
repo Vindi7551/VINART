@@ -19,8 +19,8 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { join, resolve, sep } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 const PORT = Number(process.env.PORT) || 8787;
@@ -51,7 +51,7 @@ const STEPS: StepDef[] = [
     label: '01 · 图像识别',
     description: '产品照 → 结构化可见事实 JSON。不填参数用当前默认产品照。',
     argsHint: '可选:换个图片路径',
-    script: 'scripts/step-01-perceive.ts',
+    script: 'src/workflow/steps/step-01-perceive.ts',
     buildArgs: (q) => {
       const image = q.get('image');
       return [...(image ? [image] : []), ...rawArgs(q)];
@@ -62,7 +62,7 @@ const STEPS: StepDef[] = [
     label: '02 · 卖点审计',
     description: 'listing 卖点 → 要素级证据审计(给 03 消费)。消费 01 的输出(step-01.json 同目录)。',
     argsHint: 'test_product/shirt/step-01.json --bullets test_product/shirt/童装卖点.txt --lang en',
-    script: 'scripts/step-02-claims.ts',
+    script: 'src/workflow/steps/step-02-claims.ts',
     buildArgs: rawArgs,
   },
   {
@@ -70,7 +70,7 @@ const STEPS: StepDef[] = [
     label: '03 · 套图规划',
     description: '卖点审计 → 每张图回答什么购买问题(给 04 消费)。消费 02 的输出(step-02.json 同目录)。',
     argsHint: 'test_product/shirt/step-02.json --bullets test_product/shirt/童装卖点.txt --lang en',
-    script: 'scripts/step-03-slots.ts',
+    script: 'src/workflow/steps/step-03-slots.ts',
     buildArgs: rawArgs,
   },
   {
@@ -78,7 +78,7 @@ const STEPS: StepDef[] = [
     label: '04 · 方案编写',
     description: '规划+卖点+事实 → 每个副图位的创意方案 md(test_product/briefs/)。全部槽位较贵,建议先 --only 单跑。',
     argsHint: '--bullets test_product/shirt/童装卖点.txt --only PT01',
-    script: 'scripts/step-04-brief.ts',
+    script: 'src/workflow/steps/step-04-brief.ts',
     buildArgs: rawArgs,
   },
   {
@@ -86,7 +86,7 @@ const STEPS: StepDef[] = [
     label: '05 · 外观编译',
     description: '版式+方案+产品照 → 专属配色 design-appearance.json(多轮 LLM+视觉验收,较慢)。',
     argsHint: 'test_product/layout/shirt-PT01/design-sketch.json --brief test_product/briefs/shirt-PT01.md',
-    script: 'scripts/step-05-appearance.ts',
+    script: 'src/workflow/steps/step-05-appearance.ts',
     buildArgs: rawArgs,
   },
   {
@@ -94,7 +94,7 @@ const STEPS: StepDef[] = [
     label: '06 · 素材订单',
     description: '版式+方案 → assets.json(生图提示词+参考图角色,gen 阶段的前置)。',
     argsHint: 'test_product/layout/shirt-PT01/design-sketch.json --brief test_product/briefs/shirt-PT01.md',
-    script: 'scripts/step-order.ts',
+    script: 'src/workflow/steps/step-order.ts',
     buildArgs: rawArgs,
   },
   {
@@ -102,7 +102,7 @@ const STEPS: StepDef[] = [
     label: '07 · 出图',
     description: '吃版式规格出图:sketch 草图(零 API,秒出)/ gen 生素材(烧钱)/ final 成品。spec 必填。',
     argsHint: 'test_product/layout/shirt-PT01/design-sketch.json sketch --no-library',
-    script: 'scripts/step-layout.ts',
+    script: 'src/workflow/steps/step-layout.ts',
     buildArgs: rawArgs,
   },
 ];
@@ -118,11 +118,18 @@ const PNG_PRIORITY = ['final.png', 'sketch.png'];
  *   POST /api/layout/<name>/render → spawn step-layout final(纯重渲,零 API 成本)
  * name 只允许字母数字横线下划线,防路径穿越。
  */
-async function handleLayout(req: IncomingMessage, res: ServerResponse, rest: string) {
+async function handleLayout(
+  req: IncomingMessage,
+  res: ServerResponse,
+  rest: string,
+  sessionId: string | null,
+) {
   // 目录名可能含点号(取自图片文件名,如 61bIICZBYDL._AC_SL1500_-PT01)——
   // 只禁斜体与 .. ,再用 resolve 后的前缀校验做根本性防穿越
   const m = /^([^/\\]+)\/(data|save|render)$/.exec(rest);
-  const LAYOUT_ROOT = resolve('test_product/layout');
+  // 会话带工作目录 → layoutsRoot = <workDir>/designs;否则旧约定
+  const sessionRoot = sessionId ? join(await transcript.getWorkDir(sessionId), 'designs') : null;
+  const LAYOUT_ROOT = sessionRoot ?? resolve('test_product/layout');
   const name = m?.[1] ?? '';
   const dir = resolve(LAYOUT_ROOT, name);
   if (
@@ -149,10 +156,10 @@ async function handleLayout(req: IncomingMessage, res: ServerResponse, rest: str
     // ⚠️ html **始终现场生成**,不读 final.linked.html——那个文件是渲染快照,
     // 可能带着独立编辑器的注入残留;残留脚本与 React 下发的受控编辑器同屏
     // 会互相吞事件(实测:点选/拖拽全部失效)。spec 才是编辑的数据源。
-    const { renderDesign } = await import('../src/workflow/design-sketch/render');
-    const { applyAppearance } = await import('../src/workflow/design-sketch/design-appearance');
+    const { renderDesign } = await import('../workflow/design-sketch/render');
+    const { applyAppearance } = await import('../workflow/design-sketch/design-appearance');
     const { loadAppearance, loadPalette, loadTypography } = await import(
-      '../src/workflow/design-sketch/runtime'
+      '../workflow/design-sketch/runtime'
     );
     const app2 = loadAppearance(specPath);
     const merged = {
@@ -220,7 +227,7 @@ async function handleLayout(req: IncomingMessage, res: ServerResponse, rest: str
       process.execPath,
       [
         'scripts/run-ts.mjs',
-        'scripts/step-layout.ts',
+        'src/workflow/steps/step-layout.ts',
         `test_product/layout/${name}/design-sketch.json`,
         'final',
         '--no-library',
@@ -251,7 +258,246 @@ async function handleLayout(req: IncomingMessage, res: ServerResponse, rest: str
   res.end('method not allowed');
 }
 
-function handleArtifacts(res: ServerResponse) {  const layoutDir = resolve('test_product/layout');
+/**
+ * 会话层 API:
+ *   GET    /api/sessions                → 索引(列表)
+ *   POST   /api/sessions                → 新建 → { id }
+ *   GET    /api/sessions/:id            → { id, events, messages, title }
+ *   DELETE /api/sessions/:id            → 删除
+ *   POST   /api/sessions/:id/events     → 追加事件(消息/操作)
+ *   POST   /api/sessions/:id/chat       → { text } → SSE 流式 LLM 对话,完成后落盘
+ */
+async function handleSessions(
+  req: IncomingMessage,
+  res: ServerResponse,
+  path: string,
+  method: string,
+) {
+  const JSON_HDR = { 'Content-Type': 'application/json; charset=utf-8' };
+  const sessionIdMatch =
+    /^\/api\/sessions\/([\w.-]+)(?:\/(events|chat|artifacts|workdir|file)(?:\/(.*))?)?$/.exec(path);
+
+  // 列表
+  if (path === '/api/sessions' && method === 'GET') {
+    res.writeHead(200, JSON_HDR);
+    return res.end(JSON.stringify(await transcript.listSessions()));
+  }
+  // 新建
+  if (path === '/api/sessions' && method === 'POST') {
+    const id = await transcript.createSession();
+    res.writeHead(200, JSON_HDR);
+    return res.end(JSON.stringify({ id }));
+  }
+
+  if (!sessionIdMatch) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('bad session path');
+  }
+  const sessionId = sessionIdMatch[1];
+  const sub = sessionIdMatch[2];
+
+  // 读单会话
+  if (!sub && method === 'GET') {
+    const events = await transcript.loadTranscript(sessionId);
+    res.writeHead(200, JSON_HDR);
+    return res.end(
+      JSON.stringify({
+        id: sessionId,
+        events,
+        messages: transcript.deriveMessages(events),
+        title: transcript.deriveTitle(events),
+      }),
+    );
+  }
+  // 删除
+  if (!sub && method === 'DELETE') {
+    await transcript.deleteSession(sessionId);
+    dropChatSession(sessionId);
+    res.writeHead(200, JSON_HDR);
+    return res.end(JSON.stringify({ ok: true }));
+  }
+  // ── 工作目录:设置(📂)与读取 ──
+  if (sub === 'workdir' && method === 'POST') {
+    const body = (await readJsonBody(req)) as { workDir?: string };
+    const dir = String(body.workDir ?? '').trim();
+    if (!dir) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('缺少 workDir');
+    }
+    const abs = await transcript.setWorkDir(sessionId, dir);
+    res.writeHead(200, JSON_HDR);
+    return res.end(JSON.stringify({ ok: true, workDir: abs }));
+  }
+  if (sub === 'workdir' && method === 'GET') {
+    res.writeHead(200, JSON_HDR);
+    return res.end(JSON.stringify({ workDir: await transcript.getWorkDir(sessionId) }));
+  }
+
+  // ── 产物清单(按会话工作目录;legacy 回退 test_product/layout)──
+  if (sub === 'artifacts' && method === 'GET') {
+    return handleArtifacts(res, sessionId);
+  }
+
+  // ── 工作目录内文件流式服务(iframe 素材/缩略图的 base)──
+  // 纯路径式:/api/sessions/<sid>/file/<rel...>。
+  // 不要改成 ?rel= 查询串:<base href> 下的相对引用解析时
+  // 会丢掉 base 的最后一段 path(file)且不继承 query,RFC 3986 §5.2.2。
+  if (sub === 'file' && method === 'GET') {
+    let rel: string;
+    try {
+      rel = (sessionIdMatch[3] ?? '').split('/').map(decodeURIComponent).join('/');
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('bad path');
+    }
+    const wd = await transcript.getWorkDir(sessionId);
+    const abs = resolve(wd, rel);
+    if (!abs.startsWith(wd + sep) || !existsSync(abs) || statSync(abs).isDirectory()) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('not found');
+    }
+    const ext = abs.split('.').pop()?.toLowerCase() ?? '';
+    const MIME: Record<string, string> = {
+      png: 'image/png',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      webp: 'image/webp',
+      gif: 'image/gif',
+      json: 'application/json',
+      md: 'text/markdown',
+      txt: 'text/plain',
+    };
+    res.writeHead(200, { 'Content-Type': MIME[ext] ?? 'application/octet-stream' });
+    return res.end(readFileSync(abs));
+  }
+
+  // 追加事件(编辑器操作与消息共用)
+  if (sub === 'events' && method === 'POST') {
+    const body = (await readJsonBody(req)) as Record<string, unknown>;
+    const kind = body.kind as string;
+    if (kind !== 'message' && kind !== 'action' && kind !== 'meta') {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('bad event kind');
+    }
+    await transcript.appendEvent(sessionId, {
+      ...body,
+      ts: String(body.ts ?? new Date().toISOString()),
+    } as Parameters<typeof transcript.appendEvent>[1]);
+    res.writeHead(200, JSON_HDR);
+    return res.end(JSON.stringify({ ok: true }));
+  }
+  // LLM 对话(SSE 流式;完成后 user/assistant 消息落盘)
+  if (sub === 'chat' && method === 'POST') {
+    const body = (await readJsonBody(req)) as { text?: string; activeLayout?: string };
+    const text = String(body.text ?? '').trim();
+    if (!text) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('缺少 text');
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    const send = (event: string, data: unknown) =>
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+
+    try {
+      const session = getChatSession(sessionId);
+      if (session.isStreaming) {
+        send('error', { message: '该会话正在生成中' });
+        return res.end();
+      }
+      const systemNote = await buildLayoutNote(sessionId, body.activeLayout as string | undefined);
+      await transcript.appendEvent(sessionId, {
+        ts: new Date().toISOString(),
+        kind: 'message',
+        id: `msg_${crypto.randomUUID().slice(0, 8)}`,
+        role: 'user',
+        text,
+      });
+
+      for await (const chunk of session.send(text, undefined, { systemNote })) {
+        if (chunk.content) send('chunk', { content: chunk.content });
+      }
+
+      // assistant 完整回复落盘(send 内部已 push 到历史)
+      const msgs = session.messages;
+      const last = msgs[msgs.length - 1];
+      const full =
+        last && last.role === 'assistant' && typeof last.content === 'string'
+          ? last.content
+          : '';
+      if (full) {
+        await transcript.appendEvent(sessionId, {
+          ts: new Date().toISOString(),
+          kind: 'message',
+          id: `msg_${crypto.randomUUID().slice(0, 8)}`,
+          role: 'assistant',
+          text: full,
+        });
+      }
+      send('done', { ok: true });
+      res.end();
+    } catch (e) {
+      send('error', { message: String((e as Error).message ?? e) });
+      res.end();
+    }
+    return;
+  }
+
+  res.writeHead(405, { 'Content-Type': 'text/plain; charset=utf-8' });
+  res.end('method not allowed');
+}
+
+/** 版式摘要 → systemNote 注入(让 LLM 知道「当前打开的版式」;每轮按最新状态重算) */
+async function buildLayoutNote(sessionId: string, layoutName?: string | null): Promise<string> {
+  if (!layoutName) return '';
+  const wd = await transcript.getWorkDir(sessionId);
+  const dir = join(wd, 'designs', layoutName);
+  const specPath = join(dir, 'design-sketch.json');
+  if (!existsSync(specPath)) return '';
+  try {
+    const spec = JSON.parse(readFileSync(specPath, 'utf8')) as {
+      canvas: { width: number; height: number };
+      layers: { id: string; type: string; text?: string | string[] }[];
+    };
+    const layers = spec.layers
+      .map((l) => {
+        const t = Array.isArray(l.text) ? l.text.join(' ') : (l.text ?? '');
+        return `- ${l.id}(${l.type})${t ? `「${String(t).slice(0, 40)}」` : ''}`;
+      })
+      .join('\n');
+    let appearanceNote = '';
+    const appPath = join(dir, 'design-appearance.json');
+    if (existsSync(appPath)) {
+      const app = JSON.parse(readFileSync(appPath, 'utf8')) as {
+        palette?: unknown;
+        layers?: Record<string, { color?: string }>;
+      };
+      const colors = Object.entries(app.layers ?? {})
+        .map(([k, v]) => `${k}=${v.color ?? '?'}`)
+        .slice(0, 8)
+        .join('、');
+      appearanceNote = `\n外观(部分):${colors}`;
+      void app.palette;
+    }
+    return (
+      `【当前打开的版式】${layoutName}(${spec.canvas.width}×${spec.canvas.height})\n` +
+      `图层:\n${layers}${appearanceNote}\n` +
+      `用户说「标题/按钮/某个词」时,指的就是上面清单里的对应元素。`
+    );
+  } catch {
+    return '';
+  }
+}
+
+function handleArtifacts(res: ServerResponse, sessionId?: string | null) {
+  void (async () => {
+    const layoutsRoot = sessionId ? join(await transcript.getWorkDir(sessionId), 'designs') : resolve('test_product/layout');
+    const layoutDir = layoutsRoot;
   const items = existsSync(layoutDir)
     ? readdirSync(layoutDir, { withFileTypes: true })
         .filter((d) => d.isDirectory())
@@ -267,7 +513,13 @@ function handleArtifacts(res: ServerResponse) {  const layoutDir = resolve('test
           );
           return {
             name: d.name,
-            dir: `test_product/layout/${d.name}`,
+            // root:前端拼产物 URL 的分支依据——session 走 file API,
+            // legacy 走 /files/ 静态映射。dir 仅作展示/键用
+            root: sessionId ? ('session' as const) : ('legacy' as const),
+            dir: sessionId
+              ? `@session/${sessionId}`
+              : `test_product/layout/${d.name}`,
+            layoutsRoot,
             pngs: files.filter((f) => f.endsWith('.png')),
             htmls: files.filter((f) => f.endsWith('.html')),
           };
@@ -275,6 +527,10 @@ function handleArtifacts(res: ServerResponse) {  const layoutDir = resolve('test
     : [];
   res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(items));
+})().catch(() => {
+  res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end('[]');
+});
 }
 
 // ── 跑步骤:SSE ──
@@ -364,6 +620,8 @@ interface PipelineParams {
   slot: string; // 'all' 或 'PT01' 这类槽位号
   imagePath: string;
   bulletsPath: string;
+  /** 管线落盘根:会话工作目录(📂 设置)或缺省 test_product/<name> */
+  workDir: string;
 }
 
 const pendingPipelines = new Map<string, PipelineParams>();
@@ -407,11 +665,15 @@ async function handlePipelinePost(req: IncomingMessage, res: ServerResponse) {
       return res.end('缺少卖点文本');
     }
     const ext = m[1] === 'png' ? 'png' : m[1] === 'webp' ? 'webp' : 'jpg';
+    // 管线产物落服务端 staging(test_product/<name>/)——前端负责搬运到用户所选目录
     const dir = resolve('test_product', name);
-    mkdirSync(dir, { recursive: true });
-    const imagePath = resolve(dir, `${name}.${ext}`);
+    // 落盘根:请求带 sessionId → 该会话的工作目录(📂);否则缺省 test_product/<name>
+    const reqSessionId = typeof body.sessionId === 'string' && body.sessionId ? body.sessionId : null;
+    const workDir = reqSessionId ? await transcript.getWorkDir(reqSessionId) : dir;
+    mkdirSync(workDir, { recursive: true });
+    const imagePath = resolve(workDir, `${name}.${ext}`);
     writeFileSync(imagePath, Buffer.from(m[2], 'base64'));
-    const bulletsPath = resolve(dir, 'selling-points.txt');
+    const bulletsPath = resolve(workDir, 'selling-points.txt');
     writeFileSync(bulletsPath, String(body.bullets).trim() + '\n', 'utf8');
 
     const id = randomUUID();
@@ -422,6 +684,7 @@ async function handlePipelinePost(req: IncomingMessage, res: ServerResponse) {
       slot: typeof body.slot === 'string' && /^PT\d{2}$/.test(body.slot) ? body.slot : 'all',
       imagePath,
       bulletsPath,
+      workDir,
     });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ id }));
@@ -494,27 +757,28 @@ async function handlePipelineRun(res: ServerResponse, id: string, req: IncomingM
     aborted = true;
   });
 
-  const facts = `test_product/${p.name}/step-01.json`;
-  const claims = `test_product/${p.name}/step-02.json`;
+  const facts = join(p.workDir, 'step-01.json');
+  const claims = join(p.workDir, 'step-02.json');
   try {
     // ── 链 A 四步(中间产物全部进产品目录,互不覆盖)──
     const phases: { label: string; script: string; args: string[]; allowExit?: number[] }[] = [
-      { label: '01 · 图像识别', script: 'scripts/step-01-perceive.ts', args: [p.imagePath] },
+      { label: '01 · 图像识别', script: 'src/workflow/steps/step-01-perceive.ts', args: [p.imagePath, '--out', facts] },
       {
         label: '02 · 卖点审计',
-        script: 'scripts/step-02-claims.ts',
+        script: 'src/workflow/steps/step-02-claims.ts',
         args: [facts, '--bullets', p.bulletsPath, '--lang', p.lang],
       },
       {
         label: '03 · 套图规划',
-        script: 'scripts/step-03-slots.ts',
+        script: 'src/workflow/steps/step-03-slots.ts',
         args: [claims, '--bullets', p.bulletsPath, '--lang', p.lang],
       },
       {
         label: '04 · 方案编写',
-        script: 'scripts/step-04-brief.ts',
+        script: 'src/workflow/steps/step-04-brief.ts',
         args: [
           '--facts', facts,
+          '--workdir', p.workDir,
           '--bullets', p.bulletsPath, '--lang', p.lang, '--name', p.name,
           ...(p.slot === 'all' ? [] : ['--only', p.slot]),
         ],
@@ -538,14 +802,16 @@ async function handlePipelineRun(res: ServerResponse, id: string, req: IncomingM
     }
 
     // ── 找到 04 产出的 brief,逐份编译 + 出图 ──
-    const briefsDir = resolve('test_product/briefs');
+    // briefs 落工作目录(workDir/briefs/);旧管线(无会话)兼容 test_product/briefs
+    const briefsDir = join(p.workDir, 'briefs');
+    const designsRoot = join(p.workDir, 'designs');
     const briefs = existsSync(briefsDir)
       ? readdirSync(briefsDir)
           .filter((f) => f.startsWith(`${p.name}-`) && f.endsWith('.md'))
           .sort()
       : [];
     if (!briefs.length) {
-      send('log', { line: `✗ 没有找到任何 brief(test_product/briefs/${p.name}-*.md)` });
+      send('log', { line: `✗ 没有找到任何 brief(${briefsDir}/${p.name}-*.md)` });
       send('exit', { code: 1, failed: '04 方案编写' });
       return res.end();
     }
@@ -554,12 +820,12 @@ async function handlePipelineRun(res: ServerResponse, id: string, req: IncomingM
     for (const brief of briefs) {
       const briefPath = resolve(briefsDir, brief);
       const layoutName = brief.replace(/\.[^.]+$/, '');
-      const specPath = resolve('test_product/layout', layoutName, 'design-sketch.json');
+      const specPath = resolve(designsRoot, layoutName, 'design-sketch.json');
 
       send('log', { line: `───── 编译版式 · ${layoutName} ─────` });
       let code = await spawnPhase(
         'src/workflow/design-sketch/compile.ts',
-        [briefPath, '--product', p.imagePath],
+        [briefPath, '--product', p.imagePath, '--out', resolve(designsRoot, layoutName)],
         send,
         () => aborted,
       );
@@ -574,7 +840,7 @@ async function handlePipelineRun(res: ServerResponse, id: string, req: IncomingM
         // ── 外观编译:专属配色(从产品照派生)。失败降级为默认配色继续出图 ──
         send('log', { line: `───── 外观编译 · ${layoutName}(专属配色) ─────` });
         code = await spawnPhase(
-          'scripts/step-05-appearance.ts',
+          'src/workflow/steps/step-05-appearance.ts',
           [specPath, '--brief', briefPath, '--product', p.imagePath],
           send,
           () => aborted,
@@ -586,13 +852,14 @@ async function handlePipelineRun(res: ServerResponse, id: string, req: IncomingM
           });
         }
 
-        const layoutArgs = [specPath, 'gen', 'final', '--product', p.imagePath];
+        // --out 覆盖:成品/素材落工作目录 designs/<name>(spec 也在同目录)
+        const layoutArgs = [specPath, 'gen', 'final', '--product', p.imagePath, '--out', resolve(designsRoot, layoutName)];
         send('log', { line: `───── 出成品图 · ${layoutName}(含 AI 生图) ─────` });
-        code = await spawnPhase('scripts/step-layout.ts', layoutArgs, send, () => aborted);
+        code = await spawnPhase('src/workflow/steps/step-layout.ts', layoutArgs, send, () => aborted);
       } else {
-        const layoutArgs = [specPath, 'sketch', '--no-library'];
+        const layoutArgs = [specPath, 'sketch', '--no-library', '--out', resolve(designsRoot, layoutName)];
         send('log', { line: `───── 渲草图 · ${layoutName}(零 API) ─────` });
-        code = await spawnPhase('scripts/step-layout.ts', layoutArgs, send, () => aborted);
+        code = await spawnPhase('src/workflow/steps/step-layout.ts', layoutArgs, send, () => aborted);
       }
       if (aborted) break;
       if (code !== 0) {
@@ -601,13 +868,16 @@ async function handlePipelineRun(res: ServerResponse, id: string, req: IncomingM
       }
     }
 
-    send('log', { line: `✓ 全链完成。产物在 test_product/layout/ 与 test_product/briefs/` });
+    send('log', { line: `✓ 全链完成。产物在工作目录:` });
     send('exit', { code: 0 });
     res.end();
   } finally {
     pipelineActive = false;
   }
 }
+
+import * as transcript from '../designharness/session/transcript';
+import { getChatSession, dropChatSession } from '../designharness/session/chat-store';
 
 const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
@@ -630,8 +900,71 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
       ),
     );
   }
-  if (path === '/api/artifacts') return handleArtifacts(res);
-  if (path.startsWith('/api/layout/')) return await handleLayout(req, res, path.slice('/api/layout/'.length));
+
+  // ── 目录浏览(DSH 式):后端列目录,前端渲染应用内浏览器 ──
+  // 相比系统对话框的优势:不依赖服务进程的桌面环境,必定能弹;路径由后端确认返回
+  if (path === '/api/fs/list' && req.method === 'POST') {
+    const body = (await readJsonBody(req)) as { dir?: string };
+    const dir = String(body.dir ?? '').trim();
+    const JSON_HDR_FS = { 'Content-Type': 'application/json; charset=utf-8' };
+    // 未给路径 = 列盘符(Windows 起步视图)
+    if (!dir) {
+      const drives: string[] = [];
+      for (const c of 'CDEFGHIJKLMNOPQRSTUVWXYZ') {
+        const root = `${c}:\\`;
+        if (existsSync(root)) drives.push(root);
+      }
+      res.writeHead(200, JSON_HDR_FS);
+      return res.end(JSON.stringify({ current: '', entries: drives.map((d) => ({ name: d, kind: 'dir' })), isDriveList: true }));
+    }
+    const target = resolve(dir);
+    if (!existsSync(target) || !statSync(target).isDirectory()) {
+      res.writeHead(400, JSON_HDR_FS);
+      return res.end(JSON.stringify({ error: '目录不存在' }));
+    }
+    try {
+      const entries = readdirSync(target, { withFileTypes: true })
+        .filter((d) => d.isDirectory() && !d.name.startsWith('.'))
+        .map((d) => ({ name: d.name, kind: 'dir' as const }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      const parent = dirname(target);
+      res.writeHead(200, JSON_HDR_FS);
+      return res.end(JSON.stringify({
+        current: target,
+        entries,
+        parent: parent.startsWith(target) ? null : parent, // 已到根则无上级
+        isDriveList: false,
+      }));
+    } catch (e) {
+      res.writeHead(200, JSON_HDR_FS);
+      return res.end(JSON.stringify({ current: target, entries: [], error: `无法读取:${(e as Error).message}` }));
+    }
+  }
+  if (path === '/api/fs/mkdir' && req.method === 'POST') {
+    const body = (await readJsonBody(req)) as { parent?: string; name?: string };
+    const parent = resolve(String(body.parent ?? ''));
+    const name = String(body.name ?? '').trim();
+    if (!name || /[\\/:*?"<>|]/.test(name) || name.startsWith('.')) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('非法目录名');
+    }
+    const created = join(parent, name);
+    if (!existsSync(parent)) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('父目录不存在');
+    }
+    mkdirSync(created, { recursive: true });
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    return res.end(JSON.stringify({ path: created }));
+  }
+
+  if (path === '/api/artifacts') return handleArtifacts(res, url.searchParams.get('session'));
+  if (path.startsWith('/api/layout/')) {
+    return await handleLayout(req, res, path.slice('/api/layout/'.length), url.searchParams.get('session'));
+  }
+  if (path === '/api/sessions' || path.startsWith('/api/sessions/')) {
+    return await handleSessions(req, res, path, req.method ?? 'GET');
+  }
   if (path.startsWith('/api/run/')) {
     return handleRun(req, res, path.slice('/api/run/'.length), url.searchParams);
   }

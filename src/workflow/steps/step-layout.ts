@@ -22,13 +22,13 @@
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
-import { assembleFinal } from '../src/workflow/compose/assemble';
-import type { DesignSketch } from '../src/workflow/design-sketch/design-sketch';
-import type { AssetRequest } from '../src/workflow/assetsgen/asset-order';
-import { renderDesign } from '../src/workflow/design-sketch/render';
+import { assembleFinal } from '../../workflow/compose/assemble';
+import type { DesignSketch } from '../../workflow/design-sketch/design-sketch';
+import type { AssetRequest } from '../../workflow/assetsgen/asset-order';
+import { renderDesign } from '../../workflow/design-sketch/render';
 // 读资产 + 渲草图的共用实现（编译器 step-05 也用同一份，见 lib/sketch-runtime.ts）
-import { loadAppearance, loadPalette, loadTypography } from '../src/workflow/design-sketch/runtime';
-import type { DesignAppearance } from '../src/workflow/design-sketch/design-appearance';
+import { loadAppearance, loadPalette, loadTypography } from '../../workflow/design-sketch/runtime';
+import type { DesignAppearance } from '../../workflow/design-sketch/design-appearance';
 
 /** 配色名（溯源注释用）：引用方案给名字，内嵌专属配色给说明 */
 function paletteLabel(appearance: DesignAppearance): string {
@@ -36,8 +36,8 @@ function paletteLabel(appearance: DesignAppearance): string {
   if (appearance.palette) return '(内嵌专属配色)';
   return 'warm-copper';
 }
-import { applyAppearance } from '../src/workflow/design-sketch/design-appearance';
-import { generateAssets } from '../src/workflow/assetsgen/image';
+import { applyAppearance } from '../../workflow/design-sketch/design-appearance';
+import { generateAssets } from '../../workflow/assetsgen/image';
 
 // ── 参数 ──
 
@@ -94,6 +94,10 @@ const LIBRARY = resolve('designassets/layouts');
 /** 字体以 data URL 内联——文件很小（每个约 33KB），换来 HTML 完全自包含、可携 */
 
 const SPEC = resolve(specPath);
+
+// 输出目录覆盖:管线按会话工作目录传 --out(缺省落 test_product/layout/<name>)
+const outIdx = argv.indexOf('--out');
+const OUT_OVERRIDE = outIdx >= 0 ? resolve(argv[outIdx + 1]) : undefined;
 
 const wants = (s: string) => stageList.includes('all') || stageList.includes(s);
 
@@ -232,7 +236,8 @@ async function main() {
   // 输出目录按 **规格里的 name** 决定，不是按文件名。
   // 这样版式文件可以从库（designassets/layouts/<name>/design-sketch.json）里读，
   // 而产物落到 test_product/layout/<name>/——库与产物不混。
-  const OUT = resolve('test_product/layout', spec.name);
+  // --out 覆盖:会话工作目录模式(产物落用户选定目录)
+  const OUT = OUT_OVERRIDE ?? resolve('test_product/layout', spec.name);
   const palette = loadPalette(appearance.palette ?? 'warm-copper');
   const typography = loadTypography(fontOverride ?? appearance.fontScheme ?? 'legacy-system');
 
@@ -255,7 +260,7 @@ async function main() {
   console.log(`输出   : ${OUT}`);
 
   const browser = await launch();
-  const { createBlinkRenderer } = await import('../src/render/blink-renderer');
+  const { createBlinkRenderer } = await import('../../render/blink-renderer');
 
   try {
     // ── ① 版式草图 ──

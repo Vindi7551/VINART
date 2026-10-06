@@ -23,6 +23,14 @@ export interface ElementInfo {
 
 export type PipelineStep = 'design' | 'translate' | 'code' | 'render';
 
+/** 会话条目(GET /api/sessions 的元素) */
+export interface SessionItem {
+  id: string;
+  title: string;
+  updatedAt: string;
+  messageCount: number;
+}
+
 // ══════════════════════════════════════════════
 // 版式编辑(design-sketch / design-appearance 的前端宽松视图)
 // ══════════════════════════════════════════════

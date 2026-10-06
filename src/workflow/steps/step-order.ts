@@ -14,9 +14,9 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { generateOrders } from '../src/workflow/assetsgen/order';
-import { fileToDataUrl } from '../src/gateway/util/data-url';
-import type { DesignSketch } from '../src/workflow/design-sketch/design-sketch';
+import { generateOrders } from '../../workflow/assetsgen/order';
+import { fileToDataUrl } from '../../designharness/gateway/util/data-url';
+import type { DesignSketch } from '../../workflow/design-sketch/design-sketch';
 
 const argv = process.argv.slice(2);
 const specPath = argv[0];

@@ -17,6 +17,8 @@ export interface CreateSessionConfig {
   temperature?: number;
   /** 最大输出 token 数 */
   maxTokens?: number;
+  /** 指定会话 id(持久化键;缺省自动生成) */
+  id?: string;
 }
 
 /** 带标签的会话视图 */
@@ -70,8 +72,8 @@ export function createSessionManager(): SessionManager {
 
   return {
     create(config: CreateSessionConfig) {
-      const { label, systemPrompt, gateway, context, temperature, maxTokens } = config;
-      const session = createChatSession({ systemPrompt, gateway, context, temperature, maxTokens });
+      const { label, systemPrompt, gateway, context, temperature, maxTokens, id } = config;
+      const session = createChatSession({ id, systemPrompt, gateway, context, temperature, maxTokens });
       sessions.set(session.id, { session, label });
       return session;
     },

@@ -14,7 +14,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { planSlots, printPlan } from '../src/workflow/briefgen/plan';
+import { planSlots, printPlan } from '../../workflow/briefgen/plan';
 
 const argv = process.argv.slice(2);
 const DEFAULT_CLAIMS = 'test_product/step-02-claims.json';

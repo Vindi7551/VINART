@@ -13,8 +13,8 @@
  *   无需改动 config.ts，无需改动 gateway 内部任何代码。
  */
 
-import { createChatGateway, createImageGateway, createRegistry } from './gateway/index';
-import type { ChatGateway, ImageGateway, ModelEntry, ModelType, Protocol } from './gateway/index';
+import { createChatGateway, createImageGateway, createRegistry } from './designharness/gateway/index';
+import type { ChatGateway, ImageGateway, ModelEntry, ModelType, Protocol } from './designharness/gateway/index';
 import keys from '../keys.json';
 
 // ── 模型注册表（纯数据转换，不硬编码 type / protocol） ──

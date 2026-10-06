@@ -13,7 +13,7 @@
 
 import { existsSync } from 'node:fs';
 import { dirname, extname, resolve } from 'node:path';
-import { perceiveProduct, printPerceive } from '../src/workflow/briefgen/perceive';
+import { perceiveProduct, printPerceive } from '../../workflow/briefgen/perceive';
 
 const DEFAULT_IMAGE = 'test_product/shirt/71R5FYOm25L._AC_SX522_.jpg';
 
@@ -21,7 +21,11 @@ const imageArg = process.argv.slice(2).find((a) => !a.startsWith('--'));
 const PRODUCT_IMAGE = resolve(imageArg || DEFAULT_IMAGE);
 
 // 输出跟随**产品目录**(图片所在目录)——链 A 中间产物归产品,不同产品互不覆盖
-const OUT_JSON = resolve(dirname(PRODUCT_IMAGE), 'step-01.json');
+// --out 显式覆盖:管线按会话工作目录传(图可能是只读引用,不在工作目录)
+const outIdx = process.argv.indexOf('--out');
+const OUT_JSON = outIdx >= 0
+  ? resolve(process.argv[outIdx + 1])
+  : resolve(dirname(PRODUCT_IMAGE), 'step-01.json');
 
 async function main() {
   console.log('\n' + '═'.repeat(64));

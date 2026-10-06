@@ -15,7 +15,7 @@
 
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { compileAppearance } from '../src/workflow/appearance/compile';
+import { compileAppearance } from '../../workflow/appearance/compile';
 
 const argv = process.argv.slice(2);
 const TAKES = new Set(['--brief', '--product', '--max-rounds']);

@@ -18,7 +18,7 @@
  * ```
  */
 
-import { renderSketchFile } from '../src/workflow/design-sketch/runtime';
+import { renderSketchFile } from '../../workflow/design-sketch/runtime';
 
 const files = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 

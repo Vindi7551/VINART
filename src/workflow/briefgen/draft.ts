@@ -28,7 +28,7 @@
 
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { ChatMessage, TokenUsage } from '../../gateway/type/chat';
+import type { ChatMessage, TokenUsage } from '../../designharness/gateway/type/chat';
 import type { PlannedSlot } from './plan';
 
 export const DRAFT_MAX_TOKENS = 12000;

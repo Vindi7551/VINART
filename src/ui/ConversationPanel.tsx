@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import type { Message } from './types';
+import type { Message, SessionItem } from './types';
 import { PipelineDebug } from './PipelineDebug';
 import { StepPanel } from './StepPanel';
 import { NewPipelineForm, type PipelineFormValues } from './NewPipelineForm';
@@ -12,14 +12,39 @@ interface ConversationPanelProps {
   onRunStep: (id: string, label: string, query?: string) => void;
   /** 一键生成:图 + 卖点 → 自动跑完整链 */
   onRunPipeline: (v: PipelineFormValues) => void;
+  /** 会话列表 + 当前会话(会话层) */
+  sessions: SessionItem[];
+  activeSessionId: string | null;
+  /** 当前会话的工作目录(📂 设置;null=未设置,落缺省位置) */
+  workDir: string | null;
+  /** 打开应用内目录浏览器 */
+  onPickDir: () => void;
+  onSetWorkDir: (dir: string) => void;
+  onSwitchSession: (id: string) => void;
+  onNewSession: () => void;
 }
 
-export function ConversationPanel({ messages, isGenerating, onSend, onRunStep, onRunPipeline }: ConversationPanelProps) {
+export function ConversationPanel({
+  messages,
+  isGenerating,
+  onSend,
+  onRunStep,
+  onRunPipeline,
+  sessions,
+  activeSessionId,
+  workDir,
+  onPickDir,
+  onSetWorkDir,
+  onSwitchSession,
+  onNewSession,
+}: ConversationPanelProps) {
   const [input, setInput] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const streamRef = useRef<HTMLDivElement>(null);
   const [showForm, setShowForm] = useState(true);
+  const [dirInputOpen, setDirInputOpen] = useState(false);
+  const [dirDraft, setDirDraft] = useState('');
 
   const handleSend = () => {
     const text = input.trim();
@@ -45,6 +70,76 @@ export function ConversationPanel({ messages, isGenerating, onSend, onRunStep, o
 
   return (
     <aside className="conversation-panel">
+      {/* 会话条:列表切换 + 新建(会话历史持久化在服务端) */}
+      <div
+        className="session-bar"
+        style={{ display: 'flex', gap: 6, padding: '6px 10px', borderBottom: '1px solid #e5e7eb', alignItems: 'center' }}
+      >
+        <select
+          className="session-select"
+          style={{ flex: 1, fontSize: 12, border: '1px solid #d1d5db', borderRadius: 4, padding: '2px 4px' }}
+          value={activeSessionId ?? ''}
+          onChange={(e) => onSwitchSession(e.target.value)}
+        >
+          {sessions.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.title}
+            </option>
+          ))}
+        </select>
+        <button
+          className="session-new"
+          style={{ cursor: 'pointer', border: '1px solid #d1d5db', borderRadius: 4, padding: '2px 8px' }}
+          onClick={onNewSession}
+          title="新建会话"
+        >
+          ＋
+        </button>
+      </div>
+      {/* 工作目录:📂 设置(该会话的产物落这里;产品图只读引用原位) */}
+      <div
+        className="workdir-bar"
+        style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '5px 10px', borderBottom: '1px solid #eef0f3', fontSize: 12 }}
+      >
+        <button
+          style={{ cursor: 'pointer', border: '1px solid #d1d5db', borderRadius: 4, padding: '1px 7px' }}
+          title={workDir ? `当前:${workDir}\n点击重新选择` : '点击浏览并选择工作目录'}
+          onClick={onPickDir}
+        >
+          📂
+        </button>
+        {dirInputOpen ? (
+          <div style={{ flex: 1, display: 'flex', gap: 4 }}>
+            <input
+              autoFocus
+              style={{ flex: 1, minWidth: 0, fontSize: 12, border: '1px solid #d1d5db', borderRadius: 4, padding: '2px 6px' }}
+              placeholder="输入工作目录的完整路径,如 D:\\我的设计\\秋季系列"
+              value={dirDraft}
+              onChange={(e) => setDirDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && dirDraft.trim()) {
+                  onSetWorkDir(dirDraft.trim());
+                  setDirInputOpen(false);
+                  setDirDraft('');
+                }
+                if (e.key === 'Escape') setDirInputOpen(false);
+              }}
+            />
+            <button style={{ cursor: 'pointer' }} onClick={() => {
+              if (dirDraft.trim()) { onSetWorkDir(dirDraft.trim()); setDirInputOpen(false); setDirDraft(''); }
+            }}>确定</button>
+          </div>
+        ) : (
+          <>
+            <span style={{ color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }} title={workDir ?? ''}>
+              {workDir ?? '未设置工作目录——点击 📂 弹出选择框'}
+            </span>
+            <a style={{ color: '#1b6fd1', cursor: 'pointer', fontSize: 11 }} onClick={() => setDirInputOpen(true)}>
+              手输
+            </a>
+          </>
+        )}
+      </div>
       <div className="chat-stream" ref={streamRef}>
         {messages.length === 0 && (
           <div className="chat-empty">

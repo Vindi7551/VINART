@@ -24,7 +24,7 @@
 
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { ChatMessage, TokenUsage } from '../../gateway/type/chat';
+import type { ChatMessage, TokenUsage } from '../../designharness/gateway/type/chat';
 
 /**
  * 输出 token 上限。

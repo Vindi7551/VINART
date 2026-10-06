@@ -20,7 +20,7 @@
 
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { ChatMessage, TokenUsage } from '../../gateway/type/chat';
+import type { ChatMessage, TokenUsage } from '../../designharness/gateway/type/chat';
 import type { WorkItem } from './claims';
 
 export const PLAN_MAX_TOKENS = 30000;

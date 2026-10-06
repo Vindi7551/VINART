@@ -14,6 +14,8 @@ interface SessionConfig {
   temperature?: number;
   /** 最大输出 token 数，默认 32768 */
   maxTokens?: number;
+  /** 指定会话 id(持久化键;缺省自动生成) */
+  id?: string;
 }
 
 /**
@@ -22,7 +24,7 @@ interface SessionConfig {
  * Session 只管对话生命周期：维护历史、调用 context 组装请求、调用 gateway、中止控制。
  */
 export function createChatSession(config: SessionConfig): ChatSession {
-  const { systemPrompt, gateway, context, temperature = 1.0, maxTokens = 32768 } = config;
+  const { systemPrompt, gateway, context, temperature = 1.0, maxTokens = 32768, id: fixedId } = config;
 
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
@@ -33,7 +35,7 @@ export function createChatSession(config: SessionConfig): ChatSession {
   let streaming = false;
 
   return {
-    id: crypto.randomUUID(),
+    id: fixedId ?? crypto.randomUUID(),
 
     get messages() {
       return [...messages];
@@ -47,7 +49,11 @@ export function createChatSession(config: SessionConfig): ChatSession {
       return { ...usage };
     },
 
-    async *send(userMessage: string, attachments?: Attachment[]) {
+    async *send(
+      userMessage: string,
+      attachments?: Attachment[],
+      opts?: { systemNote?: string },
+    ) {
       // ── 并发防护 ──
       if (streaming) {
         throw new Error('Another send() is already in progress. Call abort() first.');
@@ -76,11 +82,19 @@ export function createChatSession(config: SessionConfig): ChatSession {
         // 2. 追加用户消息到历史
         messages.push({ role: 'user', content: userMessage });
 
+        // 2.5 动态上下文注入:附加 system 消息(system 主提示之后、user 之前)。
+        // 只进本轮请求,不进持久历史——每轮按最新状态重算(如当前打开的版式)
+        const requestMessages = [...build.messages];
+        if (opts?.systemNote) {
+          const sysIdx = requestMessages.findIndex((m) => m.role === 'system');
+          requestMessages.splice(sysIdx + 1, 0, { role: 'system', content: opts.systemNote });
+        }
+
         // 3. 调用 Gateway
         let fullContent = '';
         let lastUsage: TokenUsage | null = null;
 
-        for await (const chunk of gateway.stream(build.messages, { temperature, maxTokens })) {
+        for await (const chunk of gateway.stream(requestMessages, { temperature, maxTokens })) {
           // ── 中止检查 ──
           if (aborted) break;
 
@@ -131,6 +145,18 @@ export function createChatSession(config: SessionConfig): ChatSession {
     abort() {
       if (streaming) {
         aborted = true;
+      }
+    },
+
+    /** 灌回历史(服务重启/切会话后从转录恢复;传不含 system 的对话消息) */
+    restore(next: ChatMessage[]) {
+      if (streaming) {
+        throw new Error('Cannot restore while streaming.');
+      }
+      messages.length = 0;
+      messages.push({ role: 'system', content: systemPrompt });
+      for (const m of next) {
+        if (m.role !== 'system') messages.push(m);
       }
     },
 

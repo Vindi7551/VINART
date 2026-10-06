@@ -40,7 +40,7 @@ async function main() {
   // 输出目录 = HTML 所在目录（和它的相对资源待在一起）
   const outDir = dirname(htmlPath);
 
-  const { createBlinkRenderer } = await import('../src/render/blink-renderer');
+  const { createBlinkRenderer } = await import('../../render/blink-renderer');
   const renderer = createBlinkRenderer();
   try {
     const out = await renderer.render({ html: htmlPath, isFilePath: true }, outDir, {

@@ -33,7 +33,7 @@ const MIME: Record<string, string> = {
 
 /**
  * 让浏览器「看得见」工作区文件：/files/<工作区路径> → 静态文件（白名单内）。
- * API 接口（/api/*）已全部归拢到 scripts/dev-server.ts，这里只管静态文件。
+ * API 接口（/api/*）已全部归拢到 src/server/index.ts，这里只管静态文件。
  */
 function workspaceFiles(): Plugin {
   return {
@@ -95,7 +95,7 @@ function apiServer(): Plugin {
   process.on('exit', () => child?.kill());
 
   const spawnApi = () => {
-    child = spawn(process.execPath, ['scripts/run-ts.mjs', 'scripts/dev-server.ts'], {
+    child = spawn(process.execPath, ['scripts/run-ts.mjs', 'src/server/index.ts'], {
       cwd: ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,

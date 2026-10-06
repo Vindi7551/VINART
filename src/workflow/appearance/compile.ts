@@ -25,7 +25,7 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-import type { ChatMessage, TokenUsage } from '../../gateway/type/chat';
+import type { ChatMessage, TokenUsage } from '../../designharness/gateway/type/chat';
 import {
   APPEARANCE_KEYS,
   type DesignAppearance,
@@ -251,7 +251,7 @@ export async function compileAppearance(
   // 产品照 → data URL（看图取色）
   let imageDataUrl: string | null = null;
   if (opts.productPath && existsSync(opts.productPath)) {
-    const { fileToDataUrl } = await import('../../gateway/util/data-url');
+    const { fileToDataUrl } = await import('../../designharness/gateway/util/data-url');
     imageDataUrl = fileToDataUrl(opts.productPath);
   }
 

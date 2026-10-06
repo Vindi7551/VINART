@@ -14,7 +14,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { checkAppearance, checkSketch } from '../src/workflow/design-sketch/validate';
+import { checkAppearance, checkSketch } from '../../workflow/design-sketch/validate';
 
 async function main(): Promise<void> {
   const files = process.argv.slice(2).filter((a) => !a.startsWith('--'));

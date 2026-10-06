@@ -21,10 +21,20 @@ export interface ChatSession {
   readonly usage: SessionUsage;
 
   /** 发送用户消息，返回流式响应。内部自动管理历史 */
-  send(userMessage: string, attachments?: Attachment[]): AsyncIterable<ChatChunk>;
+  /** 发送用户消息，返回流式响应。内部自动管理历史。
+   *  opts.systemNote:本轮动态注入的运行时上下文(如「当前打开的版式」摘要)——
+   *  以附加 system 消息插入组装结果,**不进持久历史**(每轮按最新状态重算) */
+  send(
+    userMessage: string,
+    attachments?: Attachment[],
+    opts?: { systemNote?: string },
+  ): AsyncIterable<ChatChunk>;
 
   /** 中止当前流式请求。send() 的迭代器将提前结束 */
   abort(): void;
+
+  /** 灌回历史(持久化恢复;传不含 system 的对话消息,system 由会话自己持有) */
+  restore(messages: ChatMessage[]): void;
 
   /** 重置会话，清空历史（保留 system prompt） */
   reset(): void;

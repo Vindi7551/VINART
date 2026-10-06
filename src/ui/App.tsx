@@ -1,12 +1,13 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Header } from './Header';
 import { PreviewPanel } from './PreviewPanel';
 import { ConversationPanel } from './ConversationPanel';
 import { ArtifactGallery } from './ArtifactGallery';
+import { DirectoryBrowser } from './DirectoryBrowser';
 import { EditPanel } from './EditPanel';
 import type { PipelineFormValues } from './NewPipelineForm';
 import type { Message } from './types';
-import type { LayoutData, HostSignal, LayerAppearance } from './types';
+import type { LayoutData, HostSignal, LayerAppearance, SessionItem } from './types';
 
 // ══════════════════════════════════════════════════════════
 // ⚠️ Agent 层已清空，等待重新设计
@@ -48,6 +49,100 @@ export function App() {
   const [htmlCode, setHtmlCode] = useState<string | undefined>(undefined);
   /** 产物可能有新图时 +1,画廊据此重新拉清单 */
   const [galleryKey, setGalleryKey] = useState(0);
+
+  // ── 会话层(多会话 + 持久化;id 贯穿前端/API/转录文件)──
+  const [sessionId, setSessionId] = useState<string | null>(() =>
+    localStorage.getItem('vinart.sessionId'),
+  );
+  const [sessions, setSessions] = useState<SessionItem[]>([]);
+  /** 当前会话的工作目录(📂 设置;null=未设置,落缺省 test_product) */
+  const [workDir, setWorkDir] = useState<string | null>(null);
+
+  async function refreshSessions() {
+    try {
+      setSessions((await (await fetch('/api/sessions')).json()) as SessionItem[]);
+    } catch {
+      /* API 没跑——忽略,会话条显示空 */
+    }
+  }
+
+  /** 拉某会话的持久消息并映射成 UI 消息(log 类内存消息丢弃——换会话=换上下文) */
+  async function loadSessionMessages(id: string) {
+    try {
+      const data = (await (await fetch(`/api/sessions/${id}`)).json()) as {
+        messages: { id: string; role: 'user' | 'assistant'; content: string }[];
+      };
+      setMessages(
+        data.messages.map((m) => ({ id: m.id, role: m.role, text: m.content })),
+      );
+    } catch {
+      /* 忽略 */
+    }
+  }
+
+  // 初始化:有存档 id 且在列表里 → 恢复;否则新建
+  useEffect(() => {
+    void (async () => {
+      try {
+        const list = (await (await fetch('/api/sessions')).json()) as SessionItem[];
+        setSessions(list);
+        const saved = localStorage.getItem('vinart.sessionId');
+        if (saved && list.some((s) => s.id === saved)) {
+          setSessionId(saved);
+          await loadSessionMessages(saved);
+          setWorkDir(await fetchWorkDir(saved));
+          return;
+        }
+        const r = await fetch('/api/sessions', { method: 'POST' });
+        const { id } = (await r.json()) as { id: string };
+        localStorage.setItem('vinart.sessionId', id);
+        setSessionId(id);
+        setSessions(await (await fetch('/api/sessions')).json());
+      } catch {
+        /* API 没跑——会话条空,消息区显示占位 */
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** 切换会话 */
+  const handleSwitchSession = useCallback(async (id: string) => {
+    localStorage.setItem('vinart.sessionId', id);
+    setSessionId(id);
+    setSelectedLayer(null);
+    setActiveWord(null);
+    await loadSessionMessages(id);
+    setWorkDir(await fetchWorkDir(id));
+    commitLayout(null as unknown as LayoutData);
+  }, []);
+
+  /** 新建会话 */
+  const handleNewSession = useCallback(async () => {
+    const r = await fetch('/api/sessions', { method: 'POST' });
+    const { id } = (await r.json()) as { id: string };
+    localStorage.setItem('vinart.sessionId', id);
+    setSessionId(id);
+    setSelectedLayer(null);
+    setActiveWord(null);
+    setMessages([]);
+    setWorkDir(null);
+    commitLayout(null as unknown as LayoutData);
+    await refreshSessions();
+  }, []);
+
+  /** 编辑器操作入会话流(打开版式/保存/重渲——设计历史与对话历史同流) */
+  const logSessionAction = useCallback(
+    (action: string, detail: Record<string, unknown>) => {
+      const sid = localStorage.getItem('vinart.sessionId');
+      if (!sid) return;
+      void fetch(`/api/sessions/${sid}/events`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'action', action, detail, ts: new Date().toISOString() }),
+      }).catch(() => {});
+    },
+    [],
+  );
 
   // ── 版式编辑状态(产物点击 → 加载 → 逐元素修改 → 保存/重渲)──
   const [layout, setLayout] = useState<LayoutData | null>(null);
@@ -149,19 +244,80 @@ export function App() {
   }, []);
 
   /** 产物条点击:拉取版式数据(可交互编辑的来源) */
-  const handleOpenArtifact = useCallback(async (url: string, name: string, _dir: string) => {
-    setPreviewUrl(url); // 兜底:数据没到之前先给 PNG
+  /** 打开产物:fetch data(会话工作目录模式带 session query) */
+  const handleOpenArtifact = useCallback(
+    async (url: string, name: string, _dir: string) => {
+      setPreviewUrl(url); // 兜底:数据没到之前先给 PNG
+      try {
+        const dataUrl = sessionId ? `/api/layout/${name}/data?session=${sessionId}` : `/api/layout/${name}/data`;
+        const resp = await fetch(dataUrl);
+        if (!resp.ok) return; // 没有版式数据的产物保持 PNG 预览
+        const data = (await resp.json()) as LayoutData;
+        if (!data.html) return;
+        commitLayout(data);
+        setSelectedLayer(null);
+        logSessionAction('open-layout', { layout: name });
+      } catch {
+        /* API 服务没跑——保持 PNG 预览 */
+      }
+    },
+    [sessionId, logSessionAction],
+  );
+
+  /** 📂 设置本会话的工作目录(产物落这里;刷新后仍生效) */
+  const handleSetWorkDir = useCallback(
+    async (dir: string) => {
+      const sid = sessionId;
+      if (!sid) return;
+      try {
+        const resp = await fetch(`/api/sessions/${sid}/workdir`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workDir: dir }),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const { workDir: abs } = (await resp.json()) as { workDir: string };
+        setWorkDir(abs);
+        // 目录变了:当前打开的版式属于旧位置,清掉(回到缩略图重选)
+        commitLayout(null as unknown as LayoutData);
+        setPreviewUrl(null);
+        setGalleryKey((k) => k + 1);
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: 'assistant', text: `📂 工作目录已设为:${abs}\n产物将保存在这里。` },
+        ]);
+      } catch (e) {
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: 'assistant', text: `✗ 设置工作目录失败:${(e as Error).message}` },
+        ]);
+      }
+    },
+    [sessionId],
+  );
+
+  /** 读取当前会话的工作目录(切会话/初始化时) */
+  async function fetchWorkDir(sid: string): Promise<string | null> {
     try {
-      const resp = await fetch(`/api/layout/${name}/data`);
-      if (!resp.ok) return; // 没有版式数据的产物保持 PNG 预览
-      const data = (await resp.json()) as LayoutData;
-      if (!data.html) return;
-      commitLayout(data);
-      setSelectedLayer(null);
+      const r = (await (await fetch(`/api/sessions/${sid}/workdir`)).json()) as { workDir?: string };
+      return r.workDir ?? null;
     } catch {
-      /* API 服务没跑——保持 PNG 预览 */
+      return null;
     }
+  }
+
+  /** 📂 打开应用内目录浏览器(DSH 式:后端列目录,前端渲染,拿真实路径) */
+  const [dirBrowserOpen, setDirBrowserOpen] = useState(false);
+  const handlePickDir = useCallback(() => {
+    setDirBrowserOpen(true);
   }, []);
+  const handleDirPicked = useCallback(
+    async (path: string) => {
+      setDirBrowserOpen(false);
+      await handleSetWorkDir(path);
+    },
+    [handleSetWorkDir],
+  );
 
   /** 保存编辑改动落盘(spec/appearance)——手动按钮触发 */
   const handleSaveLayoutLive = useCallback(async () => {
@@ -175,6 +331,7 @@ export function App() {
         body: JSON.stringify({ spec: cur.spec, appearance: cur.appearance }),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      logSessionAction('save-spec', { layout: cur.name });
       setMessages((prev) => [
         ...prev,
         { id: crypto.randomUUID(), role: 'assistant', text: `💾 已保存 ${cur.name} 的 spec/appearance` },
@@ -204,6 +361,7 @@ export function App() {
       if (result.ok) {
         setGalleryKey((k) => k + 1);
         setPreviewUrl(`/files/test_product/layout/${cur.name}/final.png?t=${Date.now()}`);
+        logSessionAction('render', { layout: cur.name });
         setMessages((prev) => [
           ...prev,
           { id: crypto.randomUUID(), role: 'assistant', text: '✓ 重渲完成,成品已更新' },
@@ -229,22 +387,58 @@ export function App() {
     }
   }, [layout]);
 
-  const handleSend = useCallback(async (text: string) => {
-    if (!text.trim()) return;
-
-    // TODO: agent 层重建后接入
-    const userMsg: Message = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      text,
-    };
-    const noticeMsg: Message = {
-      id: crypto.randomUUID(),
-      role: 'assistant',
-      text: '⚠️ Agent 层已清空，等待重新设计。\n\n当前无法生成内容。重建后此处会接入新的管线。',
-    };
-    setMessages((prev) => [...prev, userMsg, noticeMsg]);
-  }, []);
+  /** 发消息:走会话层 LLM 对话(SSE 流式),消息持久化在服务端转录里 */
+  const handleSend = useCallback(
+    async (text: string) => {
+      if (!text.trim()) return;
+      const sid = sessionId;
+      if (!sid) {
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: 'assistant', text: '⚠️ 会话未初始化——API 服务未运行?' },
+        ]);
+        return;
+      }
+      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', text }]);
+      const replyId = crypto.randomUUID();
+      setMessages((prev) => [...prev, { id: replyId, role: 'assistant', text: '' }]);
+      const setReply = (fn: (t: string) => string) =>
+        setMessages((prev) => prev.map((m) => (m.id === replyId ? { ...m, text: fn(m.text) } : m)));
+      try {
+        const resp = await fetch(`/api/sessions/${sid}/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, activeLayout: layout?.name ?? null }),
+        });
+        if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx: number;
+          while ((idx = buf.indexOf('\n\n')) >= 0) {
+            const frame = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            const lines = frame.split('\n');
+            const evLine = lines.find((l) => l.startsWith('event: '));
+            const dataLine = lines.find((l) => l.startsWith('data: '));
+            if (!dataLine) continue;
+            const ev = evLine?.slice(7) ?? '';
+            const data = JSON.parse(dataLine.slice(6)) as { content?: string; message?: string };
+            if (ev === 'chunk' && data.content) setReply((t) => t + data.content);
+            if (ev === 'error') throw new Error(data.message ?? 'unknown');
+          }
+        }
+        void refreshSessions(); // 标题可能已随首条消息更新
+      } catch (e) {
+        setReply((t) => t + `\n\n✗ ${(e as Error).message}`);
+      }
+    },
+    [sessionId, layout, refreshSessions],
+  );
 
   /**
    * 跑一条管线步骤：点按钮 → API 服务 spawn 对应 step 脚本 →
@@ -292,7 +486,7 @@ export function App() {
       finish(code === 0 ? '✓ 完成' : `✗ 失败 (exit code=${code})`);
     });
     es.onerror = () => finish('✗ 与 API 服务的连接中断');
-  }, [isGenerating]);
+  }, [isGenerating, sessionId]);
 
   /** 一键编排:图 + 卖点 → 服务端落盘 → 顺序跑完整链,SSE 回流 */
   const handleRunPipeline = useCallback(async (v: PipelineFormValues) => {
@@ -318,6 +512,7 @@ export function App() {
           slot: v.slot,
           image: dataUrl,
           bullets: v.bullets,
+          sessionId, // 产物落该会话的工作目录(📂 设置)
         }),
       });
       if (!resp.ok) {
@@ -389,7 +584,8 @@ export function App() {
     setSelectedElements(new Set());
     commitLayout(null as unknown as LayoutData);
     setSelectedLayer(null);
-  }, []);
+    void handleNewSession(); // 顶栏「新对话」= 新建会话
+  }, [handleNewSession]);
 
   const handleExport = useCallback(() => {
     if (!htmlCode) return;
@@ -408,13 +604,18 @@ export function App() {
   return (
     <div className="app">
       <Header onNewChat={handleNewChat} />
-      <ArtifactGallery refreshKey={galleryKey} onOpen={handleOpenArtifact} />
+      <ArtifactGallery
+            refreshKey={galleryKey}
+            sessionId={sessionId}
+            onOpen={handleOpenArtifact}
+          />
       <div className="main">
         <PreviewPanel
           htmlCode={layout ? undefined : htmlCode}
           previewUrl={previewUrl}
           selectedElements={selectedElements}
           layoutData={layout}
+          sessionId={sessionId}
           onLayerChange={handleLayerChanged}
           onLayerSelect={handleLayerSelect}
           onLayerWord={(id, word) => {
@@ -454,12 +655,24 @@ export function App() {
               onRender={handleRenderLayoutLive}
             />
           )}
+          <DirectoryBrowser
+            open={dirBrowserOpen}
+            onPick={handleDirPicked}
+            onClose={() => setDirBrowserOpen(false)}
+          />
           <ConversationPanel
             messages={messages}
             isGenerating={isGenerating}
             onSend={handleSend}
             onRunStep={handleRunStep}
             onRunPipeline={handleRunPipeline}
+            sessions={sessions}
+            activeSessionId={sessionId}
+            workDir={workDir}
+            onPickDir={handlePickDir}
+            onSetWorkDir={handleSetWorkDir}
+            onSwitchSession={handleSwitchSession}
+            onNewSession={handleNewSession}
           />
         </div>
       </div>

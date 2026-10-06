@@ -43,9 +43,9 @@ import { resolve } from 'node:path';
 import { renderSketchFile } from './runtime';
 
 import { checkSketch, type SketchIssue } from './validate';
-import { fileToDataUrl } from '../../gateway/util/data-url';
+import { fileToDataUrl } from '../../designharness/gateway/util/data-url';
 import type { DesignSketch } from './design-sketch';
-import type { ChatMessage, ChatChunk, TokenUsage } from '../../gateway/type/chat';
+import type { ChatMessage, ChatChunk, TokenUsage } from '../../designharness/gateway/type/chat';
 
 // ── 参数 ──
 

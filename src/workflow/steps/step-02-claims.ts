@@ -13,7 +13,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { auditClaims, printClaims } from '../src/workflow/briefgen/claims';
+import { auditClaims, printClaims } from '../../workflow/briefgen/claims';
 
 const argv = process.argv.slice(2);
 const DEFAULT_FACTS = 'test_product/step-01-perceive.json';

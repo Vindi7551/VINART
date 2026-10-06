@@ -27,7 +27,7 @@
  * 两道关的规则与 `image.ts` 的运行时检查同源——生成前置拦截，省生图费。
  */
 
-import type { ChatMessage, TokenUsage } from '../../gateway/type/chat';
+import type { ChatMessage, TokenUsage } from '../../designharness/gateway/type/chat';
 import type { DesignSketch, ImageNode } from '../design-sketch/design-sketch';
 import { BANNED_WORDS, type AssetOrders } from './asset-order';
 

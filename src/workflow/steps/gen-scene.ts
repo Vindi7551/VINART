@@ -21,7 +21,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { getImageGateway } from '../src/config';
+import { getImageGateway } from '../../config';
 
 // ── 参数 ──
 

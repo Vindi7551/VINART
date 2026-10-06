@@ -16,7 +16,7 @@
 
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { ChatMessage, TokenUsage } from '../../gateway/type/chat';
+import type { ChatMessage, TokenUsage } from '../../designharness/gateway/type/chat';
 
 export const PERCEIVE_SYSTEM_PROMPT = [
   '你是一个电商产品图的视觉分析员。你的唯一任务是**如实报告你在图中看见了什么**。',
@@ -62,7 +62,7 @@ function stripFence(s: string): string {
  * @param outJson   结果落盘路径（含 raw/usage 的完整记录）；null = 只返回不落盘
  */
 export async function perceiveProduct(imagePath: string, outJson: string | null): Promise<PerceiveResult> {
-  const { fileToDataUrl } = await import('../../gateway/util/data-url');
+  const { fileToDataUrl } = await import('../../designharness/gateway/util/data-url');
   const { getChatGateway } = await import('../../config');
 
   const dataUrl = fileToDataUrl(imagePath);

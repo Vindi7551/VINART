@@ -17,13 +17,13 @@
 
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { draftBrief } from '../src/workflow/briefgen/draft';
+import { draftBrief } from '../../workflow/briefgen/draft';
 
 const argv = process.argv.slice(2);
 
 // ⚠️ 选项值解析:--bullets 等的值不以 -- 开头,
 // 简单的 find(!startsWith('--')) 会把它误当位置参数(实测踩过)
-const TAKES = new Set(['--only', '--name', '--bullets', '--facts', '--slots', '--lang']);
+const TAKES = new Set(['--only', '--name', '--bullets', '--facts', '--slots', '--workdir', '--lang']);
 const used = new Set<number>();
 argv.forEach((a, i) => {
   if (TAKES.has(a)) {
@@ -47,7 +47,11 @@ const langIdx = argv.indexOf('--lang');
 
 const SELLING_POINTS = resolve(bulletsIdx >= 0 ? argv[bulletsIdx + 1] : 'test_product/selling_point.txt');
 const LANG = langIdx >= 0 ? argv[langIdx + 1] : 'de';
-const OUT_DIR = resolve('test_product/briefs');
+// 方案落盘跟随工作目录(--workdir;缺省旧约定 test_product/briefs)
+const workdirIdx = argv.indexOf('--workdir');
+const OUT_DIR = resolve(
+  workdirIdx >= 0 ? join(argv[workdirIdx + 1], 'briefs') : 'test_product/briefs',
+);
 // 产物目录可能被清理（实测：清空 test_product 后重跑，writeFileSync 直接 ENOENT）
 // ——落盘前自建，脚本对「干净工作区」自洽
 mkdirSync(OUT_DIR, { recursive: true });

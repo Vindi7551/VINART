@@ -22,6 +22,8 @@ interface PreviewPanelProps {
   onExport?: () => void;
   /** 版式编辑模式:有值 = 加载 linked.html + 受控编辑器(逐元素修改) */
   layoutData?: LayoutData | null;
+  /** 会话 id:有值 = 素材 base 走 file API(工作目录模式);无 = 旧约定 /files/ */
+  sessionId?: string | null;
   /** 图上操作(拖拽/缩放/旋转/就地改字)→ App 合并进持久数据 */
   onLayerChange?: (id: string, patch: Record<string, unknown>) => void;
   /** 图上点选 → App 侧同步选中(右栏面板跟着切) */
@@ -44,6 +46,7 @@ export function PreviewPanel({
   onRegenerateSelected,
   onExport,
   layoutData,
+  sessionId,
   onLayerChange,
   onLayerSelect,
   onLayerWord,
@@ -101,8 +104,14 @@ export function PreviewPanel({
       /<script type="application\/json" id="__vinart-data">[\s\S]*?<\/script>\s*/g,
       '',
     );
-    // 相对素材的基准:dev-server 的 /files 静态映射(必须进 head)
-    const baseTag = `<base href="/files/test_product/layout/${base.name}/">`;
+    // 相对素材的基准(必须进 head):
+    // - 会话工作目录模式:file API 作 base——query 型 base 下,相对文件名会追加到
+    //   rel 参数后(base 带 ?rel=designs/<name>/ + img src="hero.png"
+    //   → ?rel=designs/<name>/hero.png),后端从工作目录流式返回
+    // - legacy:dev-server 的 /files 静态映射(test_product)
+    const baseTag = sessionId
+      ? `<base href="/api/sessions/${sessionId}/file/designs/${base.name}/">`
+      : `<base href="/files/test_product/layout/${base.name}/">`;
     // 数据块 + 编辑脚本必须注入 **body 末尾**——放 head 里执行时 body/canvas
     // 还不存在,脚本会静默退出,交互全无(实测踩过)
     const inject =
@@ -112,14 +121,14 @@ export function PreviewPanel({
     return html
       .replace('</head>', baseTag + '</head>')
       .replace('</body>', inject + '</body>');
-  }, [base]);
+  }, [base, sessionId]);
 
   // ── iframe srcdoc ──
   const srcdoc = useMemo(() => {
     if (layoutData) return layoutSrcdoc;
     if (!htmlCode) return '';
     return htmlCode.replace('</body>', `${createInteractionScript()}</body>`);
-  }, [layoutData, layoutSrcdoc, htmlCode]);
+  }, [layoutData, layoutSrcdoc, htmlCode, sessionId]);
 
   // ── 自动适应画布 ──
   const fitToCanvas = useCallback(() => {
@@ -182,30 +191,31 @@ export function PreviewPanel({
     setDragging(false);
   }, []);
 
-  // ── 滚轮缩放（以鼠标位置为中心） ──
-  const onWheel = useCallback(
-    (e: React.WheelEvent) => {
+  // ── 滚轮缩放（以鼠标位置为中心）──
+  // ⚠️ 必须用原生 addEventListener({passive:false}):React 合成 onWheel 是
+  // passive 监听,里面调 preventDefault 会刷「Unable to preventDefault」警告
+  useEffect(() => {
+    const container = canvasRef.current;
+    if (!container) return;
+    const handler = (e: WheelEvent) => {
       e.preventDefault();
-      const container = canvasRef.current;
-      if (!container) return;
-
       const rect = container.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
 
       const factor = e.deltaY < 0 ? 1.1 : 0.9;
-      const newZoom = Math.max(0.1, Math.min(5, zoom * factor));
-
-      // 以鼠标位置为缩放中心
-      const newPanX = mx - ((mx - panX) / zoom) * newZoom;
-      const newPanY = my - ((my - panY) / zoom) * newZoom;
-
-      setZoom(newZoom);
-      setPanX(newPanX);
-      setPanY(newPanY);
-    },
-    [zoom, panX, panY],
-  );
+      setZoom((z) => {
+        const newZoom = Math.max(0.1, Math.min(5, z * factor));
+        // 以鼠标位置为缩放中心(pan 用当前值;函数式更新里读不到其他 state,
+        // 用 setPan 的函数式串联)
+        setPanX((px) => mx - ((mx - px) / z) * newZoom);
+        setPanY((py) => my - ((my - py) / z) * newZoom);
+        return newZoom;
+      });
+    };
+    container.addEventListener('wheel', handler, { passive: false });
+    return () => container.removeEventListener('wheel', handler);
+  }, []);
 
   // ── 与 iframe 通信 ──
   // 信封同时带 action(旧 interaction-script)与 type(受控编辑脚本)——两代脚本共用一个通道
@@ -336,7 +346,6 @@ export function PreviewPanel({
         onMouseMove={onMouseMove}
         onMouseUp={onMouseUp}
         onMouseLeave={onMouseUp}
-        onWheel={onWheel}
       >
         {srcdoc ? (
           <div
