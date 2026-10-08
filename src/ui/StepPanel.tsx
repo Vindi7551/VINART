@@ -23,9 +23,10 @@ export function StepPanel({ running, onRun }: StepPanelProps) {
   const [steps, setSteps] = useState<StepInfo[]>([]);
   /** 每步各自记住参数,互不串扰(01 的图路径不该漏进 02 的卖点参数) */
   const [argsMap, setArgsMap] = useState<Record<string, string>>({});
-  /** 折叠状态持久化:刷新后保持上次的选择 */
+  /** 折叠状态持久化:刷新后保持上次的选择。默认折叠——7 步展开占半栏，
+   *  把对话流挤到不可用；调试是低频动作，要用再展开 */
   const [collapsed, setCollapsed] = useState(
-    () => localStorage.getItem('vinart.stepsCollapsed') === '1',
+    () => localStorage.getItem('vinart.stepsCollapsed') !== '0',
   );
 
   const toggleCollapsed = () => {

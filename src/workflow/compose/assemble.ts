@@ -30,6 +30,7 @@ import { resolve } from 'node:path';
 import type { DesignSketch } from '../design-sketch/design-sketch';
 import type { Palette, Typography } from '../design-sketch/render-style';
 import { fitTargets, renderDesign, type FitMap } from '../design-sketch/render';
+import type { BlinkRenderer } from '../../render/blink-renderer';
 import type { AssetOrders } from '../assetsgen/asset-order';
 import type { CanvasHost } from '../assetsgen/image';
 import { emitHtml, inlineAssets } from './emit-html';
@@ -46,9 +47,24 @@ export interface AssembleOptions {
   host: CanvasHost;
   /** --font 试字体时给文件名带方案名，多个变体并存比较 */
   nameOverride?: string | null;
+  /**
+   * 可选注入的渲染器（只用到 render）。给了 → 复用调用方的浏览器实例
+   * （服务进程/工具链路——渲染走共享渲染器，零额外起停）；
+   * 不给 → 内部自起自关（CLI 驱动脚本的历史行为）。
+   */
+  renderer?: Pick<BlinkRenderer, 'render'>;
 }
 
-export async function assembleFinal(opts: AssembleOptions): Promise<void> {
+export interface AssembleResult {
+  /** 成品 PNG 绝对路径 */
+  png: string;
+  /** 自包含快照 HTML 绝对路径 */
+  html: string;
+  /** 可编辑源码 HTML 绝对路径 */
+  linked: string;
+}
+
+export async function assembleFinal(opts: AssembleOptions): Promise<AssembleResult> {
   const { spec, orders, outDir, palette, typography, host } = opts;
 
   console.log('\n[3] 成品');
@@ -58,11 +74,13 @@ export async function assembleFinal(opts: AssembleOptions): Promise<void> {
   // 缺素材时必须**中止**，而不是警告后继续——
   // 继续的话 emitHtml 读不到文件会崩，而且会渲染出一张断图的空壳 PNG，
   // 那种图体积会明显偏小，容易被误当成"渲染成功"。
+  // 抛错而不是 process.exit：本函数也被服务进程（聊天工具链路）调用，exit 会带走整个服务。
   const missing = Object.entries(assets).filter(([, f]) => !existsSync(resolve(outDir, f)));
   if (missing.length) {
-    console.error(`\n✗ 缺少素材：${missing.map(([k, f]) => `${k}=${f}`).join(', ')}`);
-    console.error('  先跑生图阶段（gen）再重试 final。');
-    process.exit(1);
+    throw new Error(
+      `缺少素材：${missing.map(([k, f]) => `${k}=${f}`).join(', ')}。` +
+        '先跑生图阶段（gen）把素材放进版式目录再重试 final。',
+    );
   }
 
   // ── 文字自适应 ──
@@ -121,14 +139,18 @@ export async function assembleFinal(opts: AssembleOptions): Promise<void> {
   });
 
   // ── 渲成品 PNG ──
+  // 注入了 renderer → 复用（服务进程共享渲染器，零起停）；
+  // 没注入 → 自起自关（CLI 驱动脚本的历史行为）。
   const { createBlinkRenderer } = await import('../../render/blink-renderer');
-  const r = createBlinkRenderer();
+  const r = opts.renderer ?? createBlinkRenderer({ deviceScaleFactor: 1 });
+  let pngPath = '';
   try {
     // ⚠️ 必须渲 selfContainedHtml（占位符已替换成真素材）——
     // 拿含 {{占位符}} 的模板渲是断图的空壳。
     const out = await r.render({ html: emitted.selfContainedHtml }, outDir, {
-      width: C.width, height: C.height, deviceScaleFactor: 1, format: 'png', filename: finalName,
+      width: C.width, height: C.height, format: 'png', filename: finalName,
     });
+    pngPath = out.imagePath;
     const buf = readFileSync(out.imagePath);
     console.log(`    PNG  → ${finalName}.png  ${buf.readUInt32BE(16)}×${buf.readUInt32BE(20)}  ${(buf.length / 1024).toFixed(0)} KB`);
     // 体积异常检查：素材缺失时 PNG 会明显偏小，这是最便宜的异常信号。
@@ -138,10 +160,13 @@ export async function assembleFinal(opts: AssembleOptions): Promise<void> {
       console.log(`    ⚠️ 成品体积异常偏小（${(buf.length / 1024).toFixed(0)} KB）——检查素材是否缺失或占位符未替换`);
     }
   } finally {
-    await r.dispose();
+    // 只在内部自建的实例上 dispose——注入的渲染器归调用方管
+    if (!opts.renderer) await (r as Awaited<ReturnType<typeof createBlinkRenderer>>).dispose();
   }
   console.log(`    HTML → ${finalName}.html（${(emitted.selfContainedBytes / 1024).toFixed(0)} KB 自包含）`);
   console.log(`           ${finalName}.linked.html（${(emitted.linkedBytes / 1024).toFixed(0)} KB 可编辑）`);
+
+  return { png: pngPath, html: emitted.selfContained, linked: emitted.linked };
 }
 
 // ── 溯源注释 ──

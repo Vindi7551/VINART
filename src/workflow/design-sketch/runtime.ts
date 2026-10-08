@@ -25,6 +25,100 @@ import {
   type Typography,
 } from './render-style';
 import type { DesignSketch } from './design-sketch';
+import type { BlinkRenderer } from '../../render/blink-renderer';
+
+// ══════════════════════════════════════════════════════════════════════
+// 共享渲染器
+// ══════════════════════════════════════════════════════════════════════
+
+/**
+ * 进程内共享一个 Blink 渲染器（= 共享一个浏览器实例）。
+ *
+ * 实测（_probe-render-phases.ts，2026-10-07）：单张渲染六步耗时里
+ * launch 1.06s / context 0.43s / goto 0.02s / 截图 0.21s——
+ * 热路径渲染只要 ~0.7s。此前 renderSketchFile 每次调用都新建并关闭浏览器，
+ * 每张草图要白付 launch + close（当时 close 5.8s，其中 4.5s 是删临时
+ * profile 目录撞 Defender；改自管 userDataDir 后 close 降到 ~1.5s，
+ * 见 blink-renderer.ts 的注释）。
+ *
+ * 共享后 close 只在两处发生：CLI 脚本收尾的显式 disposeSketchRenderer()、
+ * 服务进程的 5 分钟空闲定时器（unref，不阻塞进程退出）。
+ * 并发安全：blink-renderer 每次 render 开独立 context，多子 agent 并发渲染
+ * 共享同一浏览器实例没有冲突。
+ */
+const RENDERER_IDLE_MS = 5 * 60_000;
+
+let sharedRenderer: BlinkRenderer | null = null;
+let idleTimer: NodeJS.Timeout | null = null;
+
+async function disposeSharedRenderer(): Promise<void> {
+  // 先置空再关：若还有并发渲染在路上，会拿到 null 走新建，不会撞一个
+  // 正在关闭的浏览器
+  const r = sharedRenderer;
+  sharedRenderer = null;
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+  await r?.dispose();
+}
+
+let exitHooksInstalled = false;
+
+/**
+ * **显式清理共享渲染器**（关闭浏览器并等待退出；自管 userDataDir 后 ~1.5s）。
+ *
+ * CLI 脚本（render-sketch / compile 等）在收尾 `process.exit` 前必须
+ * **await** 本函数——`process.exit` 会立刻终止进程，浏览器若还活着，
+ * 整条命令组会被 SIGTERM 带走（实测 exit 1，连 shell 里后续命令都不执行）。
+ * 服务进程（design harness）不调用：靠 5 分钟空闲定时器自动回收。
+ */
+export async function disposeSketchRenderer(): Promise<void> {
+  await disposeSharedRenderer();
+}
+
+/**
+ * 拿共享渲染器实例（没有就启动一个）——给**渲成品**的工具链路复用：
+ * assembleFinal 的文字自适应测量（host.newPage）与成品渲染共用这一个浏览器。
+ * 生命周期与 renderSketchFile 同一套（5 分钟空闲自动回收）。
+ */
+export async function getSharedRenderer(): Promise<BlinkRenderer> {
+  return withSharedRenderer(async (r) => r);
+}
+
+/**
+ * 进程退出前的清理兜底（首次创建共享渲染器时装一次）。
+ *
+ * 正常收尾（事件循环排空）时触发；注意 `process.exit()` 不走这里，
+ * 所以 CLI 脚本仍需显式调 `disposeSketchRenderer()`。
+ */
+function ensureExitHooks(): void {
+  if (exitHooksInstalled) return;
+  exitHooksInstalled = true;
+  process.on('beforeExit', () => {
+    // fire-and-forget：pending 的 close 让事件循环留到浏览器死透再排空
+    void disposeSharedRenderer();
+  });
+}
+
+async function withSharedRenderer<T>(fn: (r: BlinkRenderer) => Promise<T>): Promise<T> {
+  if (!sharedRenderer) {
+    const { createBlinkRenderer } = await import('../../render/blink-renderer');
+    // 草图固定 1:1（deviceScaleFactor 是 persistent context 的实例级选项）
+    sharedRenderer = createBlinkRenderer({ deviceScaleFactor: 1 });
+    ensureExitHooks();
+  }
+  const r = sharedRenderer;
+  if (idleTimer) clearTimeout(idleTimer);
+  try {
+    return await fn(r);
+  } finally {
+    if (sharedRenderer === r) {
+      idleTimer = setTimeout(disposeSharedRenderer, RENDERER_IDLE_MS);
+      idleTimer.unref();
+    }
+  }
+}
 
 const ELEMENTS = resolve('designassets/elements');
 const FONT_ROOT = resolve('designassets/fonts');
@@ -168,20 +262,15 @@ export async function renderSketchFile(
     const htmlPath = resolve(OUT, 'sketch.html');
     writeFileSync(htmlPath, html, 'utf8');
 
-    const { createBlinkRenderer } = await import('../../render/blink-renderer');
-    const r = createBlinkRenderer();
-    try {
+    return withSharedRenderer(async (r) => {
       const out = await r.render({ html: htmlPath, isFilePath: true }, OUT, {
         width: spec.canvas.width,
         height: spec.canvas.height,
-        deviceScaleFactor: 1,
         format: 'png',
         filename: 'sketch',
       });
       return { ok: true, png: out.imagePath, html: htmlPath };
-    } finally {
-      await r.dispose();
-    }
+    });
   } catch (e) {
     return { ok: false, png: '', html: '', error: (e as Error).message };
   }

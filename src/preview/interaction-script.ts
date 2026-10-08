@@ -217,5 +217,5 @@ export function createInteractionScript(): string {
     init();
   }
 })();
-</script>`;
+</script>`; 
 }

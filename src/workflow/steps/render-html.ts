@@ -41,12 +41,11 @@ async function main() {
   const outDir = dirname(htmlPath);
 
   const { createBlinkRenderer } = await import('../../render/blink-renderer');
-  const renderer = createBlinkRenderer();
+  const renderer = createBlinkRenderer({ deviceScaleFactor: SCALE });
   try {
     const out = await renderer.render({ html: htmlPath, isFilePath: true }, outDir, {
       width: W,
       height: H,
-      deviceScaleFactor: SCALE,
       format: 'png',
       filename: outName,
     });

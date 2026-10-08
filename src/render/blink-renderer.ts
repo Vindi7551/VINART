@@ -5,6 +5,9 @@
  * 仅 Node.js 环境可用。浏览器环境应使用 iframe preview。
  */
 
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+
 // ══════════════════════════════════════════
 // 类型
 // ══════════════════════════════════════════
@@ -12,6 +15,11 @@
 export interface RenderConfig {
   width: number;
   height: number;
+  /**
+   * 输出缩放。**与本实例当前档位不同时会重启浏览器换档**（persistent
+   * context 的 dsf 是 context 级的），连续同档渲染零开销。
+   * 不传则用 createBlinkRenderer 时给的默认值。
+   */
   deviceScaleFactor?: number;
   format?: 'png' | 'jpeg';
   quality?: number;
@@ -75,8 +83,28 @@ export interface RenderOutput {
   size: number;
 }
 
+export interface BlinkRendererOptions {
+  /**
+   * 默认输出缩放（截图像素 = CSS 像素 × 此值）。
+   * 单次 render 仍可用 config.deviceScaleFactor 临时换档
+   * （换档 = 重启浏览器，persistent context 的 dsf 是 context 级的）。
+   */
+  deviceScaleFactor?: number;
+}
+
 export interface BlinkRenderer {
   render(input: RenderInput, outputDir: string, config: RenderConfig): Promise<RenderOutput>;
+  /**
+   * 开一个裸页——结构与 CanvasHost 兼容（assembleFinal 的文字自适应测量用）。
+   * 复用当前 context：调用方 close 页即可，浏览器实例不动。
+   * dsf 取 1 档——测量页量的是 CSS 像素，与输出缩放无关。
+   */
+  newPage(): Promise<{
+    evaluate: <T>(fn: (arg: unknown) => T, arg?: unknown) => Promise<T>;
+    close(): Promise<void>;
+    setViewportSize: (size: { width: number; height: number }) => Promise<void>;
+  }>;
+  /** 关闭浏览器并等待退出。自管 userDataDir 后实测 ~1.5s（原临时 profile 时 5.9s） */
   dispose(): Promise<void>;
 }
 
@@ -85,31 +113,81 @@ export interface BlinkRenderer {
 // ══════════════════════════════════════════
 
 /**
- * 启动浏览器，带**自动回退**。
+ * 启动浏览器（persistent context），带**自动回退**。
  *
- * Playwright ≥ 1.49 起，`chromium.launch({ headless: true })` 默认使用精简的
- * `chrome-headless-shell` 二进制。若本机只装了完整 Chromium 而缺 headless shell，
- * 默认启动会直接抛 "Executable doesn't exist at ...chrome-headless-shell.exe"。
- * （本机实测正是这种情况：只有 chromium-1228。）
- *
- * 所以这里先试默认路径，失败则显式回退到 `channel: 'chromium'`（完整 Chromium）。
+ * Playwright ≥ 1.49 起，默认使用精简的 `chrome-headless-shell` 二进制。
+ * 若本机只装了完整 Chromium 而缺 headless shell，默认启动会直接抛
+ * "Executable doesn't exist at ...chrome-headless-shell.exe"。
+ * 所以先试默认路径，失败则显式回退到 `channel: 'chromium'`（完整 Chromium）。
  * 两条路径都能出图，渲染结果一致——headless shell 只是更小更快。
- *
  * 想用默认路径的话，执行：npx playwright install chromium-headless-shell
+ *
+ * ── 为什么是 launchPersistentContext + 自管 userDataDir ──
+ * 实测（2026-10-07）：chromium.launch() 的 close 总耗时 5.9s 里，chromium
+ * 自身退出只占 1.4s，剩下 4.5s 全是 playwright 在删它的临时 profile 目录
+ * （`playwright_chromiumdev_profile-*`，Windows Defender 对刚关闭的文件
+ * 实时扫描导致 rmSync 反复重试）。传自管 userDataDir 时 playwright 不删
+ * 它（runtime 校验要求必须走 launchPersistentContext），close 降到 ~1.5s。
+ * 代价与对策：
+ *  - profile 目录会遗留 → 下一次创建时异步清扫（sweepStaleProfiles）；
+ *  - deviceScaleFactor 变成 context 级 → 挪到实例选项（见 BlinkRendererOptions）；
+ *  - 所有 render 共用一个 context → localStorage/cookie 跨渲染留存
+ *    （我们的 HTML 是自包含 data URL 产物，不用存储，无影响）；
+ *    并发渲染 = 同 context 多 page，天然安全。
  */
-async function launchBrowser() {
+const PROFILE_ROOT = join(tmpdir(), 'vinart-chromium-profile');
+let profileSwept = false;
+
+async function sweepStaleProfiles(): Promise<void> {
+  if (profileSwept) return;
+  profileSwept = true;
+  try {
+    const { readdir, stat, rm } = await import('node:fs/promises');
+    for (const d of await readdir(PROFILE_ROOT)) {
+      const p = join(PROFILE_ROOT, d);
+      // 正在使用的目录 mtime 新鲜（chromium 在写）；只清 1 小时前的遗留。
+      // 本模块的浏览器实例受 5 分钟空闲回收约束，活不过 1 小时，不会误删。
+      const st = await stat(p).catch(() => null);
+      if (st && Date.now() - st.mtimeMs > 3_600_000) {
+        await rm(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }).catch(() => {});
+      }
+    }
+  } catch {
+    /* 扫不动就算了，只是攒几个临时目录 */
+  }
+}
+
+async function launchPersistentProfile(deviceScaleFactor: number) {
   const { chromium } = await import('playwright');
+  const { mkdirSync } = await import('node:fs');
+  const { randomBytes } = await import('node:crypto');
+
+  mkdirSync(PROFILE_ROOT, { recursive: true });
+  void sweepStaleProfiles();
+  const userDataDir = join(PROFILE_ROOT, `p-${Date.now()}-${randomBytes(4).toString('hex')}`);
+
+  const opts = {
+    headless: true,
+    deviceScaleFactor,
+    // 占位视口（persistent 的 dsf 不允许配 null viewport）；每次 render 仍会
+    // page.setViewportSize 覆盖成 config 的宽高
+    viewport: { width: 1280, height: 720 },
+    colorScheme: 'light' as const,
+  };
 
   try {
-    return await chromium.launch({ headless: true });
+    return await chromium.launchPersistentContext(userDataDir, opts);
   } catch (defaultErr) {
     try {
-      const b = await chromium.launch({ headless: true, channel: 'chromium' });
+      const ctx = await chromium.launchPersistentContext(userDataDir, {
+        ...opts,
+        channel: 'chromium',
+      });
       console.warn(
         '[render] 默认 headless shell 不可用，已回退到完整 Chromium（channel=chromium）。' +
           ' 想改用默认路径：npx playwright install chromium-headless-shell',
       );
-      return b;
+      return ctx;
     } catch (fallbackErr) {
       // 两条路都失败 → 把两个原因都说清楚，别让人只看到后半截
       throw new Error(
@@ -122,17 +200,35 @@ async function launchBrowser() {
   }
 }
 
-export function createBlinkRenderer(): BlinkRenderer {
-  let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null;
+export function createBlinkRenderer(opts: BlinkRendererOptions = {}): BlinkRenderer {
+  const defaultDsf = opts.deviceScaleFactor;
+  let context: Awaited<ReturnType<typeof launchPersistentProfile>> | null = null;
+  let currentDsf: number | null = null;
 
-  async function getBrowser() {
-    if (!browser || !browser.isConnected()) {
-      browser = await launchBrowser();
+  async function ensureContext(dsfWanted: number) {
+    if (context && currentDsf === dsfWanted) return context;
+    if (context) {
+      // 档位变了 → 关掉旧的换档（自管 profile，close ~1.5s）
+      const old = context;
+      context = null;
+      currentDsf = null;
+      await old.close().catch(() => {});
     }
-    return browser;
+    context = await launchPersistentProfile(dsfWanted);
+    currentDsf = dsfWanted;
+    // 浏览器自己退出（崩溃等）时把句柄放掉，下次 render 重新启动
+    context.once('close', () => {
+      if (context !== null) context = null;
+    });
+    return context;
   }
 
   return {
+    async newPage() {
+      const ctx = await ensureContext(1);
+      return ctx.newPage();
+    },
+
     async render(input, outputDir, config): Promise<RenderOutput> {
       const { mkdirSync, statSync } = await import('fs');
       const { join } = await import('path');
@@ -140,7 +236,6 @@ export function createBlinkRenderer(): BlinkRenderer {
       const {
         width,
         height,
-        deviceScaleFactor = 2,
         format = 'png',
         quality = 95,
         fullPage = false,
@@ -155,15 +250,11 @@ export function createBlinkRenderer(): BlinkRenderer {
         console.warn(`[render] ⚠️ transparent 只对 PNG 有效，当前 format=${format}，将忽略`);
       }
       const wantAlpha = transparent && format === 'png';
+      const dsf = config.deviceScaleFactor ?? defaultDsf ?? 2;
 
-      const b = await getBrowser();
-      const context = await b.newContext({
-        viewport: { width, height },
-        deviceScaleFactor,
-        // 透明时也要让 context 本身无底色
-        ...(wantAlpha ? { colorScheme: 'light' as const } : {}),
-      });
-      const page = await context.newPage();
+      const ctx = await ensureContext(dsf);
+      const page = await ctx.newPage();
+      await page.setViewportSize({ width, height });
 
       try {
         if (input.isFilePath) {
@@ -257,8 +348,8 @@ export function createBlinkRenderer(): BlinkRenderer {
             omitBackground: wantAlpha,
           });
 
-          outW = Math.round(box.width * deviceScaleFactor);
-          outH = Math.round(box.height * deviceScaleFactor);
+          outW = Math.round(box.width * dsf);
+          outH = Math.round(box.height * dsf);
         } else {
           await page.screenshot({
             path: imagePath,
@@ -268,8 +359,8 @@ export function createBlinkRenderer(): BlinkRenderer {
             omitBackground: wantAlpha,
           });
 
-          outW = Math.round(width * deviceScaleFactor);
-          outH = Math.round(height * deviceScaleFactor);
+          outW = Math.round(width * dsf);
+          outH = Math.round(height * dsf);
         }
 
         const stat = statSync(imagePath);
@@ -281,14 +372,16 @@ export function createBlinkRenderer(): BlinkRenderer {
           size: stat.size,
         };
       } finally {
-        await context.close();
+        // 只关 page，不关 context——context 就是整个浏览器，关了共享就没了
+        await page.close().catch(() => {});
       }
     },
 
     async dispose() {
-      if (browser) {
-        await browser.close();
-        browser = null;
+      if (context) {
+        const c = context;
+        context = null;
+        await c.close();
       }
     },
   };

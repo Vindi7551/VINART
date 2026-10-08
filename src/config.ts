@@ -63,6 +63,19 @@ export function getChatGateway(): ChatGateway {
   return _chatGateway;
 }
 
+/**
+ * OpenAI 兼容 chat 通道的连接信息（priority 最高的第一条）。
+ *
+ * 用途：Files API 上传等「跟 chat 同一服务、但不是 chat 协议」的旁路请求——
+ * 上传必须与 chat 用同一 baseURL/apiKey，file_id 才能被后续对话引用。
+ * 从注册表取而非另写配置，保证与 getChatGateway() 背后的服务天然一致。
+ */
+export function getOpenAICompatChatConfig(): { baseURL: string; apiKey: string } {
+  const entry = buildRegistry().find((e) => e.type === 'chat' && e.protocol === 'openai');
+  if (!entry) throw new Error('keys.json 里没有 openai 协议的 chat 模型，无法上传 Files API');
+  return { baseURL: entry.baseURL, apiKey: entry.apiKey };
+}
+
 export function getImageGateway(): ImageGateway {
   if (!_imageGateway) {
     const registry = getOrCreateRegistry();

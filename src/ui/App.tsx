@@ -6,7 +6,7 @@ import { ArtifactGallery } from './ArtifactGallery';
 import { DirectoryBrowser } from './DirectoryBrowser';
 import { EditPanel } from './EditPanel';
 import type { PipelineFormValues } from './NewPipelineForm';
-import type { Message } from './types';
+import type { Message, DelegationRecord } from './types';
 import type { LayoutData, HostSignal, LayerAppearance, SessionItem } from './types';
 
 // ══════════════════════════════════════════════════════════
@@ -66,15 +66,80 @@ export function App() {
     }
   }
 
-  /** 拉某会话的持久消息并映射成 UI 消息(log 类内存消息丢弃——换会话=换上下文) */
+  /**
+   * 拉某会话的持久事件流并合成 UI 消息（log 类内存消息丢弃——换会话=换上下文）。
+   * agent-spawn / agent-result 事件聚成「委派卡片」消息，按时间轴插在对话流里：
+   * 首个 spawn 开卡片（id 取其 runId），同批次后续 result 归入同卡片。
+   */
   async function loadSessionMessages(id: string) {
     try {
       const data = (await (await fetch(`/api/sessions/${id}`)).json()) as {
-        messages: { id: string; role: 'user' | 'assistant'; content: string }[];
+        events: Array<{
+          kind: string;
+          id?: string;
+          role?: string;
+          text?: string;
+          action?: string;
+          detail?: Record<string, unknown>;
+        }>;
       };
-      setMessages(
-        data.messages.map((m) => ({ id: m.id, role: m.role, text: m.content })),
-      );
+      const out: Message[] = [];
+      let card: Message | null = null;
+      const flush = () => {
+        if (card) out.push(card);
+        card = null;
+      };
+      for (const e of data.events) {
+        if (e.kind === 'message') {
+          flush();
+          out.push({
+            id: e.id ?? crypto.randomUUID(),
+            role: (e.role as 'user' | 'assistant') ?? 'assistant',
+            text: e.text ?? '',
+          });
+        } else if (e.kind === 'action' && e.action === 'agent-spawn') {
+          flush();
+          const d = e.detail ?? {};
+          card = {
+            id: `delegation_${String(d.runId ?? crypto.randomUUID())}`,
+            role: 'assistant',
+            text: '',
+            delegations: [{
+              name: (d.name as string) ?? undefined,
+              agent: String(d.label ?? '子 agent'),
+              task: String(d.brief ?? ''),
+              status: 'running',
+            }],
+          };
+        } else if (e.kind === 'action' && e.action === 'agent-result') {
+          const d = e.detail ?? {};
+          const rec: DelegationRecord = {
+            name: (d.name as string) ?? undefined,
+            agent: String(d.label ?? '子 agent'),
+            task: '',
+            status: d.stopReason === 'completed' ? 'done' : 'failed',
+            result:
+              d.stopReason === 'completed'
+                ? String(d.summary ?? '完成')
+                : String(d.diagnostic ?? d.stopReason ?? '失败'),
+          };
+          if (card) {
+            const i = card.delegations!.findIndex((x) => x.agent === rec.agent && x.status === 'running');
+            if (i >= 0) card.delegations![i] = rec;
+            else card.delegations!.push(rec);
+          } else {
+            card = {
+              id: `delegation_${String(d.runId ?? crypto.randomUUID())}`,
+              role: 'assistant',
+              text: '',
+              delegations: [rec],
+            };
+          }
+        }
+        // 其他 action（open-layout/save-spec/render/pipeline-*）历史不进对话流
+      }
+      flush();
+      setMessages(out);
     } catch {
       /* 忽略 */
     }
@@ -308,6 +373,44 @@ export function App() {
 
   /** 📂 打开应用内目录浏览器(DSH 式:后端列目录,前端渲染,拿真实路径) */
   const [dirBrowserOpen, setDirBrowserOpen] = useState(false);
+
+  // ── 右栏宽度:拖左缘手柄调整,localStorage 持久化 ──
+  // 右栏在右、手柄在左缘:向左拖(clientX 变小)= 变宽。上下限防拖没/拖满屏。
+  const RIGHT_COL_MIN = 320;
+  const RIGHT_COL_MAX = 720;
+  const [rightColWidth, setRightColWidth] = useState<number>(() => {
+    const v = Number(localStorage.getItem('vinart.rightColWidth'));
+    return Number.isFinite(v) && v >= RIGHT_COL_MIN && v <= RIGHT_COL_MAX ? v : 400;
+  });
+  const resizeRef = useRef<{ startX: number; startW: number } | null>(null);
+  const handleResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      resizeRef.current = { startX: e.clientX, startW: rightColWidth };
+      // 拖拽期间禁文本选中(不然鼠标扫过内容一片蓝),结束恢复
+      document.body.style.userSelect = 'none';
+      const onMove = (ev: MouseEvent) => {
+        const s = resizeRef.current;
+        if (!s) return;
+        setRightColWidth(Math.min(RIGHT_COL_MAX, Math.max(RIGHT_COL_MIN, s.startW + (s.startX - ev.clientX))));
+      };
+      const onUp = (ev: MouseEvent) => {
+        const s = resizeRef.current;
+        if (s) {
+          const w = Math.min(RIGHT_COL_MAX, Math.max(RIGHT_COL_MIN, s.startW + (s.startX - ev.clientX)));
+          localStorage.setItem('vinart.rightColWidth', String(w));
+        }
+        resizeRef.current = null;
+        document.body.style.userSelect = '';
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    },
+    [rightColWidth],
+  );
+
   const handlePickDir = useCallback(() => {
     setDirBrowserOpen(true);
   }, []);
@@ -388,9 +491,45 @@ export function App() {
   }, [layout]);
 
   /** 发消息:走会话层 LLM 对话(SSE 流式),消息持久化在服务端转录里 */
+  /**
+   * 贴图 → 发给模型用的 dataURL。大图先压缩：截图是常态（高分屏全屏 PNG 常 >10MB），
+   * 而 VLM 看图不需要原始分辨率——长边压到 2048px / JPEG 0.85，body 从十几 MB 降到 <1MB。
+   * 小图（≤3MB 且长边 ≤2048）原样传，保留 PNG 透明度与原始质量；
+   * 解码失败（不支持的格式）也原样传，交给后端校验报错。
+   */
+  const toChatImageDataURL = useCallback(async (file: File): Promise<string> => {
+    const raw = await new Promise<string>((ok, err) => {
+      const r = new FileReader();
+      r.onload = () => ok(String(r.result));
+      r.onerror = () => err(r.error ?? new Error('读取图片失败'));
+      r.readAsDataURL(file);
+    });
+    try {
+      const bmp = await createImageBitmap(file);
+      const long = Math.max(bmp.width, bmp.height);
+      if (long > 2048 || file.size > 3 * 1024 * 1024) {
+        const scale = Math.min(1, 2048 / long);
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(bmp.width * scale));
+        c.height = Math.max(1, Math.round(bmp.height * scale));
+        const ctx = c.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = '#ffffff'; // JPEG 无透明通道，先铺白底
+          ctx.fillRect(0, 0, c.width, c.height);
+          ctx.drawImage(bmp, 0, 0, c.width, c.height);
+          const out = c.toDataURL('image/jpeg', 0.85);
+          if (out.length < raw.length) return out;
+        }
+      }
+    } catch {
+      /* 原样上传 */
+    }
+    return raw;
+  }, []);
+
   const handleSend = useCallback(
-    async (text: string) => {
-      if (!text.trim()) return;
+    async (text: string, files?: File[]) => {
+      if (!text.trim() && !files?.length) return;
       const sid = sessionId;
       if (!sid) {
         setMessages((prev) => [
@@ -399,18 +538,79 @@ export function App() {
         ]);
         return;
       }
-      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', text }]);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: 'user',
+          // 纯贴图（无文字）时气泡也要有内容可显示；图片本体暂不在气泡里预览
+          text: text || `📎 图片×${files?.length ?? 0}`,
+        },
+      ]);
       const replyId = crypto.randomUUID();
       setMessages((prev) => [...prev, { id: replyId, role: 'assistant', text: '' }]);
       const setReply = (fn: (t: string) => string) =>
         setMessages((prev) => prev.map((m) => (m.id === replyId ? { ...m, text: fn(m.text) } : m)));
+      // 委派进度卡片：SSE 'agent' 事件（子 agent spawn/result）实时更新本条回复的 delegations
+      const applyAgentEvent = (data: {
+        kind?: string;
+        label?: string;
+        name?: string;
+        brief?: string;
+        stopReason?: string;
+        summary?: string | null;
+        diagnostic?: string | null;
+      }) => {
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== replyId) return m;
+            const delegations = [...(m.delegations ?? [])];
+            if (data.kind === 'agent-spawn') {
+              delegations.push({
+                name: data.name,
+                agent: data.label ?? '子 agent',
+                task: data.brief ?? '',
+                status: 'running',
+              });
+            } else if (data.kind === 'agent-result') {
+              const rec: DelegationRecord = {
+                name: data.name,
+                agent: data.label ?? '子 agent',
+                task: delegations.find((d) => d.agent === data.label && d.status === 'running')?.task ?? '',
+                status: data.stopReason === 'completed' ? 'done' : 'failed',
+                result:
+                  data.stopReason === 'completed'
+                    ? data.summary ?? '完成'
+                    : data.diagnostic ?? data.stopReason ?? '失败',
+              };
+              const i = delegations.findIndex((d) => d.agent === rec.agent && d.status === 'running');
+              if (i >= 0) delegations[i] = rec;
+              else delegations.push(rec);
+            }
+            return { ...m, delegations };
+          }),
+        );
+      };
       try {
+        // 图片压缩后转 dataURL——与后端 chat 端点的 images 契约对应
+        const images: string[] = [];
+        for (const f of files ?? []) {
+          images.push(await toChatImageDataURL(f));
+        }
         const resp = await fetch(`/api/sessions/${sid}/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, activeLayout: layout?.name ?? null }),
+          body: JSON.stringify({
+            text,
+            ...(images.length ? { images } : {}),
+            activeLayout: layout?.name ?? null,
+          }),
         });
-        if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
+        if (!resp.ok || !resp.body) {
+          // 后端 400 的具体原因（如"超过 20MB"）直接展示给用户，不吞
+          const detail = await resp.text().catch(() => '');
+          throw new Error(`HTTP ${resp.status}${detail ? `：${detail.trim()}` : ''}`);
+        }
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let buf = '';
@@ -429,6 +629,7 @@ export function App() {
             const ev = evLine?.slice(7) ?? '';
             const data = JSON.parse(dataLine.slice(6)) as { content?: string; message?: string };
             if (ev === 'chunk' && data.content) setReply((t) => t + data.content);
+            if (ev === 'agent') applyAgentEvent(data as Parameters<typeof applyAgentEvent>[0]);
             if (ev === 'error') throw new Error(data.message ?? 'unknown');
           }
         }
@@ -437,7 +638,7 @@ export function App() {
         setReply((t) => t + `\n\n✗ ${(e as Error).message}`);
       }
     },
-    [sessionId, layout, refreshSessions],
+    [sessionId, layout, refreshSessions, toChatImageDataURL],
   );
 
   /**
@@ -635,7 +836,9 @@ export function App() {
           }}
           onExport={htmlCode ? handleExport : undefined}
         />
-        <div className="right-col">
+        <div className="right-col" style={{ width: rightColWidth }}>
+          {/* 拖拽手柄:贴左缘的窄条,hover 高亮;按住左右拖调右栏宽度 */}
+          <div className="right-resizer" onMouseDown={handleResizeStart} title="拖拽调整右栏宽度" />
           {layout && (
             <EditPanel
               layout={layout}

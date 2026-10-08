@@ -299,12 +299,13 @@ async function handleSessions(
   // 读单会话
   if (!sub && method === 'GET') {
     const events = await transcript.loadTranscript(sessionId);
+    const workDir = await transcript.getWorkDir(sessionId);
     res.writeHead(200, JSON_HDR);
     return res.end(
       JSON.stringify({
         id: sessionId,
         events,
-        messages: transcript.deriveMessages(events),
+        messages: await transcript.deriveMessages(events, workDir),
         title: transcript.deriveTitle(events),
       }),
     );
@@ -388,11 +389,83 @@ async function handleSessions(
   }
   // LLM 对话(SSE 流式;完成后 user/assistant 消息落盘)
   if (sub === 'chat' && method === 'POST') {
-    const body = (await readJsonBody(req)) as { text?: string; activeLayout?: string };
-    const text = String(body.text ?? '').trim();
-    if (!text) {
+    let body: { text?: string; activeLayout?: string; images?: string[] };
+    try {
+      // 96MB：覆盖单张 64MiB 图（Files API 上限）的 base64 ~86MB + JSON 余量。
+      // chat 请求体本身已改走 file_id 引用，不受 DeepSeek 48MB 请求体限制约束，
+      // 这个上限只管「前端→后端」这一跳的传输体积。
+      body = (await readJsonBody(req, 96 * 1024 * 1024)) as {
+        text?: string;
+        activeLayout?: string;
+        images?: string[];
+      };
+    } catch (e) {
       res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
-      return res.end('缺少 text');
+      return res.end(`请求体无效：${(e as Error).message}`);
+    }
+    const text = String(body.text ?? '').trim();
+    const rawImages = Array.isArray(body.images) ? body.images : [];
+    if (!text && rawImages.length === 0) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('缺少 text 或 images');
+    }
+    if (rawImages.length > 4) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('图片最多 4 张');
+    }
+    // 总量预检：readJsonBody 96MiB 兜底之前给一个明确错误（92MiB 留 JSON 结构余量）
+    const totalB64 = rawImages.reduce((s, d) => s + String(d ?? '').length, 0);
+    if (totalB64 > 92 * 1024 * 1024) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('图片总体积过大（base64 合计 >92MB）——前端应压缩后再传');
+    }
+
+    // 图片落盘到会话工作目录（大内容外置：transcript 只存相对路径+file_id，
+    // 重放时 file 块直接引用，不再回读大文件）。放在 SSE 头之前做完——
+    // 校验/上传失败直接 4xx/5xx，不留半截会话事件。
+    // 单图阈值对齐 DeepSeek Files API：单文件 ≤64 MiB（api-docs.deepseek.com/guides/files_api）。
+    const workDir = await transcript.getWorkDir(sessionId);
+    const savedImages: string[] = [];
+    const fileIds: string[] = [];
+    const attachments: Attachment[] = [];
+    const filesApi = getOpenAICompatChatConfig();
+    for (const [i, du] of rawImages.entries()) {
+      const m = /^data:image\/(png|jpeg|jpg|webp|gif);base64,(.+)$/.exec(String(du ?? ''));
+      if (!m) {
+        res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+        return res.end(`第 ${i + 1} 张不是合法图片（需 dataURL image/png|jpeg|jpg|webp|gif）`);
+      }
+      const buf = Buffer.from(m[2], 'base64');
+      if (buf.length > FILES_API_MAX_BYTES) {
+        res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+        return res.end(`第 ${i + 1} 张超过 64 MiB（DeepSeek Files API 单文件上限，解码后 ${Math.round(buf.length / 1048576)}MB）`);
+      }
+      const ext = m[1] === 'png' ? 'png' : m[1] === 'webp' ? 'webp' : m[1] === 'gif' ? 'gif' : 'jpg';
+      const rel = `uploads/chat-${Date.now()}-${i}.${ext}`;
+      mkdirSync(resolve(workDir, 'uploads'), { recursive: true });
+      writeFileSync(resolve(workDir, rel), buf);
+      savedImages.push(rel);
+
+      // 上传 Files API 拿 file_id——之后每轮对话（含历史重放）引用它，
+      // 不再重传 base64。失败降级：≤32MiB 的图走内联 base64 照常发
+      // （对话不被上传故障阻塞）；>32MiB 无降级路径，直接失败。
+      let fileId: string | undefined;
+      try {
+        fileId = await uploadImageFile({
+          ...filesApi,
+          bytes: buf,
+          filename: `chat-${i}.${ext}`,
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (buf.length > 32 * 1024 * 1024) {
+          res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' });
+          return res.end(`第 ${i + 1} 张（${Math.round(buf.length / 1048576)}MB）上传 Files API 失败且超过 32MiB 无内联降级路径：${msg}`);
+        }
+        console.warn(`[chat] 第 ${i + 1} 张上传 Files API 失败，降级内联 base64：${msg}`);
+      }
+      fileIds.push(fileId ?? '');
+      attachments.push({ name: rel, url: String(du), ...(fileId ? { fileId } : {}) });
     }
 
     res.writeHead(200, {
@@ -417,9 +490,14 @@ async function handleSessions(
         id: `msg_${crypto.randomUUID().slice(0, 8)}`,
         role: 'user',
         text,
-      });
+        ...(savedImages.length ? { images: savedImages, fileIds } : {}),
+      } as Parameters<typeof transcript.appendEvent>[1]);
 
-      for await (const chunk of session.send(text, undefined, { systemNote })) {
+      for await (const chunk of session.send(text, attachments.length ? attachments : undefined, {
+        systemNote,
+        // 工具进度事件（子 agent spawn/result）→ SSE 'agent' 事件实时推前端委派卡片
+        onEvent: (evt) => send('agent', evt),
+      })) {
         if (chunk.content) send('chunk', { content: chunk.content });
       }
 
@@ -878,6 +956,9 @@ async function handlePipelineRun(res: ServerResponse, id: string, req: IncomingM
 
 import * as transcript from '../designharness/session/transcript';
 import { getChatSession, dropChatSession } from '../designharness/session/chat-store';
+import type { Attachment } from '../designharness/gateway/type/chat';
+import { uploadImageFile, FILES_API_MAX_BYTES } from '../designharness/gateway/util/files-api';
+import { getOpenAICompatChatConfig } from '../config';
 
 const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
   const url = new URL(req.url ?? '/', 'http://localhost');

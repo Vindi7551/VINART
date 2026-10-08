@@ -1,6 +1,5 @@
 import { useRef, useState } from 'react';
 import type { Message, SessionItem } from './types';
-import { PipelineDebug } from './PipelineDebug';
 import { StepPanel } from './StepPanel';
 import { NewPipelineForm, type PipelineFormValues } from './NewPipelineForm';
 
@@ -40,16 +39,29 @@ export function ConversationPanel({
 }: ConversationPanelProps) {
   const [input, setInput] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  /** 待发送图片：file + 预览用 objectURL（移除/发送时 revoke，防内存泄漏） */
+  const [pendingFiles, setPendingFiles] = useState<Array<{ file: File; url: string }>>([]);
   const streamRef = useRef<HTMLDivElement>(null);
-  const [showForm, setShowForm] = useState(true);
+  // 默认收起：对话是主区域，表单是工具（工具栏按钮展开）。展开态占半栏把
+  // chat-stream 挤到不可用（实测 32px），且聊天链路已覆盖表单的大部分场景
+  const [showForm, setShowForm] = useState(false);
   const [dirInputOpen, setDirInputOpen] = useState(false);
   const [dirDraft, setDirDraft] = useState('');
+
+  const addFiles = (files: File[]) => {
+    setPendingFiles((prev) => [
+      ...prev,
+      ...files
+        .filter((f) => f.type.startsWith('image/'))
+        .map((file) => ({ file, url: URL.createObjectURL(file) })),
+    ]);
+  };
 
   const handleSend = () => {
     const text = input.trim();
     if (!text && pendingFiles.length === 0) return;
-    onSend(text, pendingFiles.length > 0 ? pendingFiles : undefined);
+    onSend(text, pendingFiles.length > 0 ? pendingFiles.map((p) => p.file) : undefined);
+    pendingFiles.forEach((p) => URL.revokeObjectURL(p.url));
     setInput('');
     setPendingFiles([]);
     requestAnimationFrame(() => {
@@ -64,8 +76,22 @@ export function ConversationPanel({
     }
   };
 
+  /** 直接粘贴图片进输入框（截图/复制图后 Ctrl+V 即挂到待发送区） */
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const imgs = Array.from(e.clipboardData?.items ?? [])
+      .filter((it) => it.type.startsWith('image/'))
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => !!f);
+    if (imgs.length === 0) return;
+    e.preventDefault();
+    addFiles(imgs);
+  };
+
   const removeFile = (i: number) => {
-    setPendingFiles((prev) => prev.filter((_, idx) => idx !== i));
+    setPendingFiles((prev) => {
+      URL.revokeObjectURL(prev[i].url);
+      return prev.filter((_, idx) => idx !== i);
+    });
   };
 
   return (
@@ -155,24 +181,28 @@ export function ConversationPanel({
                 ))}
               </div>
             )}
-            <div className="chat-bubble">
-              {msg.text}
-              {msg.delegations && msg.delegations.length > 0 && (
-                <div className="delegation-list">
-                  {msg.delegations.map((d, i) => (
-                    <div key={i} className={`delegation-item ${d.status}`}>
-                      <span className="delegation-icon">
-                        {d.status === 'running' ? '⏳' : '✅'}
-                      </span>
-                      <span className="delegation-agent">@{d.agent}</span>
-                      <span className="delegation-task">
-                        {d.task.slice(0, 60)}{d.task.length > 60 ? '...' : ''}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            {/* 纯委派卡片消息（text 空）：不渲染气泡，只渲染 delegation-list */}
+            {(msg.text || !msg.delegations || msg.delegations.length === 0) && (
+              <div className="chat-bubble">{msg.text}</div>
+            )}
+            {msg.delegations && msg.delegations.length > 0 && (
+              <div className="delegation-list" style={{ marginTop: msg.text ? 6 : 0 }}>
+                {msg.delegations.map((d, i) => (
+                  <div key={i} className={`delegation-item ${d.status}`}>
+                    <span className="delegation-icon">
+                      {d.status === 'running' ? '⏳' : d.status === 'failed' ? '⚠️' : '✅'}
+                    </span>
+                    <span className="delegation-agent">
+                      @{d.agent}
+                      {d.name && d.name !== d.agent ? `（${d.name}）` : ''}
+                    </span>
+                    <span className="delegation-task">
+                      {(d.result ?? d.task).slice(0, 80)}{(d.result ?? d.task).length > 80 ? '…' : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         ))}
 
@@ -184,13 +214,16 @@ export function ConversationPanel({
 
       <StepPanel running={isGenerating} onRun={onRunStep} />
 
-      <PipelineDebug isGenerating={isGenerating} />
-
       {pendingFiles.length > 0 && (
         <div style={{ display: 'flex', gap: 4, padding: '0 16px 4px', flexWrap: 'wrap' }}>
-          {pendingFiles.map((f, i) => (
+          {pendingFiles.map((p, i) => (
             <span key={i} className="file-badge">
-              {f.name.length > 12 ? f.name.slice(0, 12) + '…' : f.name}
+              <img
+                src={p.url}
+                alt=""
+                style={{ width: 26, height: 26, objectFit: 'cover', borderRadius: 3, verticalAlign: 'middle' }}
+              />
+              {p.file.name.length > 12 ? p.file.name.slice(0, 12) + '…' : p.file.name}
               <button onClick={() => removeFile(i)}>×</button>
             </span>
           ))}
@@ -233,17 +266,18 @@ export function ConversationPanel({
           multiple
           hidden
           onChange={(e) => {
-            if (e.target.files) setPendingFiles((prev) => [...prev, ...Array.from(e.target.files!)]);
+            if (e.target.files) addFiles(Array.from(e.target.files));
             e.target.value = '';
           }}
         />
         <div className="input-row">
           <textarea
             rows={1}
-            placeholder="描述你的设计想法，或输入调整意见…"
+            placeholder="描述你的设计想法，可直接粘贴图片（Ctrl+V）…"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
           />
           <button
             className="btn-icon primary"

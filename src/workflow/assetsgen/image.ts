@@ -24,7 +24,7 @@ import { existsSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import type { DesignSketch } from '../design-sketch/design-sketch';
-import { BANNED_WORDS, type AssetOrders, type AssetReference } from './asset-order';
+import { BANNED_WORDS, type AssetOrders, type AssetReference, type AssetRequest } from './asset-order';
 import { cropToRef, dataUrlToBuffer, downscaleToRef, prepareProduct } from './cutout';
 
 /**
@@ -160,12 +160,23 @@ export interface GenerateAssetsOptions {
   force: boolean;
 }
 
-export async function generateAssets(opts: GenerateAssetsOptions): Promise<void> {
+/** 单张素材的生成结果（聊天工具链路要逐张向用户汇报） */
+export interface AssetJobResult {
+  file: string;
+  ok: boolean;
+  /** true = 文件已存在被跳过（force=false 时） */
+  skipped?: boolean;
+  /** 生成产物字节数 */
+  bytes?: number;
+  error?: string;
+}
+
+export async function generateAssets(opts: GenerateAssetsOptions): Promise<AssetJobResult[]> {
   const { orders, spec, outDir, force } = opts;
 
   if (!orders.length) {
     console.log('\n[2] 规格里没有声明要生成的素材');
-    return;
+    return [];
   }
 
   // ── 前置检查 ──
@@ -211,12 +222,17 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<void>
     productRef = probe.ref;
   }
 
-  // ── 逐条生成 ──
-  for (const job of orders) {
+  // ── 逐条生成（并发池）──
+  // 聊天工具链路一次订单可能是十几张素材：串行 ≈ 15s/张 × N 太慢。
+  // 并发池限 3——doubao API 扛得住；更高并发没实测过收益，不赌。
+  // host.newPage 并发开多页安全（共享 context，与多子 agent 并发渲染同机制）。
+  const CONCURRENCY = 3;
+
+  async function generateOne(job: AssetRequest): Promise<AssetJobResult> {
     const target = resolve(outDir, job.file);
     if (!needed(target)) {
       console.log(`    ${job.file} 已存在，跳过`);
-      continue;
+      return { file: job.file, ok: true, skipped: true };
     }
 
     // ── 按**角色**组装参考图 ──
@@ -275,7 +291,7 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<void>
     if (refs.length > 2) {
       console.log(`    ✗ ${job.file} 需要 ${refs.length} 张参考图，实测最多 2 张可用`);
       console.log('      请减少 references，或分两步生成。');
-      continue;
+      return { file: job.file, ok: false, error: `需要 ${refs.length} 张参考图，实测最多 2 张可用——请减少 references` };
     }
 
     const usesProduct = declared.some((r) => r.ref === '@product');
@@ -295,8 +311,7 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<void>
     // 同一个提示词带 size 时成功、去掉 size 时被
     // InputTextSensitiveContentDetected 拦截。这种抖动只能靠重试兜。
     const MAX_ATTEMPTS = 3;
-    let saved = false;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS && !saved; attempt++) {
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       const t0 = Date.now();
       try {
         const r = await gateway.generate({
@@ -319,18 +334,34 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<void>
             `${(buf.length / 1024).toFixed(0)} KB  ${((Date.now() - t0) / 1000).toFixed(0)}s` +
             (attempt > 1 ? `（第 ${attempt} 次尝试）` : ''),
         );
-        saved = true;
+        return { file: job.file, ok: true, bytes: buf.length };
       } catch (e) {
         const msg = (e as Error).message;
         const short = msg.split('\n').filter(Boolean).slice(-1)[0] ?? msg;
         if (attempt < MAX_ATTEMPTS) {
-          console.log(`       ↻ 第 ${attempt} 次失败：${short.slice(0, 160)}`);
+          console.log(`       ↻ ${job.file} 第 ${attempt} 次失败：${short.slice(0, 160)}`);
           console.log(`         重试…`);
           await new Promise((r) => setTimeout(r, 1500 * attempt));
         } else {
-          console.log(`       ✗ 连续 ${MAX_ATTEMPTS} 次失败：${short.slice(0, 300)}`);
+          console.log(`       ✗ ${job.file} 连续 ${MAX_ATTEMPTS} 次失败：${short.slice(0, 300)}`);
+          return { file: job.file, ok: false, error: short.slice(0, 300) };
         }
       }
     }
+    // 不可达（循环内必 return），类型兜底
+    return { file: job.file, ok: false, error: 'unreachable' };
   }
+
+  const results: AssetJobResult[] = new Array(orders.length);
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < orders.length) {
+      const i = next++;
+      results[i] = await generateOne(orders[i]);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, orders.length) }, () => worker()),
+  );
+  return results;
 }

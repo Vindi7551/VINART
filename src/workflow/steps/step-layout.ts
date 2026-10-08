@@ -279,10 +279,10 @@ async function main() {
           sketchHtmlPath,
           `<!--\n${sketchMeta(spec, paletteLabel(appearance))}\n-->\n` + html,
         );
-        const r = createBlinkRenderer();
+        const r = createBlinkRenderer({ deviceScaleFactor: 1 });
         try {
           const out = await r.render({ html: sketchHtmlPath, isFilePath: true }, OUT, {
-            width: C.width, height: C.height, deviceScaleFactor: 1, format: 'png', filename: 'sketch',
+            width: C.width, height: C.height, format: 'png', filename: 'sketch',
           });
           console.log(`    PNG  → sketch.png（${(out.size / 1024).toFixed(0)} KB）`);
         } finally {
@@ -317,15 +317,22 @@ async function main() {
 
     // ── ③ 成品 ──
     if (wants('final')) {
-      await assembleFinal({
-        spec,
-        orders,
-        outDir: OUT,
-        palette,
-        typography,
-        host: browser,
-        nameOverride: fontOverride,
-      });
+      try {
+        await assembleFinal({
+          spec,
+          orders,
+          outDir: OUT,
+          palette,
+          typography,
+          host: browser,
+          nameOverride: fontOverride,
+        });
+      } catch (e) {
+        // assembleFinal 的失败（典型：缺素材）在这里给 CLI 一个干净的退出——
+        // 它抛错而不是 exit 是为了服务进程复用（聊天工具链路不能带走整个服务）
+        console.error(`\n✗ ${(e as Error).message}`);
+        process.exit(1);
+      }
       // 轻量编辑视图:linked.html 注入数据 + 编辑脚本(点选/拖拽/改属性 → 导出 JSON)
       const finalName = fontOverride ? `final-${fontOverride}` : 'final';
       injectEditor(resolve(OUT, `${finalName}.linked.html`), spec, appearance);
