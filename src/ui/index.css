@@ -208,6 +208,7 @@ html, body, #root {
 
 /* ===== Main Content ===== */
 .main {
+  position: relative; /* 右栏开关按钮的定位基准 */
   display: flex;
   flex: 1;
   min-height: 0;
@@ -725,6 +726,8 @@ html, body, #root {
    滚动条出现在浏览器最右边（整页滚），EditPanel 的 maxHeight 百分比也失效。
    宽度由 App.tsx 内联注入（拖左缘手柄调整，localStorage 持久化，320–720px）。 */
 .right-col {
+  /* 收起/展开时 width 平滑滑动;拖拽调宽时 .main.resizing 关掉,不然发粘 */
+  transition: width 0.2s ease;
   position: relative;
   flex-shrink: 0;
   display: flex;
@@ -748,6 +751,41 @@ html, body, #root {
   background: var(--accent, #4f6ef7);
   opacity: 0.4;
 }
+
+/* ===== 右栏收起/展开开关 ===== */
+/* 悬浮贴右栏左缘外;收起时 right 由内联 style 驱动滑到屏幕右缘 */
+.right-toggle {
+  position: absolute;
+  top: 10px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  z-index: 30; /* 高于 right-resizer(20) */
+  transition: right 0.2s ease, background 0.15s, color 0.15s;
+}
+.right-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+/* 收起态:图标水平镜像(竖线从右到左),暗示「点我展开」 */
+.right-toggle line { transition: transform 0.2s ease; }
+/* 收起态:竖线滑到紧贴右边框(侧栏收进这条边)——不再用整体镜像 */
+.right-toggle.collapsed line { transform: translateX(1.75px); }
+
+/* 拖拽调宽期间:宽度/位置过渡全关,不然拖拽发粘 */
+.main.resizing .right-col,
+.main.resizing .right-toggle {
+  transition: none;
+}
+
 
 /* ===== Conversation Panel (Right) ===== */
 .conversation-panel {

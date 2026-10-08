@@ -382,10 +382,23 @@ export function App() {
     const v = Number(localStorage.getItem('vinart.rightColWidth'));
     return Number.isFinite(v) && v >= RIGHT_COL_MIN && v <= RIGHT_COL_MAX ? v : 400;
   });
+  // ── 右栏收起/展开:开关贴右栏左缘外,收起时 width→0(带过渡),状态持久化 ──
+  const [rightColCollapsed, setRightColCollapsed] = useState<boolean>(() =>
+    localStorage.getItem('vinart.rightColCollapsed') === '1',
+  );
+  const toggleRightCol = useCallback(() => {
+    setRightColCollapsed((c) => {
+      localStorage.setItem('vinart.rightColCollapsed', c ? '0' : '1');
+      return !c;
+    });
+  }, []);
+  // 拖拽调宽期间关掉宽度/位置过渡(否则拖拽发粘)——state 驱动 .main.resizing
+  const [isResizingCol, setIsResizingCol] = useState(false);
   const resizeRef = useRef<{ startX: number; startW: number } | null>(null);
   const handleResizeStart = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
+      setIsResizingCol(true);
       resizeRef.current = { startX: e.clientX, startW: rightColWidth };
       // 拖拽期间禁文本选中(不然鼠标扫过内容一片蓝),结束恢复
       document.body.style.userSelect = 'none';
@@ -401,6 +414,7 @@ export function App() {
           localStorage.setItem('vinart.rightColWidth', String(w));
         }
         resizeRef.current = null;
+        setIsResizingCol(false);
         document.body.style.userSelect = '';
         window.removeEventListener('mousemove', onMove);
         window.removeEventListener('mouseup', onUp);
@@ -810,7 +824,7 @@ export function App() {
             sessionId={sessionId}
             onOpen={handleOpenArtifact}
           />
-      <div className="main">
+      <div className={`main${isResizingCol ? ' resizing' : ''}`}>
         <PreviewPanel
           htmlCode={layout ? undefined : htmlCode}
           previewUrl={previewUrl}
@@ -836,9 +850,24 @@ export function App() {
           }}
           onExport={htmlCode ? handleExport : undefined}
         />
-        <div className="right-col" style={{ width: rightColWidth }}>
+        {/* 右栏开关:贴右栏左缘外悬浮,收起时滑到屏幕右缘;图标竖线靠右=侧栏在右,收起时镜像 */}
+        <button
+          type="button"
+          className={`right-toggle${rightColCollapsed ? ' collapsed' : ''}`}
+          style={{ right: rightColCollapsed ? 10 : rightColWidth + 10 }}
+          onClick={toggleRightCol}
+          title={rightColCollapsed ? '展开侧栏' : '收起侧栏'}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="1.5" y="2.5" width="13" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
+            <line x1="10.5" y1="4" x2="10.5" y2="12" stroke="currentColor" strokeWidth="1.5" />
+          </svg>
+        </button>
+        <div className="right-col" style={{ width: rightColCollapsed ? 0 : rightColWidth }}>
           {/* 拖拽手柄:贴左缘的窄条,hover 高亮;按住左右拖调右栏宽度 */}
+          {!rightColCollapsed && (
           <div className="right-resizer" onMouseDown={handleResizeStart} title="拖拽调整右栏宽度" />
+          )}
           {layout && (
             <EditPanel
               layout={layout}
