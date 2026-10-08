@@ -23,11 +23,13 @@ export interface ChatSession {
   /** 发送用户消息，返回流式响应。内部自动管理历史 */
   /** 发送用户消息，返回流式响应。内部自动管理历史。
    *  opts.systemNote:本轮动态注入的运行时上下文(如「当前打开的版式」摘要)——
-   *  以附加 system 消息插入组装结果,**不进持久历史**(每轮按最新状态重算) */
+   *  以附加 system 消息插入组装结果,**不进持久历史**(每轮按最新状态重算)
+   *  opts.onEvent:工具执行中的进度事件回调(如子 agent spawn/result)——
+   *  由长工具经 ctx.onEvent 上抛,调用方(服务端)转成 SSE 实时推给前端 */
   send(
     userMessage: string,
     attachments?: Attachment[],
-    opts?: { systemNote?: string },
+    opts?: { systemNote?: string; onEvent?: (evt: Record<string, unknown>) => void },
   ): AsyncIterable<ChatChunk>;
 
   /** 中止当前流式请求。send() 的迭代器将提前结束 */

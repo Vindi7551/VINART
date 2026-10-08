@@ -5,14 +5,18 @@ export interface Message {
   attachments?: string[];
   /** 'log' = 管线日志流(等宽字体、终端式渲染),缺省 = 普通对话 */
   kind?: 'chat' | 'log';
-  /** 委派记录：哪个 Subagent 被调用、结果如何 */
+  /** 委派记录：哪个子 agent 被调用、结果如何（spawn_design_agents 进度卡片） */
   delegations?: DelegationRecord[];
 }
 
 export interface DelegationRecord {
+  /** 版式名（如 "PT03"），可选 */
+  name?: string;
+  /** 展示标签（spawn job 的 label，如「PT03 材质特写」） */
   agent: string;
   task: string;
-  status: 'running' | 'done';
+  status: 'running' | 'done' | 'failed';
+  /** 完成后的结果摘要（成功=子 agent 的 summary；失败=diagnostic） */
   result?: string;
 }
 

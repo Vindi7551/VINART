@@ -1,5 +1,6 @@
 import type { ChatGateway } from '../gateway/index';
 import type { ChatContext } from '../context/index';
+import type { AgentTool } from '../subagent/types';
 import { createChatSession } from './chat-session';
 import type { ChatSession } from './types';
 
@@ -13,6 +14,8 @@ export interface CreateSessionConfig {
   gateway: ChatGateway;
   /** 上下文管理器 */
   context: ChatContext;
+  /** 主 AI 的工具表（可选；给了 → send 走工具循环） */
+  tools?: AgentTool[];
   /** 采样温度 */
   temperature?: number;
   /** 最大输出 token 数 */
@@ -72,8 +75,8 @@ export function createSessionManager(): SessionManager {
 
   return {
     create(config: CreateSessionConfig) {
-      const { label, systemPrompt, gateway, context, temperature, maxTokens, id } = config;
-      const session = createChatSession({ id, systemPrompt, gateway, context, temperature, maxTokens });
+      const { label, systemPrompt, gateway, context, tools, temperature, maxTokens, id } = config;
+      const session = createChatSession({ id, systemPrompt, gateway, context, tools, temperature, maxTokens });
       sessions.set(session.id, { session, label });
       return session;
     },

@@ -37,6 +37,8 @@ export function createOpenAI(config: OpenAIConfig): ChatProvider {
         temperature: opts?.temperature ?? 1.0,
         top_p: 1.0,
         max_tokens: opts?.maxTokens ?? 32768,
+        // 工具调用是 Open 标准 chat 规范：有就带，没有就不带该键
+        ...(opts?.tools?.length ? { tools: opts.tools } : {}),
       };
 
       const response = await fetchWithRetry(
@@ -66,9 +68,29 @@ export function createOpenAI(config: OpenAIConfig): ChatProvider {
           const json = JSON.parse(evt.data);
           const choice = json.choices?.[0];
 
+          // 工具调用增量：delta.tool_calls 数组，原样透传（按 index 折叠是消费方的事，
+          // 折叠规则见 ../util/toolcalls.ts——provider 保持无状态直通）
+          const rawDeltas: unknown[] = choice?.delta?.tool_calls;
+          const toolCallDeltas = Array.isArray(rawDeltas) && rawDeltas.length > 0
+            ? rawDeltas.map((d) => {
+                const delta = d as {
+                  index?: number;
+                  id?: string;
+                  function?: { name?: string; arguments?: string };
+                };
+                return {
+                  index: delta.index ?? 0,
+                  id: delta.id,
+                  name: delta.function?.name,
+                  arguments: delta.function?.arguments,
+                };
+              })
+            : undefined;
+
           yield {
             content: choice?.delta?.content ?? '',
             reasoningContent: choice?.delta?.reasoning_content ?? undefined,
+            toolCallDeltas,
             finishReason: choice?.finish_reason ?? undefined,
             usage: json.usage
               ? {

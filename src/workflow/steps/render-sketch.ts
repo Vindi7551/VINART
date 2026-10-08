@@ -18,7 +18,7 @@
  * ```
  */
 
-import { renderSketchFile } from '../../workflow/design-sketch/runtime';
+import { renderSketchFile, disposeSketchRenderer } from '../../workflow/design-sketch/runtime';
 
 const files = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 
@@ -37,6 +37,10 @@ for (const f of files) {
     bad++;
   }
 }
+
+// 渲完关掉共享浏览器再退出——process.exit 不走 beforeExit 钩子，
+// 浏览器活着退出整条命令组会吃 SIGTERM（见 runtime.disposeSketchRenderer 注释）
+await disposeSketchRenderer();
 
 console.log(`\n${files.length - bad} / ${files.length} 成功`);
 process.exit(bad === 0 ? 0 : 1);

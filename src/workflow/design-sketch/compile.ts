@@ -40,7 +40,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { renderSketchFile } from './runtime';
+import { renderSketchFile, disposeSketchRenderer } from './runtime';
 
 import { checkSketch, type SketchIssue } from './validate';
 import { fileToDataUrl } from '../../designharness/gateway/util/data-url';
@@ -679,7 +679,11 @@ async function main(): Promise<void> {
   console.log('═'.repeat(70) + '\n');
 }
 
-main().catch((e) => {
-  console.error('✗', e);
-  process.exit(1);
-});
+main()
+  .catch(async (e) => {
+    console.error('✗', e);
+    // 浏览器活着就 process.exit 会被 SIGTERM 带走（见 runtime 注释），先关再退
+    await disposeSketchRenderer();
+    process.exit(1);
+  })
+  .finally(() => disposeSketchRenderer());

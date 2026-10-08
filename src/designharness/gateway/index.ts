@@ -43,6 +43,9 @@ export type { SSEEvent } from './client/sse-parser';
 // ── 图片编码工具 ──
 export { fileToDataUrl, bufferToDataUrl, isSupportedImagePath, SUPPORTED_IMAGE_EXTS } from './util/data-url';
 
+// ── 工具调用折叠（协议中立） ──
+export { foldToolCallDeltas } from './util/toolcalls';
+
 // ── 治理 ──
 export { createCircuitBreaker, CircuitBreakerOpenError, CircuitBreakerTrippedError } from './resilience/circuit-breaker';
 export { createRateLimiter } from './resilience/rate-limiter';
@@ -59,6 +62,11 @@ export type {
   VendorPart,
   TokenUsage,
   Attachment,
+  ToolDef,
+  ToolFunctionDef,
+  ToolCall,
+  ToolCallDelta,
+  ToolResultMessage,
 } from './type/chat';
 
 // ── 类型：DeepSeek 专有 ──

@@ -1,4 +1,4 @@
-import type { ChatMessage, Attachment, ContentPart, TextPart } from '../gateway/type/chat';
+import type { ChatMessage, Attachment, ContentPart, TextPart, VendorPart } from '../gateway/type/chat';
 import type { ChatContextConfig, BuildResult, TruncationStrategy } from './types';
 
 /**
@@ -141,8 +141,9 @@ export function estimateTokens(
  */
 export const DEFAULT_IMAGE_TOKEN_COST = 1000;
 
-/** 从消息内容中抽取纯文本（图片/其他块被忽略） */
+/** 从消息内容中抽取纯文本（图片/其他块被忽略；null = 无正文的工具调用消息） */
 export function contentToText(content: ChatMessage['content']): string {
+  if (content === null) return '';
   if (typeof content === 'string') return content;
   return content
     .filter((part): part is TextPart => part.type === 'text' && 'text' in part)
@@ -152,7 +153,7 @@ export function contentToText(content: ChatMessage['content']): string {
 
 /** 统计消息内容里的图片/文件块数量 */
 export function countImageParts(content: ChatMessage['content']): number {
-  if (typeof content === 'string') return 0;
+  if (content === null || typeof content === 'string') return 0;
   return content.filter((part) => part.type !== 'text').length;
 }
 
@@ -271,7 +272,34 @@ function truncateByLastN(history: ChatMessage[], userMsg: ChatMessage, n: number
 
 // ── 用户消息组装 ──
 
-function buildUserMessage(
+/**
+ * 把附图的落盘路径追加进正文。
+ *
+ * 为什么：模型看得见图块（file/image_url），但路径字符串只活在附件元数据里——
+ * 不写进正文，它要用路径时（compile_appearance / generate_assets 的 productPath、
+ * 「刚才那张图存哪了」）说不出，实测只会反问用户要文件名。
+ *
+ * transcript 只存原始 text，这行由组装层（buildUserMessage / deriveMessages）
+ * 统一补——两处共用本函数防漂移；幂等成立的前提是存与渲分离。
+ */
+export function withAttachmentPaths(text: string, paths: string[]): string {
+  const rel = paths.filter(Boolean);
+  if (!rel.length) return text;
+  return `${text}\n\n[附图落盘路径（可引用）：${rel.join('、')}]`;
+}
+
+/**
+ * 组装 user 消息：有附件 → text + 图片内容块数组（发给模型与存进历史同形）。
+ * 导出给 chat-session 复用——历史 push 与本轮请求的 user 消息形状必须一致，
+ * 两处各写一份迟早漂移。
+ *
+ * 附件带 fileId（Files API）→ 组装为 `file` 内容块引用，不内联 base64：
+ * 同一张图在多轮请求中只传一次，后续轮次请求体只剩 file_id 字符串。
+ * 块形状 {type:'file', file_id} 是 DeepSeek Files API 约定（见
+ * gateway/type/deepseek-chat.ts 的 DeepSeekFileRefPart），经 VendorPart 透传——
+ * provider 层不认识也原样放行，这正是 VendorPart 存在的意义。
+ */
+export function buildUserMessage(
   text: string,
   attachments?: Attachment[],
   defaultDetail?: string,
@@ -280,10 +308,18 @@ function buildUserMessage(
     return { role: 'user', content: text };
   }
 
+  // 附图路径文本化（withAttachmentPaths 注释）——name 即相对工作目录的落盘路径
+  const paths = attachments.map((a) => a.name);
   // 有附件 → 必须用内容块数组，否则图片无法到达模型。
   // （旧实现把附件拼成 "[附件: name (url)]" 一行文字，图片被静默丢弃。）
-  const parts: ContentPart[] = [{ type: 'text', text }];
+  const parts: ContentPart[] = [{ type: 'text', text: withAttachmentPaths(text, paths) }];
   for (const att of attachments) {
+    if (att.fileId) {
+      // as 断言绕过 excess property check——file_id 形状见 VendorPart 注释与 deepseek-chat.ts
+      const fileRef = { type: 'file', file_id: att.fileId } as VendorPart;
+      parts.push(fileRef);
+      continue;
+    }
     parts.push({
       type: 'image_url',
       image_url: {
