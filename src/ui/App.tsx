@@ -486,15 +486,59 @@ export function App() {
       setPreviewUrl(url); // 兜底:数据没到之前先给 PNG
       try {
         const dataUrl = artifactDataUrl(sessionId, name, project);
-        const resp = await fetch(dataUrl);
-        if (!resp.ok) return; // 没有版式数据的产物保持 PNG 预览
+        // 网络失败自动重试一次（覆盖「8787 刚重启」的窗口期——点开瞬间服务未就绪）
+        let resp: Response | null = null;
+        let lastErr: Error | null = null;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            const r = await fetch(dataUrl);
+            if (r.ok || r.status < 500) {
+              resp = r;
+              break;
+            }
+            lastErr = new Error(`HTTP ${r.status}`);
+          } catch (e) {
+            lastErr = e as Error; // 连接失败（服务重启中）→ 等 800ms 重试
+          }
+          if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
+        }
+        if (!resp) throw lastErr ?? new Error('fetch failed');
+        if (!resp.ok) {
+          // 静默失败会让用户困惑「为什么停在图片」——如实说明
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              text: `⚠️ 「${name}」没有可编辑的版式数据（HTTP ${resp.status}），预览保持图片。常见原因：旧格式产物（缺 design-sketch.json）或项目路径不匹配。`,
+            },
+          ]);
+          return;
+        }
         const data = (await resp.json()) as LayoutData;
-        if (!data.html) return;
+        if (!data.html) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              text: `⚠️ 「${name}」的版式数据里没有 html，预览保持图片。`,
+            },
+          ]);
+          return;
+        }
         commitLayout(data);
         setSelectedLayer(null);
         logSessionAction('open-layout', { layout: name });
-      } catch {
-        /* API 服务没跑——保持 PNG 预览 */
+      } catch (e) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            text: `✗ 打开「${name}」失败:${(e as Error).message}——API 服务未运行?预览保持图片。`,
+          },
+        ]);
       }
     },
     [sessionId, logSessionAction],

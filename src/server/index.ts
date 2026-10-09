@@ -20,7 +20,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 
 const PORT = Number(process.env.PORT) || 8787;
 
@@ -50,9 +50,9 @@ async function handleLayout(
   // 会话模式 layoutsRoot：query 的 project 优先 → 会话当前项目；版式级读回退
   // （新位置不存在 → 旧 <workDir>/designs/<name>）；无 session → 旧约定
   let LAYOUT_ROOT = resolve('test_product/layout');
-  if (sessionId) {
-    const workDir = await transcript.getWorkDir(sessionId);
-    const project = projectQuery ?? (await transcript.getProject(sessionId));
+  const workDir = sessionId ? await transcript.getWorkDir(sessionId) : null;
+  const project = sessionId ? (projectQuery ?? (await transcript.getProject(sessionId))) : null;
+  if (sessionId && workDir) {
     const newRoot = project ? join(workDir, project, 'designs') : null;
     const legacyRoot = join(workDir, 'designs');
     if (name && newRoot && existsSync(join(newRoot, name))) LAYOUT_ROOT = newRoot;
@@ -99,10 +99,27 @@ async function handleLayout(
       palette: loadPalette((app2.palette as string) ?? 'warm-copper'),
       typography: loadTypography((app2.fontScheme as string) ?? 'legacy-system'),
     });
-    // {{KEY}} → 素材文件名(相对路径,由 /files 静态服务提供)
+    // {{KEY}} → file API 绝对路径（多根解析：版式目录 → 项目根 → 工作目录）。
+    // 旧写法是文件名 + base tag（designs/<name>/）——项目层后素材在
+    // <项目>/designs/、贴图在 <项目>/uploads/，固定 base 必 404（可编辑视图图片全空的实锤根因）。
+    const projectForAssets = project ?? null;
+    const assetRoots = [dir, ...(workDir && projectForAssets ? [join(workDir, projectForAssets)] : []), ...(workDir ? [workDir] : [])];
     let html = rendered.html.replace(
       /\{\{(\w+)\}\}/g,
-      (key: string) => (rendered.assets as Record<string, string>)[key.slice(2, -2)] ?? key,
+      (key: string) => {
+        const filename = (rendered.assets as Record<string, string>)[key.slice(2, -2)] ?? key;
+        for (const r of assetRoots) {
+          const p = resolve(r, filename);
+          if (existsSync(p)) {
+            if (sessionId && workDir) {
+              const rel = relative(workDir, p).split(sep).join('/');
+              return `/api/sessions/${sessionId}/file/${rel}`;
+            }
+            return `/files/${relative(dir, p).split(sep).join('/')}`; // legacy 静态映射
+          }
+        }
+        return filename;
+      },
     );
     // 防御:即使未来读文件,也剥掉一切历史注入
     const s0 = html.indexOf('<!--vinart-editor-start-->');
