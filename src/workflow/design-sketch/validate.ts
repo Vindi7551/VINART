@@ -536,7 +536,22 @@ export function checkAppearance(raw: unknown): CheckResult {
     };
   }
 
-  checkAssetRef('palette', raw.palette, 'designassets/elements/palette', '配色方案', err);
+  // palette 双形态（契约：DesignAppearance.palette = string | Record<string, string>）：
+  // - 字符串 → 资产库方案名引用，校验存在性
+  // - 对象 → compile_appearance 产出的内嵌专属配色（角色名 → 色值），
+  //   校验每个值是颜色字符串——**这不是错误形态**（渲染器 loadPalette 原生支持）
+  const palette = raw.palette;
+  if (palette !== undefined) {
+    if (isObj(palette)) {
+      for (const [role, v] of Object.entries(palette)) {
+        if (typeof v !== 'string' || !v.trim()) {
+          err(`palette.${role}`, `内嵌配色的角色 "${role}" 的色值必须是颜色字符串（如 "#0E1F4A"），当前是 ${JSON.stringify(v)}。`);
+        }
+      }
+    } else {
+      checkAssetRef('palette', palette, 'designassets/elements/palette', '配色方案', err);
+    }
+  }
   checkAssetRef('fontScheme', raw.fontScheme, 'designassets/fonts/schemes', '排版方案', err);
 
   const layers = raw.layers;
