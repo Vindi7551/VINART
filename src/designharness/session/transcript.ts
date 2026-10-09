@@ -162,12 +162,14 @@ export async function deleteSession(sessionId: string): Promise<void> {
   // 级联：子 agent 账本目录（agents/<sessionId>/）与会话同生命周期——
   // 会话没了，其委派记录没有独立存在价值（产物在 designs/ 不受影响）
   await rm(join(SESSIONS_DIR, 'agents', sessionId), { recursive: true, force: true });
-  const list = await listSessions();
-  await writeFile(
-    INDEX_PATH,
-    JSON.stringify(list.filter((s) => s.id !== sessionId), null, 2) + '\n',
-    'utf8',
-  );
+  await withIndexLock(async () => {
+    const list = await listSessions();
+    await writeFile(
+      INDEX_PATH,
+      JSON.stringify(list.filter((s) => s.id !== sessionId), null, 2) + '\n',
+      'utf8',
+    );
+  });
 }
 
 /**
@@ -312,25 +314,40 @@ function lastMetaField(events: SessionEvent[], field: 'workDir' | 'project'): st
 
 /** 索引条目 upsert:title/messageCount/workDir/project/updatedAt 以最新事件流为准 */
 async function touchIndex(sessionId: string, latest: SessionEvent): Promise<void> {
-  const events = await loadTranscript(sessionId);
-  const list = await listSessions();
-  const entry: SessionIndexEntry = {
-    id: sessionId,
-    title: deriveTitle(events),
-    updatedAt: latest.ts,
-    messageCount: countMessages(events),
-    workDir: lastMetaField(events, 'workDir'),
-    project: lastMetaField(events, 'project'),
-  };
-  const idx = list.findIndex((s) => s.id === sessionId);
-  if (idx >= 0) list[idx] = entry;
-  else list.unshift(entry);
-  await mkdir(SESSIONS_DIR, { recursive: true });
-  await writeFile(
-    INDEX_PATH,
-    JSON.stringify(list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), null, 2) + '\n',
-    'utf8',
+  await withIndexLock(async () => {
+    const events = await loadTranscript(sessionId);
+    const list = await listSessions();
+    const entry: SessionIndexEntry = {
+      id: sessionId,
+      title: deriveTitle(events),
+      updatedAt: latest.ts,
+      messageCount: countMessages(events),
+      workDir: lastMetaField(events, 'workDir'),
+      project: lastMetaField(events, 'project'),
+    };
+    const idx = list.findIndex((s) => s.id === sessionId);
+    if (idx >= 0) list[idx] = entry;
+    else list.unshift(entry);
+    await mkdir(SESSIONS_DIR, { recursive: true });
+    await writeFile(
+      INDEX_PATH,
+      JSON.stringify(list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), null, 2) + '\n',
+      'utf8',
+    );
+  });
+}
+
+/** 索引写互斥锁：index.json 的所有 read-modify-write 必须串行——
+ *  否则并发 createSession/touchIndex/deleteSession 会互相覆盖条目（last-writer-wins，
+ *  实测孤儿 jsonl 群的来源：打开页面自动建会话时代 StrictMode 双跑必触发）。 */
+let indexLock: Promise<void> = Promise.resolve();
+function withIndexLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = indexLock.then(fn);
+  indexLock = run.then(
+    () => undefined,
+    () => undefined,
   );
+  return run;
 }
 
 /** 新建会话(空转录 + 索引条目) */
@@ -339,17 +356,20 @@ export async function createSession(): Promise<string> {
   const ts = new Date().toISOString();
   await mkdir(SESSIONS_DIR, { recursive: true });
   await appendFile(sessionFile(id), '', 'utf8'); // 建空文件
-  await writeFile(
-    INDEX_PATH,
-    JSON.stringify(
-      [
+  await withIndexLock(async () => {
+    const list = await listSessions();
+    await writeFile(
+      INDEX_PATH,
+      JSON.stringify(
+        [
           { id, title: '新会话', updatedAt: ts, messageCount: 0, workDir: null, project: null },
-          ...(await listSessions()),
+          ...list,
         ] satisfies SessionIndexEntry[],
-      null,
-      2,
-    ) + '\n',
-    'utf8',
-  );
+        null,
+        2,
+      ) + '\n',
+      'utf8',
+    );
+  });
   return id;
 }
