@@ -17,29 +17,41 @@
 | `design-appearance.ts` | **契约（外观）**：颜色 / 描边 |
 | `render-style.ts` | **渲染参数**：配色与字体的**具体值**（可换的皮）|
 | `validate.ts` | **校验**：`checkSketch` / `checkAppearance` |
-| `render.ts` | **成品渲染**：DesignSketch → HTML（图用 `{{占位符}}` 待替换）|
-| `sketch.ts` | **草图渲染**：DesignSketch → 草图 HTML（区域框 + 灰条 + 网格）|
+| `render.ts` | **渲染器（成品）**：DesignSketch → HTML（图用 `{{占位符}}` 待替换）|
+| `sketch.ts` | **渲染器（草图）**：DesignSketch → 草图 HTML（区域框 + 灰条 + 网格）|
 | `shared.ts` | **共享几何**：`layerBox` / `wrap` / 修饰器 —— 两套渲染都用 |
 | `runtime.ts` | **运行时**：读资产（配色 / 字体 / 图标）→ 渲出草图 PNG |
-| `compile.ts` | **编译器**：创意方案 → spec → 校验 → 渲草图 → VLM 验收（多轮循环）|
 | `README.md` | 本文件 |
 
-**入口**：
+### ⚠️ 术语：「渲染」与「方案生成」是两件不同的事
 
-```bash
-npm run step src/workflow/design-sketch/compile.ts -- <方案.md>   # 编译器（唯一 CLI）
-```
+| 叫法 | 谁干 | 干什么 | 调模型？ |
+|---|---|---|---|
+| **渲染** | `render.ts` / `sketch.ts` | **spec（JSON）→ HTML**，纯函数 | **零** —— 确定性、可复现、零成本 |
+| **方案生成**（旧称"编译"） | **对话链路**（主 AI + 子 agent） | **创意方案 → spec（JSON）** | **调** —— 非确定性、烧钱 |
 
-「只渲草图」与「只校验」**不再有 CLI**（2026-10-09 随 `src/workflow/steps/` 整层删除）——
-进程内直接调 `runtime.ts` 的 `renderSketchFile(specPath, outDir?)`、
-`validate.ts` 的 `checkSketch(raw)`；子 agent 工具集就是这么包的。
+「读 JSON 产 HTML」那一步一律叫**渲染**；`render.ts` 的 import 里**没有任何 gateway**，
+它永远不碰模型。（这两个概念曾混叫过一次，把"哪一步是确定性的"说岔了。）
+
+> **历史**：方案生成曾有一个 CLI 实现 `compile.ts`（模型驱动：产 spec → 静态校验 →
+> 渲草图 → **VLM 看图验收** → 问题回喂，多轮循环）。**2026-10-09 删除**——产品链路
+> 早已改由对话承担（`spawn_design_agents` → `save_spec`/`validate_sketch`/`render_sketch`）。
+> ⚠️ 随之消失的两件能力：① **自动视觉验收**（`reviewSketch` 的 VLM 环——对话链路本来
+> 就没有，删后项目里彻底没有）；② `compile-report.md`「模型自行补充的元素」清单。
+> 要复活从 git 取（2026-10-09 之前任一提交）。
+
+**入口：没有 CLI 了**（`compile.ts` 是最后一个，已删）。这一阶段的能力全在进程内：
+
+- **产 spec** → 对话链路（主 AI + 子 agent；工具集在 `designharness/tools/design-sketch.ts`）
+- **渲草图** → `runtime.ts` 的 `renderSketchFile(specPath, outDir?)`
+- **校验** → `validate.ts` 的 `checkSketch(raw)` / `checkAppearance(raw)`
 
 ### 这个阶段在整条链上的位置
 
 ```
 创意方案（散文 / Markdown / JSON，格式不限）
       │
-      ▼  compile.ts（多轮：产 spec → 静态校验 → 渲草图 → VLM 验收）
+      ▼  对话链路：主 AI + 子 agent（产 spec → 校验 → 渲草图 → 按 issues 自纠）
 design-sketch.json · design-appearance.json · sketch.png
       │
       ▼  交给出图阶段（素材订单 → 生图 → final 组装）

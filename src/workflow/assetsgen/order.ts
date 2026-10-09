@@ -14,10 +14,10 @@
  * ⚠️ 本阶段**不依赖**链 A（图像识别/卖点审计）——它的输入是「方案 + 版式」，
  * 手写方案和自动生成的方案在这里没有区别。链 A 是 brief 的上游，独立排期。
  *
- * ## 与 compile 的关系
+ * ## 与上游的关系
  *
- * 先独立跑通、验证好之后挂到 compile.ts 尾部（**2026-10-09 起已挂上**：
- * 产完版式顺手产订单，--prompt-lang 透传）——brief → 订单 → 素材 → final 全链无手工。
+ * 订单的输入是「版式 + 方案」——上游产完版式后顺手产订单（原先挂在 CLI
+ * `compile.ts` 尾部；**该 CLI 已于 2026-10-09 删除**，现由对话链路按需调用本模块）。
  *
  * ## 写法规范
  *
@@ -187,7 +187,7 @@ export async function generateOrders(opts: GenerateOrdersOptions): Promise<Asset
       : ([{ role: 'user', content: userText }] as ChatMessage[])),
   ];
 
-  // ── 产订单 → 校验 → 回喂修正（与 compile.ts 的多轮模式一致）──
+  // ── 产订单 → 校验 → 回喂修正（与设计链路的多轮模式一致）──
   // 首轮实测就证明了必要性：模型写「无 logo」时用了 ohne Logos/Marken——
   // 触发审核禁词。这种错静态校验能抓，回喂一轮就能修。
   const MAX_ROUNDS = 3;

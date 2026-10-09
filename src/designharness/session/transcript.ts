@@ -211,7 +211,7 @@ export async function deriveMessages(
           if (!workDir) throw new Error('no workDir');
           const abs = resolve(workDir, rel);
           if (!isSupportedImagePath(abs)) throw new Error('unsupported ext');
-          // 复用 gateway 的统一编码器（同一份 MIME 表与格式校验，compile.ts 同源）
+          // 复用 gateway 的统一编码器（同一份 MIME 表与格式校验）
           parts.push({ type: 'image_url', image_url: { url: fileToDataUrl(abs) } });
         } catch {
           lost.push(rel);

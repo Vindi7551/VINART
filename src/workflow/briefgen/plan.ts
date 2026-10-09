@@ -10,7 +10,8 @@
  * 3. 抽象属性（"无法证明"的要素）**不得**作为任何一张图的证明目标。
  *
  * ⚠️ 2026-10-02 翻新时**砍掉了旧 step-03 的两块职责**（它们有了别的归宿）：
- * - layout.zones / 版式草案 → compile.ts 的事（它吃 brief 产版式 + VLM 验收）
+ * - layout.zones / 版式草案 → 下游的事（吃 brief 产版式的那个环节；原为 CLI
+ *   `compile.ts`，已于 2026-10-09 删除）
  * - scene_brief.generation_prompt_de → assetsgen/order.ts 的事（订单编写模型按
  *   生图模型方言写 prompt，规划层代写只会产出不符合规范的废文案）
  * 规划层只回答「做哪几张图、每张回答什么问题、图上写什么字」。

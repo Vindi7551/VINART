@@ -6,8 +6,8 @@ import { registerBundledSkill } from '../registry';
  * 内容源自 workflow/briefgen 四步流水线（perceive/claims/plan/draft）的
  * prompt 精华——聊天链的主 AI 加载本手册后，自己在对话内完成链 A 四步
  * （产物留对话内），执行环节交给既有工具（spawn/render_design/generate_assets）。
- * 严格批量、产物落盘复用走编译器（唯一在用的 CLI）：
- * npm run step src/workflow/design-sketch/compile.ts -- <方案.md>（开发者用）。
+ * 产物落盘复用：把方案写成 md 落到工作目录（在对话里让主 AI 写即可）。
+ * ⚠️ 项目已**没有 CLI**（唯一的 compile.ts 于 2026-10-09 删除）。
  */
 
 const CONTENT = `## 亚马逊 Listing 套图流程
@@ -15,8 +15,8 @@ const CONTENT = `## 亚马逊 Listing 套图流程
 **适用**：用户要为亚马逊产品设计一套 listing 图片（主图 + 副图），并提供了产品照和/或五点描述。
 **分工**：你负责内容创作四步（分析→审计→规划→写方案），执行交给工具
 （spawn_design_agents 出草案 → compile_appearance 配色 → generate_assets 素材 → render_design 成品）。
-分析产物留在对话内即可；要把方案落盘复用（brief md 喂编译器 / 重跑）时，写成 md 后跑编译器：
-npm run step src/workflow/design-sketch/compile.ts -- <方案.md>。
+分析产物留在对话内即可；需要方案落盘复用（后续据此重建版式）时，把它写成 md
+存到工作目录即可（主 AI 写文件即可，不再需要命令行）。
 
 ### 第 1 步 · 产品结构化分析（用户贴产品照后）
 

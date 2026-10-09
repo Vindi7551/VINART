@@ -2,12 +2,11 @@
  * 版式设计子 agent 的 system 素材。
  *
  * 契约单一真源：直接读 `src/workflow/design-sketch/design-sketch.md`——
- * compile.ts 的 system 用的就是它，契约更新两边自动同步（不复制）。
+ * 子 agent 与（已删的）CLI `compile.ts` 用的是同一份，契约更新自动同步（不复制）。
  *
- * 纪律部分从 compile.ts 的提示词资产抽取改写：compile 版写给「产 spec 的
- * 固定循环」（只输出 JSON），这里写给「用工具的智能体」
+ * 纪律部分从 `compile.ts` 的提示词资产抽取改写（**该 CLI 已于 2026-10-09 删除**）：
+ * 它那版写给「产 spec 的固定循环」（只输出 JSON），这里写给「用工具的智能体」
  * （save_spec → 按 issues 自纠 → render_sketch → finish）。
- * compile.ts 本体保留不动，两条链各自可用。
  */
 
 import { readFileSync } from 'node:fs';
@@ -15,7 +14,7 @@ import { resolve } from 'node:path';
 
 const CONTRACT_PATH = resolve('src/workflow/design-sketch/design-sketch.md');
 
-/** 版式契约全文（与 compile.ts 同一份；进程内读一次缓存） */
+/** 版式契约全文（单一真源；进程内读一次缓存） */
 let contractCache: string | null = null;
 export function layoutContract(): string {
   if (contractCache === null) contractCache = readFileSync(CONTRACT_PATH, 'utf8');

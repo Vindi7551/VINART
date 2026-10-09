@@ -7,15 +7,15 @@
  * compile 的输入是**自由格式的创意方案 md**（手写，如 test_product/briefs/*.md）。
  * 本步把结构化规划「翻译」成那种 md。
  *
- * ⚠️ 旧 step-04（三层设计草案：内容→版式→元素）的职责已被 compile.ts **取代**——
- * compile 吃 brief 直接产版式 + VLM 视觉验收，比一次性写死三层草案更可回喂。
- * 所以本步只写「画面意图」，不写版式坐标（那是 compile 的本职）。
+ * ⚠️ 本步只写「画面意图」，**不写版式坐标**——版式是下游的事
+ * （原为 CLI `compile.ts`：吃 brief 直接产版式 + VLM 视觉验收，比一次性写死三层
+ * 草案更可回喂；**该 CLI 已于 2026-10-09 删除**，现由对话链路承担）。
  *
  * ## 产出粒度：一个图位一份 brief
  *
- * compile 一次消费一份 brief → 一个版式（一张图）。
- * 套图规划出 N 个图位，就产 N 份 md，落在 `test_product/briefs/<产品名>-<slot>.md`，
- * 与手写 brief 同目录、同用法：`compile.ts test_product/briefs/xxx.md`。
+ * 一个版式消费一份 brief（一张图）。套图规划出 N 个图位，就产 N 份 md，
+ * 落在 `test_product/briefs/<产品名>-<slot>.md`，与手写 brief 同目录、同用法
+ * （喂给对话链路产版式）。
  *
  * ⚠️ MAIN 默认跳过：纯白底 + 商品抠图 + 禁文字，全是机械处理没有设计决策，
  * 走图像处理管线，不值得花一次模型调用（与旧 step-04 的处理一致）。

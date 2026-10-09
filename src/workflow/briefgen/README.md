@@ -24,8 +24,9 @@
 要单跑时从模块导出调用（`perceiveProduct` / `auditClaims` / `planSlots` / `draftBrief`）。
 
 产出落点：中间产物（识别/审计/规划 JSON）在 `test_product/` 根目录；
-**brief 落 `test_product/briefs/<产品名>-<slot>.md`**——与手写 brief 同目录，
-compile 用法不变：`npm run step src/workflow/design-sketch/compile.ts -- test_product/briefs/xxx.md`。
+**brief 落 `test_product/briefs/<产品名>-<slot>.md`**——与手写 brief 同目录。
+brief 的消费者是**对话链路**（主 AI 读它产版式）；旧 CLI（`compile.ts`）已于
+2026-10-09 删除。
 
 ## 设计决策
 
@@ -40,7 +41,7 @@ compile 用法不变：`npm run step src/workflow/design-sketch/compile.ts -- te
   `--prompt-lang`（生图提示词语言，读者是模型）是**两回事**。
 - **MAIN 跳过**：纯白底 + 抠图 + 禁文字，机械处理没有设计决策，走图像处理管线。
 - **每步单独可跑、产物肉眼可验收**：终端打印分组摘要 + JSON/MD 落盘。
-- brief 的程序化验收：**图内文案必须逐字出现**（compile 被要求文案一字不漏，
+- brief 的程序化验收：**图内文案必须逐字出现**（版式产出一字不漏，
   brief 漏字 = 成品漏字）。
-- 全部 gateway.stream 直调（与 order.ts / compile.ts 同模式），不再走
+- 全部 gateway.stream 直调（与 order.ts 同模式），不再走
   session/context 封装。
