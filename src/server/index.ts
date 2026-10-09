@@ -18,7 +18,6 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 
@@ -28,13 +27,18 @@ const PNG_PRIORITY = ['final.png', 'sketch.png'];
 
 /**
  * 版式编辑数据链路(前端逐元素编辑的持久层):
- *   GET  /api/layout/<name>/data   → { spec, appearance, html }(linked.html 原文)
+ *   GET  /api/layout/<name>/data   → { name, project, spec, appearance, html }
  *   POST /api/layout/<name>/save   → body { spec?, appearance? } 写盘
- *   POST /api/layout/<name>/render → spawn step-layout final(纯重渲,零 API 成本)
+ *   POST /api/layout/<name>/render → 复用聊天链的 render_design 工具(零模型调用)
  * name 只允许字母数字横线下划线,防路径穿越。
+ *
+ * ⚠️ **三个动作都必须带 `?session=&project=`**。历史事故:客户端只有 data 带、
+ * save/render 没带 → 服务端退回硬编码 `test_product/layout/<name>`,
+ * 结果「改了、保存了、项目里的图没变」,同名版式还会覆盖仓库里的副本。
+ * 客户端拼 URL 统一走 App 的 layoutApiUrl()。
  */
-// 渲染互斥:同一时间只允许一个渲染子进程(历史:run/pipeline/render 共用)
-let running: { stepId: string; child: ChildProcess } | null = null;
+// 渲染互斥:同一时间只允许一个渲染任务(历史:run/pipeline/render 共用)
+let running: { stepId: string } | null = null;
 
 async function handleLayout(
   req: IncomingMessage,
@@ -131,8 +135,10 @@ async function handleLayout(
       /<script type="application\/json" id="__vinart-data">[\s\S]*?<\/script>\s*/g,
       '',
     );
+    // 回填 project：客户端保存/重渲时要拿它拼 `?session=&project=`——
+    // 没有它就会退回硬编码 test_product/layout（改了不生效的实锤根因）
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    return res.end(JSON.stringify({ name, spec, appearance, html }));
+    return res.end(JSON.stringify({ name, project: projectForAssets, spec, appearance, html }));
   }
 
   if (req.method === 'POST' && action === 'save') {
@@ -159,6 +165,10 @@ async function handleLayout(
   }
 
   if (req.method === 'POST' && action === 'render') {
+    if (!sessionId) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('render 需要会话:请带 ?session=<id>');
+    }
     if (running) {
       res.writeHead(409, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end(`已有任务在跑: ${running.stepId}`);
@@ -168,34 +178,25 @@ async function handleLayout(
       return res.end(`no spec: ${name}`);
     }
     console.log(`[render] ${name} → final`);
-    const child = spawn(
-      process.execPath,
-      [
-        'scripts/run-ts.mjs',
-        'src/workflow/steps/step-layout.ts',
-        `test_product/layout/${name}/design-sketch.json`,
-        'final',
-        '--no-library',
-      ],
-      { cwd: process.cwd(), windowsHide: true },
-    );
-    running = { stepId: `render:${name}`, child };
-    let out = '';
-    const collect = (d: Buffer) => (out += d.toString());
-    child.stdout?.on('data', collect);
-    child.stderr?.on('data', collect);
-    const done = (code: number | null) => {
-      running = null;
-      console.log(`[render] exit=${code}`);
-      res.writeHead(code === 0 ? 200 : 500, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: code === 0, log: out.slice(-2000) }));
-    };
-    child.on('exit', done);
-    child.on('error', (e) => {
-      running = null;
+    running = { stepId: `render:${name}` };
+    try {
+      // ⚠️ 复用聊天链的 render_design 工具，**不再自己 spawn step-layout**：
+      // 此前两条渲染实现不一致——step-layout 侧不传 searchRoots（工作目录相对的
+      // 贴图素材解析不到）、且规格路径硬编码 test_product/layout/<name>；
+      // 而聊天链的 render_design 用共享渲染器 + [workDir, 项目根] 回退根 + 校验。
+      // 入口唯一化后，网页点「重渲」与让 AI 重渲走同一份逻辑。
+      const result = await createRenderDesignTool({ sessionId }).execute(
+        { name },
+        { dir, signal: new AbortController().signal },
+      );
+      res.writeHead(result.isError ? 500 : 200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: !result.isError, log: result.content }));
+    } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ ok: false, log: String(e) }));
-    });
+    } finally {
+      running = null;
+    }
     return;
   }
 
@@ -324,7 +325,7 @@ async function handleSessions(
     return res.end(JSON.stringify({ ok: true, project: name, displayName: displayName || name }));
   }
 
-  // ── 产物清单(按会话工作目录;legacy 回退 test_product/layout)──
+  // ── 产物清单(只列会话当前项目的 designs)──
   if (sub === 'artifacts' && method === 'GET') {
     return handleArtifacts(res, sessionId);
   }
@@ -597,16 +598,17 @@ async function buildLayoutNote(sessionId: string, layoutName?: string | null): P
   }
 }
 
-function handleArtifacts(res: ServerResponse, sessionId?: string | null) {
+/**
+ * 产物清单(**按会话**——唯一入口是 `/api/sessions/<sid>/artifacts`)。
+ * 只列当前项目的 designs（gallery 跟随项目走，切项目即切清单——不聚合其他项目）；
+ * 未设置项目 → 旧约定 `<workDir>/designs`（历史数据兼容）。
+ *
+ * 曾经的 `/api/artifacts`(无会话 → 扫硬编码 `test_product/layout`)已删除：
+ * 那条路忽略 workDir、且客户端 `itemUrl` 少拼一段 `<name>` 拼不出可用缩略图
+ * （2026-10-09 移除，见 .workbuddy/memory/2026-10-09.md）。
+ */
+function handleArtifacts(res: ServerResponse, sessionId: string) {
   void (async () => {
-    // 无 session → legacy 根（旧习惯保留）；有 session → **只列当前项目**的
-    // designs（gallery 跟随项目走，切项目即切清单——不聚合其他项目）；
-    // 未设置项目 → 旧约定 <workDir>/designs（历史数据兼容）。
-    if (!sessionId) {
-      const items = scanArtifactRoot(resolve('test_product/layout'), null, 'legacy', 'test_product/layout');
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      return res.end(JSON.stringify(items));
-    }
     const workDir = await transcript.getWorkDir(sessionId);
     const project = await transcript.getProject(sessionId);
     const roots: { layoutsRoot: string; project: string | null }[] = [];
@@ -616,9 +618,7 @@ function handleArtifacts(res: ServerResponse, sessionId?: string | null) {
     }
     const legacyRoot = join(workDir, 'designs');
     if (!project && existsSync(legacyRoot)) roots.push({ layoutsRoot: legacyRoot, project: null });
-    const items = roots.flatMap((g) =>
-      scanArtifactRoot(g.layoutsRoot, g.project, 'session', `@session/${sessionId}`),
-    );
+    const items = roots.flatMap((g) => scanArtifactRoot(g.layoutsRoot, g.project));
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(items));
   })().catch(() => {
@@ -628,12 +628,7 @@ function handleArtifacts(res: ServerResponse, sessionId?: string | null) {
 }
 
 /** 扫一个 layouts 根目录 → 产物条目（PNG 排序：final > sketch > 其他） */
-function scanArtifactRoot(
-  layoutsRoot: string,
-  project: string | null,
-  rootTag: 'session' | 'legacy',
-  dirLabel: string,
-) {
+function scanArtifactRoot(layoutsRoot: string, project: string | null) {
   if (!existsSync(layoutsRoot)) return [];
   return readdirSync(layoutsRoot, { withFileTypes: true })
     .filter((d) => d.isDirectory())
@@ -650,11 +645,7 @@ function scanArtifactRoot(
       return {
         name: d.name,
         project, // 所属项目（null = 旧数据未分组）——前端分组展示 + layout API 带回
-        // root:前端拼产物 URL 的分支依据——session 走 file API,
-        // legacy 走 /files/ 静态映射。dir 仅作展示/键用
-        root: rootTag,
-        dir: dirLabel,
-        layoutsRoot,
+        layoutsRoot, // 前端用它 + name 组成卡片 key（唯一标识）
         pngs: files.filter((f) => f.endsWith('.png')),
         htmls: files.filter((f) => f.endsWith('.html')),
       };
@@ -693,6 +684,8 @@ import { renderSkillCatalog } from '../designharness/skills/registry';
 import { getChatSession, dropChatSession, isSessionStreaming } from '../designharness/session/chat-store';
 import type { Attachment } from '../designharness/gateway/type/chat';
 import { uploadImageFile, FILES_API_MAX_BYTES } from '../designharness/gateway/util/files-api';
+// 重渲复用聊天链的成品渲染工具（/api/layout/<name>/render）——见该工具顶部注释
+import { createRenderDesignTool } from '../designharness/tools/render-design';
 import { getOpenAICompatChatConfig } from '../config';
 
 const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -801,7 +794,6 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
       return res.end((e as Error).message);
     }
   }
-  if (path === '/api/artifacts') return handleArtifacts(res, url.searchParams.get('session'));
   if (path.startsWith('/api/layout/')) {
     return await handleLayout(req, res, path.slice('/api/layout/'.length), url.searchParams.get('session'), url.searchParams.get('project'));
   }

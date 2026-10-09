@@ -90,6 +90,9 @@ export interface LayoutAppearance {
 /** GET /api/layout/<name>/data 的返回 */
 export interface LayoutData {
   name: string;
+  /** 版式所属项目——保存/重渲必须带回它拼 URL，否则服务端会退回
+   *  硬编码 test_product/layout（改了不生效，还可能污染仓库里的同名副本） */
+  project: string | null;
   spec: LayoutSpec;
   appearance: LayoutAppearance;
   html: string;

@@ -51,6 +51,23 @@ function formatToolLine(d: { name?: unknown; ok?: unknown; ms?: unknown; result?
   return `🔧 ${name} ${mark}${ms}${brief}`;
 }
 
+/**
+ * 版式 API 的 URL。**保存/重渲必须带 session+project**——服务端靠它定位
+ * `<workDir>/<project>/designs/<name>`；缺失就会退回硬编码 `test_product/layout/<name>`，
+ * 表现为「改了、保存了、项目里的图没变」，同名版式还会覆盖仓库里的副本（实测事故）。
+ */
+function layoutApiUrl(
+  cur: { name: string; project: string | null },
+  action: 'save' | 'render',
+  sessionId: string | null,
+): string {
+  const q = new URLSearchParams();
+  if (sessionId) q.set('session', sessionId);
+  if (cur.project) q.set('project', cur.project);
+  const s = q.toString();
+  return `/api/layout/${cur.name}/${action}${s ? `?${s}` : ''}`;
+}
+
 export function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [selectedElements, setSelectedElements] = useState<Set<string>>(new Set());
@@ -412,7 +429,7 @@ export function App() {
     const cur = layoutRef.current;
     if (!cur) return;
     try {
-      await fetch(`/api/layout/${cur.name}/save`, {
+      await fetch(layoutApiUrl(cur, 'save', sessionId), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ spec: cur.spec, appearance: cur.appearance }),
@@ -771,7 +788,7 @@ export function App() {
     if (!cur) return;
     setLayoutBusy(true);
     try {
-      const resp = await fetch(`/api/layout/${cur.name}/save`, {
+      const resp = await fetch(layoutApiUrl(cur, 'save', sessionId), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ spec: cur.spec, appearance: cur.appearance }),
@@ -790,7 +807,7 @@ export function App() {
     } finally {
       setLayoutBusy(false);
     }
-  }, []);
+  }, [sessionId]);
 
   /** 触发 final 重渲(几秒,零 API),完成后刷新画廊与 PNG 预览 */
   const handleRenderLayoutLive = useCallback(async () => {
@@ -802,11 +819,17 @@ export function App() {
       { id: crypto.randomUUID(), role: 'assistant', text: `⟳ 重渲 ${cur.name} → final…` },
     ]);
     try {
-      const resp = await fetch(`/api/layout/${cur.name}/render`, { method: 'POST' });
+      const resp = await fetch(layoutApiUrl(cur, 'render', sessionId), { method: 'POST' });
       const result = (await resp.json()) as { ok: boolean; log?: string };
       if (result.ok) {
         setGalleryKey((k) => k + 1);
-        setPreviewUrl(`/files/test_product/layout/${cur.name}/final.png?t=${Date.now()}`);
+        // 成品落在版式目录里，走会话文件 API 取。
+        // 此前硬编码 `/files/test_product/layout/<name>/final.png`——项目化后必 404。
+        setPreviewUrl(
+          sessionId
+            ? `/api/sessions/${sessionId}/file/${cur.project ? `${cur.project}/designs` : 'designs'}/${cur.name}/final.png?t=${Date.now()}`
+            : `/files/test_product/layout/${cur.name}/final.png?t=${Date.now()}`,
+        );
         logSessionAction('render', { layout: cur.name });
         setMessages((prev) => [
           ...prev,
@@ -831,7 +854,7 @@ export function App() {
     } finally {
       setLayoutBusy(false);
     }
-  }, [layout]);
+  }, [layout, sessionId]);
 
   /** 发消息:走会话层 LLM 对话(SSE 流式),消息持久化在服务端转录里 */
   /**
