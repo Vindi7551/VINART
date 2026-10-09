@@ -9,7 +9,6 @@ designassets/
       design-sketch.json  版式契约实例
       assets.json         素材订单（生图请求）
       sketch.png
-      sketch.html / sketch.linked.html
       README.md
   elements/         ← 元素库
     palette/          配色方案 JSON
@@ -78,9 +77,13 @@ designassets/
 
 | 阶段 | 工具 | 做什么 | 产出 |
 |---|---|---|---|
-| 草图 | `render_sketch` | 分区虚线框 + 灰条 + 区域标签 | `sketch.png` + `sketch.html` |
+| 草图 | `render_sketch` | 分区虚线框 + 灰条 + 区域标签 | `sketch.png` |
 | 素材 | `generate_assets` | 把 `[商品参考图] + [草图] + 提示词` 交给生图模型 | `scene*.png` |
 | 成品 | `render_design` | AI 图作底 + HTML+CSS 文字层合成 | `final.png` |
+
+⚠️ **草图不再落盘 HTML**（2026-10-09）：草图完全可由 spec + appearance 编译出来
+（`renderDesign(spec, {mode:'sketch'})`），落盘只是多一份会漂移的快照——与
+`final.html`/`final.linked.html` 同理。要看草图就是 `sketch.png` 本身。
 
 **产物落到会话工作目录的 `<项目>/designs/<名>/`，不落回库里**——库只存版式本身
 （规格 + 草图 + 资产卡），产物（生成素材、成品图）留在工作目录。

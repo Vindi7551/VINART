@@ -10,7 +10,7 @@
  * - VLM 看图验收、生图**不在工具表里**——烧钱动作留在主 AI / 用户手里
  *
  * 目录语义：ctx.dir 是子 agent 的工作目录；一个版式 = `<dir>/<name>/` 子目录
- * （design-sketch.json + design-appearance.json + sketch.png + sketch.html），
+ * （design-sketch.json + design-appearance.json + sketch.png），
  * 与 test_product/layout/<name>/ 的既有落点约定一致——runner 调用方把
  * dir 指到 test_product/layout 即可无缝对接现有链。
  *
@@ -18,8 +18,8 @@
  * 错在哪、该改成什么——它们会被原样回喂当修改指令。
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { checkAppearance, checkAppearanceRefs, checkSketch, type CheckResult, type SketchIssue } from '../../workflow/design-sketch/validate';
 import { renderSketchFile } from '../../workflow/design-sketch/runtime';
 import type { AgentTool, AgentToolContext } from '../subagent/types';
@@ -42,6 +42,31 @@ function fmtCheck(check: CheckResult): string {
   return check.issues.map((i) => `[${i.level}] ${i.path}: ${i.message}`).join('\n');
 }
 
+/**
+ * 报错时顺带说明「附近真实存在什么」。
+ *
+ * 动机（实测）：子 agent 的 read_file 有 9/19 次是"文件不存在"——它在**猜路径**
+ * （assets.json、uploads/*.png、PT10/design-appearance.json…）。原来的报错只有
+ * 一句"不存在"，模型只能继续猜、继续烧轮次。这里把真实目录内容回给它。
+ */
+function listDir(abs: string): string {
+  const fmt = (d: string): string => {
+    try {
+      const items = readdirSync(d, { withFileTypes: true }).map((e) =>
+        e.isDirectory() ? `${e.name}/` : e.name,
+      );
+      if (!items.length) return `（${basename(d)}/ 是空的）`;
+      return `（${basename(d)}/ 下现有：${items.slice(0, 20).join(' / ')}${items.length > 20 ? ' …' : ''}）`;
+    } catch {
+      return '';
+    }
+  };
+  const dir = dirname(abs);
+  if (existsSync(dir)) return fmt(dir);
+  const up = dirname(dir);
+  return existsSync(up) ? ` ${basename(dir)}/ 这一层不存在。${fmt(up)}` : '';
+}
+
 /** 读工作目录内的文本文件，带防逃逸守卫。返回内容或错误消息 */
 function readTextInDir(ctx: AgentToolContext, relPath: string): { ok: true; text: string } | { ok: false; error: string } {
   const abs = resolve(ctx.dir, relPath);
@@ -50,7 +75,7 @@ function readTextInDir(ctx: AgentToolContext, relPath: string): { ok: true; text
     return { ok: false, error: `路径越出了工作目录：${relPath}。只能访问工作目录内的文件。` };
   }
   if (!existsSync(abs)) {
-    return { ok: false, error: `文件不存在：${relPath}。` };
+    return { ok: false, error: `文件不存在：${relPath}。${listDir(abs)}` };
   }
   if (statSync(abs).size > 200 * 1024) {
     return { ok: false, error: `文件超过 200KB：${relPath}。工具只读文本片段，这么大的文件请用别的方式确认。` };
@@ -197,7 +222,9 @@ const renderSketch: AgentTool = {
   name: 'render_sketch',
   description:
     '把已保存的版式渲染成**草图 PNG**（灰条区域框 + 区域标签，确定性渲染，零 API 成本，约 3 秒）。' +
-    '渲染前自动校验，校验不通过会拒绝并列出错误。返回 png / html 的相对路径（相对工作目录）。',
+    '渲染前自动校验，校验不通过会拒绝并列出错误。返回 png 的相对路径（相对工作目录）。' +
+    '⚠️ read_file 只能读文本，**看不了这张 PNG** —— 需要视觉判断时把它报给上层（主 AI / 用户），' +
+    '不要靠反复读文件来"确认"渲染结果；结构问题以 validate_sketch 的提示为准。',
   parameters: {
     type: 'object',
     properties: {
@@ -227,7 +254,6 @@ const renderSketch: AgentTool = {
     return {
       content: JSON.stringify({
         png: relative(resolve(ctx.dir), r.png),
-        html: relative(resolve(ctx.dir), r.html),
       }),
     };
   },

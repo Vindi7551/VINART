@@ -4,7 +4,7 @@
  * ═══════════════════════════════════════════════════════════════════════
  *
  * 这段逻辑原本长在旧驱动脚本里，是它的私产。抽出来的原因很实际：
- * **编译器（compile.ts）也要渲草图做校验**——但不能起子进程
+ * **方案编译那一步也要渲草图做校验**——但不能起子进程
  * （实测：某些环境里进程内 spawn 会 `EBUSY`，连 cmd.exe 都不用就走了 node 也不行）。
  *
  * 于是"读 spec → 读配色/字体 → 渲染 → 落盘"必须能**在当前进程内**调用。
@@ -13,7 +13,7 @@
  * 所有读文件的事都在这一层做完（字体内联成 data URL）。
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 import { renderDesign } from './render';
@@ -209,8 +209,6 @@ export interface SketchRenderResult {
   ok: boolean;
   /** 草图 PNG 的绝对路径 */
   png: string;
-  /** 草图 HTML 的绝对路径 */
-  html: string;
   /** 失败时的原因 */
   error?: string;
 }
@@ -254,24 +252,26 @@ export async function renderSketchFile(
 
     // 草图不引用图片，也不需要内联字体（省 ~100KB）——
     // 它上面只有灰条与默认无衬线的区域标签。
+    //
+    // ⚠️ **不再落盘 sketch.html**（2026-10-09）：草图完全可由 spec + appearance
+    // 编译出来，落盘只是多一份会漂移的快照；而且它是渲染输入这件事本身是怪癖
+    // ——现在直接渲内存字符串（与 final.png 的做法对齐）。
     const { html } = renderDesign(spec, {
       mode: 'sketch',
       palette,
       typography: { ...typography, faceCss: '' },
     });
-    const htmlPath = resolve(OUT, 'sketch.html');
-    writeFileSync(htmlPath, html, 'utf8');
 
     return withSharedRenderer(async (r) => {
-      const out = await r.render({ html: htmlPath, isFilePath: true }, OUT, {
+      const out = await r.render({ html }, OUT, {
         width: spec.canvas.width,
         height: spec.canvas.height,
         format: 'png',
         filename: 'sketch',
       });
-      return { ok: true, png: out.imagePath, html: htmlPath };
+      return { ok: true, png: out.imagePath };
     });
   } catch (e) {
-    return { ok: false, png: '', html: '', error: (e as Error).message };
+    return { ok: false, png: '', error: (e as Error).message };
   }
 }
