@@ -674,8 +674,13 @@ export function App() {
       return !c;
     });
   }, []);
-  // ── 左侧对话列表:收起/展开(镜像右栏那套;width→0 过渡 + 贴边开关按钮) ──
-  const LEFT_COL_WIDTH = 230;
+  // ── 左侧对话列表:宽度可拖拽 + 收起/展开(镜像右栏那套) ──
+  const LEFT_COL_MIN = 180;
+  const LEFT_COL_MAX = 480;
+  const [leftColWidth, setLeftColWidth] = useState<number>(() => {
+    const v = Number(localStorage.getItem('vinart.leftColWidth'));
+    return Number.isFinite(v) && v >= LEFT_COL_MIN && v <= LEFT_COL_MAX ? v : 230;
+  });
   const [leftColCollapsed, setLeftColCollapsed] = useState<boolean>(() =>
     localStorage.getItem('vinart.leftColCollapsed') === '1',
   );
@@ -698,6 +703,7 @@ export function App() {
       const onMove = (ev: MouseEvent) => {
         const s = resizeRef.current;
         if (!s) return;
+        // 右栏在右、手柄在左缘:向左拖(clientX 变小)= 变宽
         setRightColWidth(Math.min(RIGHT_COL_MAX, Math.max(RIGHT_COL_MIN, s.startW + (s.startX - ev.clientX))));
       };
       const onUp = (ev: MouseEvent) => {
@@ -716,6 +722,36 @@ export function App() {
       window.addEventListener('mouseup', onUp);
     },
     [rightColWidth],
+  );
+
+  /** 左栏拖拽(镜像右栏):手柄贴左栏右缘,向右拖(clientX 变大)= 变宽 */
+  const handleResizeStartLeft = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      setIsResizingCol(true);
+      resizeRef.current = { startX: e.clientX, startW: leftColWidth };
+      document.body.style.userSelect = 'none';
+      const onMove = (ev: MouseEvent) => {
+        const s = resizeRef.current;
+        if (!s) return;
+        setLeftColWidth(Math.min(LEFT_COL_MAX, Math.max(LEFT_COL_MIN, s.startW + (ev.clientX - s.startX))));
+      };
+      const onUp = (ev: MouseEvent) => {
+        const s = resizeRef.current;
+        if (s) {
+          const w = Math.min(LEFT_COL_MAX, Math.max(LEFT_COL_MIN, s.startW + (ev.clientX - s.startX)));
+          localStorage.setItem('vinart.leftColWidth', String(w));
+        }
+        resizeRef.current = null;
+        setIsResizingCol(false);
+        document.body.style.userSelect = '';
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    },
+    [leftColWidth],
   );
 
   const handlePickDir = useCallback(() => {
@@ -1002,11 +1038,11 @@ export function App() {
             onOpen={handleOpenArtifact}
           />
       <div className={`main${isResizingCol ? ' resizing' : ''}`}>
-        {/* 左侧对话列表:收起时 width→0,开关贴屏左缘;图标竖线靠左=侧栏在左 */}
+        {/* 左侧对话列表:宽度可拖拽(localStorage 持久化),收起时 width→0,开关贴屏左缘;图标竖线靠左=侧栏在左 */}
         <button
           type="button"
           className={`left-toggle${leftColCollapsed ? ' collapsed' : ''}`}
-          style={{ left: leftColCollapsed ? 10 : LEFT_COL_WIDTH + 10 }}
+          style={{ left: leftColCollapsed ? 10 : leftColWidth + 10 }}
           onClick={toggleLeftCol}
           title={leftColCollapsed ? '展开对话列表' : '收起对话列表'}
         >
@@ -1016,6 +1052,7 @@ export function App() {
           </svg>
         </button>
         <SessionListPanel
+          width={leftColWidth}
           sessions={sessions}
           activeSessionId={sessionId}
           collapsed={leftColCollapsed}
@@ -1025,6 +1062,7 @@ export function App() {
           onDelete={handleDeleteSession}
           onNew={handleNewSession}
           onNewProject={handleNewProject}
+          onResizeStart={handleResizeStartLeft}
         />
         <PreviewPanel
           htmlCode={layout ? undefined : htmlCode}

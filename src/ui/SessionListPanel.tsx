@@ -22,6 +22,8 @@ interface SessionListPanelProps {
   sessions: SessionItem[];
   activeSessionId: string | null;
   collapsed: boolean;
+  /** 栏宽(px)——由 App 的拖拽状态驱动 */
+  width: number;
   /** 当前环境的工作目录——projects 清单所属目录；清单里还没有会话的项目补成空组头 */
   envWorkDir: string | null;
   /** 项目清单（当前环境的；会话项 🗑 同款显隐） */
@@ -32,6 +34,8 @@ interface SessionListPanelProps {
   onNew: (env?: NewSessionEnv) => void;
   /** 目录组头 ✎：在工作目录下新建项目（App 侧 append 清单 + 预填 + 新对话态） */
   onNewProject: (workDir: string, name: string, displayName?: string) => void;
+  /** 右缘拖拽手柄 mousedown（App 侧接管 mousemove 调宽） */
+  onResizeStart: (e: React.MouseEvent) => void;
 }
 
 const UNCATEGORIZED_DIR = '（未指定目录）';
@@ -70,12 +74,14 @@ export function SessionListPanel({
   sessions,
   activeSessionId,
   collapsed,
+  width,
   envWorkDir,
   projects,
   onSwitch,
   onDelete,
   onNew,
   onNewProject,
+  onResizeStart,
 }: SessionListPanelProps) {
   // 折叠状态记在组件内（key = dir||project）——切会话不重置
   const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(new Set());
@@ -162,7 +168,11 @@ export function SessionListPanel({
   if (collapsed) return null;
 
   return (
-    <aside className="session-list">
+    <aside className="session-list" style={{ width }}>
+      {/* 右缘拖拽手柄:向右拖 = 变宽(镜像右栏) */}
+      {!collapsed && (
+        <div className="left-resizer" onMouseDown={onResizeStart} title="拖拽调整宽度" />
+      )}
       <div className="session-list-head">
         <button className="session-new-btn" onClick={() => onNew()} title="新建对话（沿用当前环境）">
           ＋ 新对话

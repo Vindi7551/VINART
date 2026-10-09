@@ -799,8 +799,10 @@ html, body, #root {
 
 /* ===== 左侧对话列表（Codex 式）===== */
 .session-list {
-  width: 230px;
+  /* width 由 App 内联驱动(可拖拽);position 是给 .left-resizer 当锚点——
+     注意:CSS 没有行注释语法,双斜杠会触发错误恢复吞掉下一条声明 */
   flex-shrink: 0;
+  position: relative;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border, #e5e7eb);
@@ -1335,4 +1337,22 @@ html, body, #root {
 
 .sidebar-banner:hover {
   background: var(--bg-hover);
+}
+
+/* 左栏右缘拖拽手柄(镜像右栏) */
+.left-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  z-index: 20;
+}
+.left-resizer:hover {
+  background: rgba(59, 130, 246, 0.25);
+}
+.main.resizing .session-list,
+.main.resizing .left-toggle {
+  transition: none;
 }
