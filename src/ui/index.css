@@ -666,70 +666,7 @@ html, body, #root {
   color: var(--text-primary);
 }
 
-/* ===== Element List ===== */
-.element-list {
-  border-top: 1px solid var(--border);
-  padding: 10px 16px;
-  background: var(--bg-surface);
-  flex-shrink: 0;
-}
-
-.element-list-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
-}
-
-.element-list-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.element-items {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.element-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 12px;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  background: var(--bg-surface);
-  cursor: pointer;
-  transition: all 0.15s;
-  user-select: none;
-}
-
-.element-tag:hover {
-  border-color: var(--accent);
-  color: var(--text-primary);
-  background: var(--accent-light);
-}
-
-.element-tag.selected {
-  border-color: var(--accent);
-  background: var(--accent-light);
-  color: var(--accent);
-  font-weight: 500;
-}
-
-.element-tag input[type="checkbox"] {
-  display: none;
-}
-
-.element-regenerate {
-  margin-top: 10px;
-}
+/* ===== Element List 已移除（图像元素占位条删除；画布点选逻辑仍走 iframe postMessage）===== */
 
 /* ===== Right Column ===== */
 /* 右栏容器：高度锁死在 .main 内，整页不滚——滚动只发生在栏内各区域自己身上。

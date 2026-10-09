@@ -1084,9 +1084,6 @@ export function App() {
               return next;
             });
           }}
-          onRegenerateSelected={() => {
-            /* TODO: agent 层重建后接入 */
-          }}
           onExport={htmlCode ? handleExport : undefined}
         />
         {/* 右栏开关:贴右栏左缘外悬浮,收起时滑到屏幕右缘;图标竖线靠右=侧栏在右,收起时镜像 */}

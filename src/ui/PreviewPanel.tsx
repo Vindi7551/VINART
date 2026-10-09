@@ -18,7 +18,6 @@ interface PreviewPanelProps {
   previewUrl?: string | null;
   selectedElements: Set<string>;
   onToggleElement: (id: string) => void;
-  onRegenerateSelected: () => void;
   onExport?: () => void;
   /** 版式编辑模式:有值 = 加载 linked.html + 受控编辑器(逐元素修改) */
   layoutData?: LayoutData | null;
@@ -43,7 +42,6 @@ export function PreviewPanel({
   previewUrl,
   selectedElements,
   onToggleElement,
-  onRegenerateSelected,
   onExport,
   layoutData,
   sessionId,
@@ -55,7 +53,6 @@ export function PreviewPanel({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const hasSelection = selectedElements.size > 0;
 
   // ── 画布状态：缩放 & 平移 ──
   const [zoom, setZoom] = useState(1);
@@ -409,55 +406,6 @@ export function PreviewPanel({
           </div>
         )}
       </div>
-
-      {!layoutData && (
-        <div className="element-list">
-          <div className="element-list-header">
-            <span className="element-list-title">
-              {htmlCode ? `设计元素 (${elements.length})` : '图像元素'}
-            </span>
-            {hasSelection && (
-              <button className="btn btn-sm" onClick={onRegenerateSelected}>
-                重新生成 ({selectedElements.size})
-              </button>
-            )}
-          </div>
-          <div className="element-items">
-            {htmlCode ? (
-              elements.map((el) => (
-                <label
-                  key={el.id}
-                  className={`element-tag${selectedElements.has(el.id) ? ' selected' : ''}`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedElements.has(el.id)}
-                    onChange={() => onToggleElement(el.id)}
-                  />
-                  <span className="element-tag-type">{el.type}</span>
-                  {el.label}
-                </label>
-              ))
-            ) : (
-              <>
-                {['背景', '主视觉', '标题', '副标题', '价格标签', 'CTA 按钮'].map((label, i) => (
-                  <label
-                    key={i}
-                    className={`element-tag${selectedElements.has(label) ? ' selected' : ''}`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedElements.has(label)}
-                      onChange={() => onToggleElement(label)}
-                    />
-                    {label}
-                  </label>
-                ))}
-              </>
-            )}
-          </div>
-        </div>
-      )}
     </section>
   );
 }
