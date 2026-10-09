@@ -6,7 +6,6 @@ import { ArtifactGallery, artifactDataUrl } from './ArtifactGallery';
 import { SessionListPanel } from './SessionListPanel';
 import { DirectoryBrowser } from './DirectoryBrowser';
 import { EditPanel } from './EditPanel';
-import type { PipelineFormValues } from './NewPipelineForm';
 import type { Message, DelegationRecord } from './types';
 import type { LayoutData, HostSignal, LayerAppearance, SessionItem } from './types';
 
@@ -55,7 +54,8 @@ function formatToolLine(d: { name?: unknown; ok?: unknown; ms?: unknown; result?
 export function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [selectedElements, setSelectedElements] = useState<Set<string>>(new Set());
-  const [isGenerating, setIsGenerating] = useState(false);
+  // 旧 run/pipeline 的生成中标记。聊天发送暂不互斥（SSE 流由后端会话锁保护）。
+  const [isGenerating] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [htmlCode, setHtmlCode] = useState<string | undefined>(undefined);
   /** 产物可能有新图时 +1,画廊据此重新拉清单 */
@@ -923,143 +923,7 @@ export function App() {
     [sessionId, ensureSession, layout, refreshSessions, toChatImageDataURL],
   );
 
-  /**
-   * 跑一条管线步骤：点按钮 → API 服务 spawn 对应 step 脚本 →
-   * stdout/stderr 以 SSE 逐行流回，渲染成终端式的 log 消息。
-   */
-  const handleRunStep = useCallback((stepId: string, label: string, query?: string) => {
-    if (isGenerating) return;
 
-    const logId = crypto.randomUUID();
-    setMessages((prev) => [
-      ...prev,
-      { id: crypto.randomUUID(), role: 'user', text: `▶ ${label}` },
-      { id: logId, role: 'assistant', kind: 'log', text: '连接 API 服务…' },
-    ]);
-    setIsGenerating(true);
-
-    const es = new EventSource(`/api/run/${stepId}${query ? `?${query}` : ''}`);
-    let done = false; // 服务端正常收尾后 EventSource 会触发 error(流结束)，防双重收尾
-    let started = false;
-
-    const setLog = (fn: (t: string) => string) =>
-      setMessages((prev) =>
-        prev.map((m) => (m.id === logId ? { ...m, text: fn(m.text) } : m)),
-      );
-    const finish = (line: string) => {
-      if (done) return;
-      done = true;
-      setLog((t) => `${t}\n${line}`);
-      setIsGenerating(false);
-      es.close();
-    };
-
-    es.addEventListener('start', (e) => {
-      const { cmd } = JSON.parse((e as MessageEvent).data);
-      started = true;
-      setLog(() => `$ ${cmd}`);
-    });
-    es.addEventListener('log', (e) => {
-      const { line } = JSON.parse((e as MessageEvent).data);
-      if (started) setLog((t) => `${t}\n${line}`);
-    });
-    es.addEventListener('exit', (e) => {
-      const { code } = JSON.parse((e as MessageEvent).data);
-      if (code === 0) setGalleryKey((k) => k + 1); // 产物可能有新图,刷新画廊
-      finish(code === 0 ? '✓ 完成' : `✗ 失败 (exit code=${code})`);
-    });
-    es.onerror = () => finish('✗ 与 API 服务的连接中断');
-  }, [isGenerating, sessionId]);
-
-  /** 一键编排:图 + 卖点 → 服务端落盘 → 顺序跑完整链,SSE 回流 */
-  const handleRunPipeline = useCallback(async (v: PipelineFormValues) => {
-    if (isGenerating) return;
-
-    // 1) 上传(图转 dataURL,卖点走 JSON)
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(r.result as string);
-      r.onerror = () =>
-        reject(new Error('读取产品图失败——文件可能被移动/删除/还在下载中,重新选一次'));
-      r.readAsDataURL(v.imageFile);
-    });
-    let id: string;
-    try {
-        const resp = await fetch('/api/pipeline', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: v.name,
-            lang: v.lang,
-            depth: v.depth,
-            slot: v.slot,
-            image: dataUrl,
-            bullets: v.bullets,
-            sessionId, // 产物落该会话的工作目录(📂 设置)
-            project: currentProject, // 落当前项目的 designs/briefs(未设置会被 400 拒绝)
-          }),
-        });
-      if (!resp.ok) {
-        const detail = (await resp.text()).trim();
-        throw new Error(
-          `HTTP ${resp.status}${detail ? `:${detail}` : '(API 服务无响应,大概率没在跑,重启 npm run dev)'} `,
-        );
-      }
-      ({ id } = await resp.json());
-    } catch (e) {
-      const msg = (e as Error).message?.trim() || '(未知错误)';
-      setMessages((prev) => [
-        ...prev,
-        { id: crypto.randomUUID(), role: 'assistant', text: `✗ 提交失败:${msg}` },
-      ]);
-      return;
-    }
-
-    // 2) 订阅执行流
-    const logId = crypto.randomUUID();
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        role: 'user',
-        text: `▶ 生成套图:${v.name}(槽位 ${v.slot === 'all' ? '全部' : v.slot},${v.depth === 'final' ? '到成品' : '到草图'})`,
-      },
-      { id: logId, role: 'assistant', kind: 'log', text: '排队中…' },
-    ]);
-    setIsGenerating(true);
-
-    const es = new EventSource(`/api/pipeline-run/${id}`);
-    let done = false;
-    const setLog = (fn: (t: string) => string) =>
-      setMessages((prev) =>
-        prev.map((m) => (m.id === logId ? { ...m, text: fn(m.text) } : m)),
-      );
-    const finish = (line: string, ok = false) => {
-      if (done) return;
-      done = true;
-      setLog((t) => `${t}\n${line}`);
-      if (ok) setGalleryKey((k) => k + 1);
-      setIsGenerating(false);
-      es.close();
-    };
-
-    es.addEventListener('phase', (e) => {
-      const { cmd } = JSON.parse((e as MessageEvent).data);
-      setLog((t) => `${t}\n$ ${cmd}`);
-    });
-    es.addEventListener('log', (e) => {
-      const { line } = JSON.parse((e as MessageEvent).data);
-      setLog((t) => `${t}\n${line}`);
-    });
-    es.addEventListener('exit', (e) => {
-      const { code, failed } = JSON.parse((e as MessageEvent).data);
-      finish(
-        code === 0 ? '✓ 全链完成' : `✗ 在「${failed ?? '?'}」阶段失败 (exit code=${code})`,
-        code === 0,
-      );
-    });
-    es.onerror = () => finish('✗ 与 API 服务的连接中断');
-  }, [isGenerating, currentProject]);
 
   const handleNewChat = useCallback(() => {
     setMessages([]);
@@ -1189,8 +1053,6 @@ export function App() {
             messages={messages}
             isGenerating={isGenerating}
             onSend={handleSend}
-            onRunStep={handleRunStep}
-            onRunPipeline={handleRunPipeline}
             workDir={workDir}
             projects={projects}
             currentProject={currentProject}

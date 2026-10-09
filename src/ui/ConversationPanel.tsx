@@ -1,16 +1,10 @@
 import { useRef, useState } from 'react';
 import type { Message } from './types';
-import { StepPanel } from './StepPanel';
-import { NewPipelineForm, type PipelineFormValues } from './NewPipelineForm';
 
 interface ConversationPanelProps {
   messages: Message[];
   isGenerating: boolean;
   onSend: (text: string, files?: File[]) => void;
-  /** 点管线步骤按钮 → App 里起 SSE 日志流 */
-  onRunStep: (id: string, label: string, query?: string) => void;
-  /** 一键生成:图 + 卖点 → 自动跑完整链 */
-  onRunPipeline: (v: PipelineFormValues) => void;
   /** 当前会话的工作目录(📂 设置;null=未设置,落缺省位置) */
   workDir: string | null;
   /** 项目层:工作目录下的产物分组(下拉切换/新建) */
@@ -26,8 +20,6 @@ export function ConversationPanel({
   messages,
   isGenerating,
   onSend,
-  onRunStep,
-  onRunPipeline,
   workDir,
   projects,
   currentProject,
@@ -40,9 +32,6 @@ export function ConversationPanel({
   /** 待发送图片：file + 预览用 objectURL（移除/发送时 revoke，防内存泄漏） */
   const [pendingFiles, setPendingFiles] = useState<Array<{ file: File; url: string }>>([]);
   const streamRef = useRef<HTMLDivElement>(null);
-  // 默认收起：对话是主区域，表单是工具（工具栏按钮展开）。展开态占半栏把
-  // chat-stream 挤到不可用（实测 32px），且聊天链路已覆盖表单的大部分场景
-  const [showForm, setShowForm] = useState(false);
   const [dirInputOpen, setDirInputOpen] = useState(false);
   const [dirDraft, setDirDraft] = useState('');
   // 项目新建输入:name(目录名,英文) + displayName(展示名,可中文)
@@ -268,12 +257,6 @@ export function ConversationPanel({
 
       </div>
 
-      {showForm && (
-        <NewPipelineForm running={isGenerating} onSubmit={onRunPipeline} />
-      )}
-
-      <StepPanel running={isGenerating} onRun={onRunStep} />
-
       {pendingFiles.length > 0 && (
         <div style={{ display: 'flex', gap: 4, padding: '0 16px 4px', flexWrap: 'wrap' }}>
           {pendingFiles.map((p, i) => (
@@ -292,13 +275,6 @@ export function ConversationPanel({
 
       <div className="input-area">
         <div className="input-toolbar">
-          <button
-            className={`btn-icon btn-ghost btn-sm${showForm ? ' active' : ''}`}
-            title="一键生成表单"
-            onClick={() => setShowForm((s) => !s)}
-          >
-            ＋ 新建套图
-          </button>
           <div className="agent-select">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z" />

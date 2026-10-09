@@ -21,93 +21,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
-import { randomUUID } from 'node:crypto';
 
 const PORT = Number(process.env.PORT) || 8787;
-/** 步骤硬超时:超过即强杀。防手滑写出死循环步骤后无人值守烧 API 钱 */
-const STEP_TIMEOUT_MS = 10 * 60_000;
-
-// ── 步骤注册表(唯一数据源:前端按钮从这里来) ──
-
-interface StepDef {
-  id: string;
-  label: string;
-  description: string;
-  /** 参数框的占位示例:等于终端里 `--` 后面要敲的东西。空 = 不需要参数 */
-  argsHint: string;
-  script: string;
-  buildArgs: (q: URLSearchParams) => string[];
-}
-
-/** 通用透传:前端参数框的内容,按空格切分,原样附加到 spawn 参数尾部。
- *  spawn 不经 shell,参数是字面量,不存在命令拼接;等价于用户在终端手敲。 */
-function rawArgs(q: URLSearchParams): string[] {
-  return (q.get('args') ?? '').trim().split(/\s+/).filter(Boolean);
-}
-
-const STEPS: StepDef[] = [
-  {
-    id: 'step-01-perceive',
-    label: '01 · 图像识别',
-    description: '产品照 → 结构化可见事实 JSON。不填参数用当前默认产品照。',
-    argsHint: '可选:换个图片路径',
-    script: 'src/workflow/steps/step-01-perceive.ts',
-    buildArgs: (q) => {
-      const image = q.get('image');
-      return [...(image ? [image] : []), ...rawArgs(q)];
-    },
-  },
-  {
-    id: 'step-02-claims',
-    label: '02 · 卖点审计',
-    description: 'listing 卖点 → 要素级证据审计(给 03 消费)。消费 01 的输出(step-01.json 同目录)。',
-    argsHint: 'test_product/shirt/step-01.json --bullets test_product/shirt/童装卖点.txt --lang en',
-    script: 'src/workflow/steps/step-02-claims.ts',
-    buildArgs: rawArgs,
-  },
-  {
-    id: 'step-03-slots',
-    label: '03 · 套图规划',
-    description: '卖点审计 → 每张图回答什么购买问题(给 04 消费)。消费 02 的输出(step-02.json 同目录)。',
-    argsHint: 'test_product/shirt/step-02.json --bullets test_product/shirt/童装卖点.txt --lang en',
-    script: 'src/workflow/steps/step-03-slots.ts',
-    buildArgs: rawArgs,
-  },
-  {
-    id: 'step-04-brief',
-    label: '04 · 方案编写',
-    description: '规划+卖点+事实 → 每个副图位的创意方案 md(test_product/briefs/)。全部槽位较贵,建议先 --only 单跑。',
-    argsHint: '--bullets test_product/shirt/童装卖点.txt --only PT01',
-    script: 'src/workflow/steps/step-04-brief.ts',
-    buildArgs: rawArgs,
-  },
-  {
-    id: 'step-05-appearance',
-    label: '05 · 外观编译',
-    description: '版式+方案+产品照 → 专属配色 design-appearance.json(多轮 LLM+视觉验收,较慢)。',
-    argsHint: 'test_product/layout/shirt-PT01/design-sketch.json --brief test_product/briefs/shirt-PT01.md',
-    script: 'src/workflow/steps/step-05-appearance.ts',
-    buildArgs: rawArgs,
-  },
-  {
-    id: 'step-order',
-    label: '06 · 素材订单',
-    description: '版式+方案 → assets.json(生图提示词+参考图角色,gen 阶段的前置)。',
-    argsHint: 'test_product/layout/shirt-PT01/design-sketch.json --brief test_product/briefs/shirt-PT01.md',
-    script: 'src/workflow/steps/step-order.ts',
-    buildArgs: rawArgs,
-  },
-  {
-    id: 'step-layout',
-    label: '07 · 出图',
-    description: '吃版式规格出图:sketch 草图(零 API,秒出)/ gen 生素材(烧钱)/ final 成品。spec 必填。',
-    argsHint: 'test_product/layout/shirt-PT01/design-sketch.json sketch --no-library',
-    script: 'src/workflow/steps/step-layout.ts',
-    buildArgs: rawArgs,
-  },
-];
-
-// ── 产物清单(自 vite.config.ts 迁入;final.png 优先) ──
 
 const PNG_PRIORITY = ['final.png', 'sketch.png'];
 
@@ -118,6 +33,9 @@ const PNG_PRIORITY = ['final.png', 'sketch.png'];
  *   POST /api/layout/<name>/render → spawn step-layout final(纯重渲,零 API 成本)
  * name 只允许字母数字横线下划线,防路径穿越。
  */
+// 渲染互斥:同一时间只允许一个渲染子进程(历史:run/pipeline/render 共用)
+let running: { stepId: string; child: ChildProcess } | null = null;
+
 async function handleLayout(
   req: IncomingMessage,
   res: ServerResponse,
@@ -542,7 +460,7 @@ async function handleSessions(
         send('error', { message: '该会话正在生成中' });
         return res.end();
       }
-      const systemNote = await buildLayoutNote(sessionId, body.activeLayout as string | undefined);
+      const systemNote = await buildSystemNote(sessionId, body.activeLayout as string | undefined);
       await transcript.appendEvent(sessionId, {
         ts: new Date().toISOString(),
         kind: 'message',
@@ -607,6 +525,17 @@ async function handleSessions(
 
   res.writeHead(405, { 'Content-Type': 'text/plain; charset=utf-8' });
   res.end('method not allowed');
+}
+
+/**
+ * systemNote 组装：skill 目录（稳定，放前面保 cache 前缀）+ 版式摘要（易变，放后面）。
+ * 两段都可能为空；拼接顺序固定——skill 集合不变则目录字节不变，前缀照常命中。
+ */
+async function buildSystemNote(sessionId: string, layoutName?: string | null): Promise<string> {
+  const workDir = await transcript.getWorkDir(sessionId);
+  const catalog = renderSkillCatalog(workDir);
+  const layoutNote = await buildLayoutNote(sessionId, layoutName);
+  return [catalog, layoutNote].filter(Boolean).join('\n\n');
 }
 
 /** 版式摘要 → systemNote 注入(让 LLM 知道「当前打开的版式」;每轮按最新状态重算) */
@@ -714,100 +643,7 @@ function scanArtifactRoot(
     });
 }
 
-// ── 跑步骤:SSE ──
-
-/** 同一时间只允许跑一步。步骤会烧 API 钱,并行互踩产物目录也没有意义 */
-let running: { stepId: string; child: ChildProcess } | null = null;
-
-function handleRun(req: IncomingMessage, res: ServerResponse, stepId: string, q: URLSearchParams) {
-  const step = STEPS.find((s) => s.id === stepId);
-  if (!step) {
-    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-    return res.end(`unknown step: ${stepId}`);
-  }
-  if (running || pipelineActive) {
-    res.writeHead(409, { 'Content-Type': 'text/plain; charset=utf-8' });
-    return res.end(`已有任务在跑${running ? `: ${running.stepId}` : '(一键编排)'}。等它结束再点。`);
-  }
-
-  // SSE 响应头。X-Accel-Buffering 让中间代理别攒缓冲(vite proxy 不会,但保险)
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-  const send = (event: string, data: unknown) =>
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-
-  const args = step.buildArgs(q);
-  const display = `npm run step ${step.script}${args.length ? ' -- ' + args.join(' ') : ''}`;
-  console.log(`[run] ${display}`);
-  send('start', { step: step.id, label: step.label, cmd: display });
-
-  const child = spawn(
-    process.execPath,
-    ['scripts/run-ts.mjs', step.script, ...args],
-    { cwd: process.cwd(), windowsHide: true },
-  );
-  running = { stepId, child };
-
-  // 行缓冲转发:chunk 可能只有半行,攒到 \n 再发
-  let buf = '';
-  const forward = (chunk: Buffer, isErr = false) => {
-    buf += chunk.toString();
-    let i: number;
-    while ((i = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, i).replace(/\r$/, '');
-      buf = buf.slice(i + 1);
-      if (line) send('log', { line: isErr ? `[stderr] ${line}` : line });
-    }
-  };
-  child.stdout?.on('data', (d: Buffer) => forward(d));
-  child.stderr?.on('data', (d: Buffer) => forward(d, true));
-
-  const timer = setTimeout(() => {
-    send('log', { line: `⏱ 超过 ${STEP_TIMEOUT_MS / 60000} 分钟,强制终止` });
-    child.kill();
-  }, STEP_TIMEOUT_MS);
-
-  child.on('exit', (code) => {
-    clearTimeout(timer);
-    running = null;
-    console.log(`[run] ${step.id} 退出 (code=${code})`);
-    send('exit', { code });
-    res.end();
-  });
-
-  // 客户端断开(关标签页/点停止)→ 杀掉步骤。没人看的步骤不该继续烧钱
-  req.on('close', () => {
-    if (running?.child === child && !child.killed) {
-      console.log(`[run] ${step.id} 客户端断开,终止步骤`);
-      child.kill();
-    }
-  });
-}
-
-// ── 一键编排:产品图 + 卖点 → 自动跑完整链 ──
 //
-// 链:01 识别 → 02 审计 → 03 规划 → 04 方案 → compile(规格+素材订单,内挂)
-//    → 07 出图(sketch 零 API / gen+final 烧钱)
-// 编排只做 spawn 排队,跑的仍是 scripts/ 下的 CLI 薄壳——管线逻辑零旁路。
-
-interface PipelineParams {
-  name: string;
-  lang: string;
-  depth: 'sketch' | 'final';
-  slot: string; // 'all' 或 'PT01' 这类槽位号
-  imagePath: string;
-  bulletsPath: string;
-  /** 产物根：会话工作目录，或其下的项目目录（<workDir>/<project>） */
-  workDir: string;
-}
-
-const pendingPipelines = new Map<string, PipelineParams>();
-let pipelineActive = false;
-
 function readJsonBody(req: IncomingMessage, maxBytes = 40 * 1024 * 1024): Promise<Record<string, unknown>> {
   return new Promise((resolveBody, reject) => {
     const chunks: Buffer[] = [];
@@ -832,244 +668,10 @@ function readJsonBody(req: IncomingMessage, maxBytes = 40 * 1024 * 1024): Promis
   });
 }
 
-async function handlePipelinePost(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readJsonBody(req);
-    const name = String(body.name ?? '').trim().replace(/[^A-Za-z0-9._-]/g, '').slice(0, 40) || 'product';
-    const m = /^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/.exec(String(body.image ?? ''));
-    if (!m) {
-      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
-      return res.end('缺少产品图(dataURL 格式 image/png|jpeg|webp)');
-    }
-    if (!String(body.bullets ?? '').trim()) {
-      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
-      return res.end('缺少卖点文本');
-    }
-    const ext = m[1] === 'png' ? 'png' : m[1] === 'webp' ? 'webp' : 'jpg';
-    // 管线产物落服务端 staging(test_product/<name>/)——前端负责搬运到用户所选目录
-    const dir = resolve('test_product', name);
-    // 落盘根:请求带 sessionId → 该会话工作目录下的**当前项目**(fail-loud:项目未设置
-    // 直接 400,产物不落无主位置);无 session → 缺省 staging(旧习惯保留)
-    const reqSessionId = typeof body.sessionId === 'string' && body.sessionId ? body.sessionId : null;
-    let workDir: string;
-    if (reqSessionId) {
-      const projectName = typeof body.project === 'string' && body.project.trim() ? body.project.trim() : null;
-      if (!projectName) {
-        res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
-        return res.end('会话未设置项目——先在项目下拉里选择/新建（或聊天里说「项目叫 xxx」），再一键生成');
-      }
-      workDir = projectDir(await transcript.getWorkDir(reqSessionId), projectName);
-    } else {
-      workDir = dir;
-    }
-    mkdirSync(workDir, { recursive: true });
-    const imagePath = resolve(workDir, `${name}.${ext}`);
-    writeFileSync(imagePath, Buffer.from(m[2], 'base64'));
-    const bulletsPath = resolve(workDir, 'selling-points.txt');
-    writeFileSync(bulletsPath, String(body.bullets).trim() + '\n', 'utf8');
-
-    const id = randomUUID();
-    pendingPipelines.set(id, {
-      name,
-      lang: body.lang === 'de' ? 'de' : 'en',
-      depth: body.depth === 'final' ? 'final' : 'sketch',
-      slot: typeof body.slot === 'string' && /^PT\d{2}$/.test(body.slot) ? body.slot : 'all',
-      imagePath,
-      bulletsPath,
-      workDir,
-    });
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ id }));
-  } catch (e) {
-    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end((e as Error).message);
-  }
-}
-
-/** spawn 一步并按 SSE 流式转发输出,resolve 退出码 */
-function spawnPhase(
-  script: string,
-  args: string[],
-  send: (event: string, data: unknown) => void,
-  isAborted: () => boolean,
-): Promise<number> {
-  return new Promise((resolveCode) => {
-    const display = `npm run step ${script}${args.length ? ' -- ' + args.join(' ') : ''}`;
-    send('phase', { cmd: display });
-    console.log(`[pipeline] ${display}`);
-    const child = spawn(process.execPath, ['scripts/run-ts.mjs', script, ...args], {
-      cwd: process.cwd(),
-      windowsHide: true,
-    });
-    let buf = '';
-    const forward = (chunk: Buffer, isErr = false) => {
-      buf += chunk.toString();
-      let i: number;
-      while ((i = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, i).replace(/\r$/, '');
-        buf = buf.slice(i + 1);
-        if (line) send('log', { line: isErr ? `[stderr] ${line}` : line });
-      }
-    };
-    child.stdout?.on('data', (d: Buffer) => forward(d));
-    child.stderr?.on('data', (d: Buffer) => forward(d, true));
-    const timer = setTimeout(() => child.kill(), 10 * 60_000);
-    child.on('exit', (code) => {
-      clearTimeout(timer);
-      resolveCode(code ?? -1);
-    });
-    if (isAborted() && !child.killed) child.kill();
-  });
-}
-
-async function handlePipelineRun(res: ServerResponse, id: string, req: IncomingMessage) {
-  const p = pendingPipelines.get(id);
-  if (!p) {
-    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-    return res.end('pipeline 不存在(服务可能重启过,请重新提交)');
-  }
-  if (running || pipelineActive) {
-    res.writeHead(409, { 'Content-Type': 'text/plain; charset=utf-8' });
-    return res.end('已有任务在跑,等它结束再试');
-  }
-  pendingPipelines.delete(id);
-  pipelineActive = true;
-
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-  const send = (event: string, data: unknown) =>
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-
-  let aborted = false;
-  req.on('close', () => {
-    aborted = true;
-  });
-
-  const facts = join(p.workDir, 'step-01.json');
-  const claims = join(p.workDir, 'step-02.json');
-  try {
-    // ── 链 A 四步(中间产物全部进产品目录,互不覆盖)──
-    const phases: { label: string; script: string; args: string[]; allowExit?: number[] }[] = [
-      { label: '01 · 图像识别', script: 'src/workflow/steps/step-01-perceive.ts', args: [p.imagePath, '--out', facts] },
-      {
-        label: '02 · 卖点审计',
-        script: 'src/workflow/steps/step-02-claims.ts',
-        args: [facts, '--bullets', p.bulletsPath, '--lang', p.lang],
-      },
-      {
-        label: '03 · 套图规划',
-        script: 'src/workflow/steps/step-03-slots.ts',
-        args: [claims, '--bullets', p.bulletsPath, '--lang', p.lang],
-      },
-      {
-        label: '04 · 方案编写',
-        script: 'src/workflow/steps/step-04-brief.ts',
-        args: [
-          '--facts', facts,
-          '--workdir', p.workDir,
-          '--bullets', p.bulletsPath, '--lang', p.lang, '--name', p.name,
-          ...(p.slot === 'all' ? [] : ['--only', p.slot]),
-        ],
-        // 04 的 exit 2 = 部分槽位失败但成功的已落盘,允许继续
-        allowExit: [0, 2],
-      },
-    ];
-
-    for (const { label, script, args, allowExit } of phases) {
-      send('log', { line: `───── ${label} ─────` });
-      const code = await spawnPhase(script, args, send, () => aborted);
-      if (aborted) break;
-      if (code !== 0 && !(allowExit ?? [0]).includes(code)) {
-        send('exit', { code, failed: label });
-        return res.end();
-      }
-    }
-    if (aborted) {
-      send('exit', { code: -1, failed: '客户端断开' });
-      return res.end();
-    }
-
-    // ── 找到 04 产出的 brief,逐份编译 + 出图 ──
-    // briefs 落工作目录(workDir/briefs/);旧管线(无会话)兼容 test_product/briefs
-    const briefsDir = join(p.workDir, 'briefs');
-    const designsRoot = join(p.workDir, 'designs');
-    const briefs = existsSync(briefsDir)
-      ? readdirSync(briefsDir)
-          .filter((f) => f.startsWith(`${p.name}-`) && f.endsWith('.md'))
-          .sort()
-      : [];
-    if (!briefs.length) {
-      send('log', { line: `✗ 没有找到任何 brief(${briefsDir}/${p.name}-*.md)` });
-      send('exit', { code: 1, failed: '04 方案编写' });
-      return res.end();
-    }
-    send('log', { line: `找到 ${briefs.length} 份方案:${briefs.join(', ')}` });
-
-    for (const brief of briefs) {
-      const briefPath = resolve(briefsDir, brief);
-      const layoutName = brief.replace(/\.[^.]+$/, '');
-      const specPath = resolve(designsRoot, layoutName, 'design-sketch.json');
-
-      send('log', { line: `───── 编译版式 · ${layoutName} ─────` });
-      let code = await spawnPhase(
-        'src/workflow/design-sketch/compile.ts',
-        [briefPath, '--product', p.imagePath, '--out', resolve(designsRoot, layoutName)],
-        send,
-        () => aborted,
-      );
-      if (aborted) break;
-      if (code !== 0) {
-        send('exit', { code, failed: `编译 ${layoutName}` });
-        return res.end();
-      }
-
-      // sketch 深度:只渲草图(零 API,草图灰阶不需要外观);final 深度:外观编译 + 生素材 + 成品
-      if (p.depth === 'final') {
-        // ── 外观编译:专属配色(从产品照派生)。失败降级为默认配色继续出图 ──
-        send('log', { line: `───── 外观编译 · ${layoutName}(专属配色) ─────` });
-        code = await spawnPhase(
-          'src/workflow/steps/step-05-appearance.ts',
-          [specPath, '--brief', briefPath, '--product', p.imagePath],
-          send,
-          () => aborted,
-        );
-        if (aborted) break;
-        if (code !== 0) {
-          send('log', {
-            line: `⚠️ 外观编译失败,该张将以默认配色出图(可稍后单跑 step-05 补)`,
-          });
-        }
-
-        // --out 覆盖:成品/素材落工作目录 designs/<name>(spec 也在同目录)
-        const layoutArgs = [specPath, 'gen', 'final', '--product', p.imagePath, '--out', resolve(designsRoot, layoutName)];
-        send('log', { line: `───── 出成品图 · ${layoutName}(含 AI 生图) ─────` });
-        code = await spawnPhase('src/workflow/steps/step-layout.ts', layoutArgs, send, () => aborted);
-      } else {
-        const layoutArgs = [specPath, 'sketch', '--no-library', '--out', resolve(designsRoot, layoutName)];
-        send('log', { line: `───── 渲草图 · ${layoutName}(零 API) ─────` });
-        code = await spawnPhase('src/workflow/steps/step-layout.ts', layoutArgs, send, () => aborted);
-      }
-      if (aborted) break;
-      if (code !== 0) {
-        send('exit', { code, failed: `出图 ${layoutName}` });
-        return res.end();
-      }
-    }
-
-    send('log', { line: `✓ 全链完成。产物在工作目录:` });
-    send('exit', { code: 0 });
-    res.end();
-  } finally {
-    pipelineActive = false;
-  }
-}
 
 import * as transcript from '../designharness/session/transcript';
-import { listProjects, registerProject, projectDir, PROJECT_NAME_RE } from '../designharness/session/projects';
+import { listProjects, registerProject, PROJECT_NAME_RE } from '../designharness/session/projects';
+import { renderSkillCatalog } from '../designharness/skills/registry';
 import { getChatSession, dropChatSession, isSessionStreaming } from '../designharness/session/chat-store';
 import type { Attachment } from '../designharness/gateway/type/chat';
 import { uploadImageFile, FILES_API_MAX_BYTES } from '../designharness/gateway/util/files-api';
@@ -1081,20 +683,7 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
 
   if (path === '/api/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, steps: STEPS.length }));
-  }
-  if (path === '/api/steps') {
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    return res.end(
-      JSON.stringify(
-        STEPS.map(({ id, label, description, argsHint }) => ({
-          id,
-          label,
-          description,
-          argsHint,
-        })),
-      ),
-    );
+    return res.end(JSON.stringify({ ok: true }));
   }
 
   // ── 目录浏览(DSH 式):后端列目录,前端渲染应用内浏览器 ──
@@ -1201,15 +790,6 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
   if (path === '/api/sessions' || path.startsWith('/api/sessions/')) {
     return await handleSessions(req, res, path, req.method ?? 'GET');
   }
-  if (path.startsWith('/api/run/')) {
-    return handleRun(req, res, path.slice('/api/run/'.length), url.searchParams);
-  }
-  if (path === '/api/pipeline' && req.method === 'POST') {
-    return void handlePipelinePost(req, res);
-  }
-  if (path.startsWith('/api/pipeline-run/') && req.method === 'GET') {
-    return void handlePipelineRun(res, path.slice('/api/pipeline-run/'.length), req);
-  }
 
   res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
   res.end('not found');
@@ -1217,5 +797,5 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
 
 server.listen(PORT, () => {
   console.log(`API server 已启动: http://localhost:${PORT}`);
-  console.log(`已注册步骤: ${STEPS.map((s) => s.id).join(', ')}`);
+
 });
