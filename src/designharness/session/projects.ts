@@ -65,8 +65,9 @@ export function projectDir(workDir: string, name: string): string {
 }
 
 /**
- * 注册项目（不存在则创建目录 + upsert 索引；已存在只更新 updatedAt）。
- * 返回项目目录绝对路径。name 非法由调用方先挡（错误消息里带规则）。
+ * 注册项目（不存在则创建目录 + 写索引；**已存在只切换，displayName 不覆盖**——
+ * 展示名是用户建项目时定的，主 AI 切换时不许顺手改（实测被覆盖过一次）。
+ * name 非法由调用方先挡（错误消息里带规则）。
  */
 export function registerProject(workDir: string, name: string, displayName?: string): string {
   if (!PROJECT_NAME_RE.test(name)) {
@@ -77,7 +78,7 @@ export function registerProject(workDir: string, name: string, displayName?: str
   const list = readIndex(workDir);
   const i = list.findIndex((e) => e.name === name);
   if (i >= 0) {
-    list[i] = { ...list[i], ...(displayName ? { displayName } : {}), updatedAt: now };
+    list[i] = { ...list[i], updatedAt: now }; // 已存在：只刷新时间，displayName 不动
   } else {
     list.unshift({
       name,

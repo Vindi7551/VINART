@@ -16,7 +16,8 @@ export function createSetProjectTool(config: { sessionId: string }): AgentTool {
     description:
       '建立并/或切换**当前项目**（产物一级分组：<工作目录>/<项目名>/designs/…、briefs/、uploads/ 都归它）。' +
       '用户提到新产品、要求换产品时用它；name 是目录名（英文/数字/连字符），displayName 给中文展示名。' +
-      '已存在的项目只切换；新名字会自动创建目录并注册。之后所有 spawn_design_agents / render_design 等' +
+      '**已存在的项目只切换，displayName 不会被改动**（展示名是用户建项目时定的）；' +
+      'displayName 仅在创建新项目时生效。之后所有 spawn_design_agents / render_design 等' +
       '工具的产物都落在这个项目下，直到再次切换。',
     parameters: {
       type: 'object',
