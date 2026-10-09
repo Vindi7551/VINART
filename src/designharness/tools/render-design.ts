@@ -16,13 +16,13 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
-import { checkSketch } from '../../workflow/design-sketch/validate';
+import { checkAppearance, checkAppearanceRefs, checkSketch } from '../../workflow/design-sketch/validate';
 import { loadAppearance, loadPalette, loadTypography, getSharedRenderer } from '../../workflow/design-sketch/runtime';
-import { applyAppearance } from '../../workflow/design-sketch/design-appearance';
+import { applyAppearance, type DesignAppearance } from '../../workflow/design-sketch/design-appearance';
 import { assembleFinal } from '../../workflow/compose/assemble';
 import type { AssetOrders } from '../../workflow/assetsgen/asset-order';
 import type { AgentTool } from '../subagent/types';
-import { getWorkDir } from '../session/transcript';
+import { resolveDesignDir } from './project-paths';
 
 /** 版式名 = 目录名，与 validate.ts 对 spec.name 的规则一致（防路径注入） */
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -42,7 +42,7 @@ export function createRenderDesignTool(config: { sessionId: string }): AgentTool
       },
       required: ['name'],
     },
-    async execute(args) {
+    async execute(args, ctx) {
       const name = args.name;
       if (typeof name !== 'string' || !NAME_RE.test(name)) {
         return {
@@ -51,12 +51,13 @@ export function createRenderDesignTool(config: { sessionId: string }): AgentTool
         };
       }
 
-      const workDir = await getWorkDir(config.sessionId);
-      const dir = resolve(workDir, 'designs', name);
+      const r = await resolveDesignDir(config.sessionId, name);
+      const workDir = r.workDir;
+      const dir = r.dir;
       const specPath = resolve(dir, 'design-sketch.json');
       if (!existsSync(specPath)) {
         return {
-          content: `ERROR: ${name}/design-sketch.json 不存在（在 ${relative(resolve(workDir), dir)} 下找的）。` +
+          content: `ERROR: ${name}/design-sketch.json 不存在（在 ${dir} 下找的）。` +
             '还没有这个版式的话，先用 spawn_design_agents 出草案。',
           isError: true,
         };
@@ -79,7 +80,31 @@ export function createRenderDesignTool(config: { sessionId: string }): AgentTool
       }
       const spec = specRaw as Parameters<typeof assembleFinal>[0]['spec'];
 
-      const appearance = loadAppearance(specPath);
+      // ── 外观预检（渲染前最后一道关）──
+      // 三种失配此前全是静默的：坏 JSON 裸抛异常、palette/fontScheme 编造名字
+      // 只 console.warn 然后悄悄走兜底（观感跑偏没人知道）、图层 id 失配时
+      // applyAppearance 直接跳过该层配色。这里全部变成可行动的错误/警告。
+      let appearance: DesignAppearance;
+      try {
+        appearance = loadAppearance(specPath);
+      } catch (e) {
+        return {
+          content: `ERROR: design-appearance.json 不是合法 JSON（${(e as Error).message}）。` +
+            '修好它，或删掉这个文件（没有外观就走渲染器兜底）。',
+          isError: true,
+        };
+      }
+      const apCheck = checkAppearance(appearance);
+      if (!apCheck.ok) {
+        return {
+          content: 'ERROR: design-appearance.json 校验不通过，拒绝渲染（否则配色会悄悄走兜底）。' +
+            '让 compile_appearance 重编，或手改对应字段：\n' +
+            apCheck.issues.map((i) => `[${i.level}] ${i.path}: ${i.message}`).join('\n'),
+          isError: true,
+        };
+      }
+      const refWarns = checkAppearanceRefs(spec, appearance);
+
       const palette = loadPalette(appearance.palette ?? 'warm-copper');
       const typography = loadTypography(appearance.fontScheme ?? 'legacy-system');
 
@@ -120,11 +145,18 @@ export function createRenderDesignTool(config: { sessionId: string }): AgentTool
       }
 
       const rel = (p: string) => relative(resolve(workDir), p);
+      // 产物事件：gallery 里多了一张成品图——前端据此实时刷新（不等本轮对话结束）
+      ctx.onEvent?.({ kind: 'artifacts', source: 'render_design', name });
       return {
         content: JSON.stringify({
           png: rel(result.png),
           html: rel(result.html),
           linked: rel(result.linked),
+          // id 失配不阻塞渲染（其余层照常上色），但警告必须跟着产物走——
+          // 主 AI 看到就该告诉用户，或让 compile_appearance 重编清理
+          appearanceWarnings: refWarns.length
+            ? refWarns.map((i) => `${i.path}: ${i.message}`)
+            : undefined,
         }),
       };
     },

@@ -123,14 +123,24 @@ async function handleLayout(
   res: ServerResponse,
   rest: string,
   sessionId: string | null,
+  projectQuery: string | null,
 ) {
   // 目录名可能含点号(取自图片文件名,如 61bIICZBYDL._AC_SL1500_-PT01)——
   // 只禁斜体与 .. ,再用 resolve 后的前缀校验做根本性防穿越
   const m = /^([^/\\]+)\/(data|save|render)$/.exec(rest);
-  // 会话带工作目录 → layoutsRoot = <workDir>/designs;否则旧约定
-  const sessionRoot = sessionId ? join(await transcript.getWorkDir(sessionId), 'designs') : null;
-  const LAYOUT_ROOT = sessionRoot ?? resolve('test_product/layout');
   const name = m?.[1] ?? '';
+  // 会话模式 layoutsRoot：query 的 project 优先 → 会话当前项目；版式级读回退
+  // （新位置不存在 → 旧 <workDir>/designs/<name>）；无 session → 旧约定
+  let LAYOUT_ROOT = resolve('test_product/layout');
+  if (sessionId) {
+    const workDir = await transcript.getWorkDir(sessionId);
+    const project = projectQuery ?? (await transcript.getProject(sessionId));
+    const newRoot = project ? join(workDir, project, 'designs') : null;
+    const legacyRoot = join(workDir, 'designs');
+    if (name && newRoot && existsSync(join(newRoot, name))) LAYOUT_ROOT = newRoot;
+    else if (name && existsSync(join(legacyRoot, name))) LAYOUT_ROOT = legacyRoot;
+    else LAYOUT_ROOT = newRoot ?? legacyRoot;
+  }
   const dir = resolve(LAYOUT_ROOT, name);
   if (
     !m ||
@@ -275,12 +285,26 @@ async function handleSessions(
 ) {
   const JSON_HDR = { 'Content-Type': 'application/json; charset=utf-8' };
   const sessionIdMatch =
-    /^\/api\/sessions\/([\w.-]+)(?:\/(events|chat|artifacts|workdir|file)(?:\/(.*))?)?$/.exec(path);
+    /^\/api\/sessions\/([\w.-]+)(?:\/(events|chat|artifacts|workdir|file|projects|project)(?:\/(.*))?)?$/.exec(path);
 
-  // 列表
+  // 列表：条目带 workDir/project（对话列表两层分组）；项目 displayName 就地映射
   if (path === '/api/sessions' && method === 'GET') {
+    const list = await transcript.listSessions();
+    // 按 workDir 缓存各自的项目索引（displayName 查找，通常只有一两个工作目录）
+    const displayNameCache = new Map<string, Map<string, string>>();
+    const enriched = list.map((s) => {
+      let names: Map<string, string> | undefined;
+      if (s.workDir) {
+        names = displayNameCache.get(s.workDir);
+        if (!names) {
+          names = new Map(listProjects(s.workDir).map((p) => [p.name, p.displayName ?? p.name]));
+          displayNameCache.set(s.workDir, names);
+        }
+      }
+      return { ...s, projectDisplayName: (s.project && names?.get(s.project)) || null };
+    });
     res.writeHead(200, JSON_HDR);
-    return res.end(JSON.stringify(await transcript.listSessions()));
+    return res.end(JSON.stringify(enriched));
   }
   // 新建
   if (path === '/api/sessions' && method === 'POST') {
@@ -307,11 +331,16 @@ async function handleSessions(
         events,
         messages: await transcript.deriveMessages(events, workDir),
         title: transcript.deriveTitle(events),
+        project: await transcript.getProject(sessionId),
       }),
     );
   }
-  // 删除
+  // 删除（流式中拒绝——生成到一半的对话删了等于白烧钱，且 abort 时序不可控）
   if (!sub && method === 'DELETE') {
+    if (isSessionStreaming(sessionId)) {
+      res.writeHead(409, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('该会话正在生成中——先点停止，等流结束再删除');
+    }
     await transcript.deleteSession(sessionId);
     dropChatSession(sessionId);
     res.writeHead(200, JSON_HDR);
@@ -332,6 +361,32 @@ async function handleSessions(
   if (sub === 'workdir' && method === 'GET') {
     res.writeHead(200, JSON_HDR);
     return res.end(JSON.stringify({ workDir: await transcript.getWorkDir(sessionId) }));
+  }
+
+  // ── 项目:清单(索引过滤幽灵)与切换(注册+meta)──
+  if (sub === 'projects' && method === 'GET') {
+    const workDir = await transcript.getWorkDir(sessionId);
+    res.writeHead(200, JSON_HDR);
+    return res.end(
+      JSON.stringify({
+        projects: listProjects(workDir).map((p) => ({ name: p.name, displayName: p.displayName ?? p.name })),
+        current: await transcript.getProject(sessionId),
+      }),
+    );
+  }
+  if (sub === 'project' && method === 'POST') {
+    const body = (await readJsonBody(req)) as { name?: string; displayName?: string };
+    const name = String(body.name ?? '').trim();
+    const displayName = String(body.displayName ?? '').trim();
+    if (!PROJECT_NAME_RE.test(name)) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('项目名非法：只能用英文、数字、点、下划线、连字符（展示名可以是中文）');
+    }
+    const workDir = await transcript.getWorkDir(sessionId);
+    registerProject(workDir, name, displayName || undefined);
+    await transcript.setProject(sessionId, name);
+    res.writeHead(200, JSON_HDR);
+    return res.end(JSON.stringify({ ok: true, project: name, displayName: displayName || name }));
   }
 
   // ── 产物清单(按会话工作目录;legacy 回退 test_product/layout)──
@@ -424,7 +479,11 @@ async function handleSessions(
     // 重放时 file 块直接引用，不再回读大文件）。放在 SSE 头之前做完——
     // 校验/上传失败直接 4xx/5xx，不留半截会话事件。
     // 单图阈值对齐 DeepSeek Files API：单文件 ≤64 MiB（api-docs.deepseek.com/guides/files_api）。
+    // 贴图=产品照，归项目走（<workDir>/<project>/uploads/）；未设项目 → 旧约定
+    // workDir/uploads（聊天不能因没设项目而发不出，rel 自带项目前缀，重放零改动）。
     const workDir = await transcript.getWorkDir(sessionId);
+    const chatProject = await transcript.getProject(sessionId);
+    const uploadsBase = chatProject ? resolve(workDir, chatProject, 'uploads') : resolve(workDir, 'uploads');
     const savedImages: string[] = [];
     const fileIds: string[] = [];
     const attachments: Attachment[] = [];
@@ -441,8 +500,8 @@ async function handleSessions(
         return res.end(`第 ${i + 1} 张超过 64 MiB（DeepSeek Files API 单文件上限，解码后 ${Math.round(buf.length / 1048576)}MB）`);
       }
       const ext = m[1] === 'png' ? 'png' : m[1] === 'webp' ? 'webp' : m[1] === 'gif' ? 'gif' : 'jpg';
-      const rel = `uploads/chat-${Date.now()}-${i}.${ext}`;
-      mkdirSync(resolve(workDir, 'uploads'), { recursive: true });
+      const rel = chatProject ? `${chatProject}/uploads/chat-${Date.now()}-${i}.${ext}` : `uploads/chat-${Date.now()}-${i}.${ext}`;
+      mkdirSync(uploadsBase, { recursive: true });
       writeFileSync(resolve(workDir, rel), buf);
       savedImages.push(rel);
 
@@ -493,13 +552,33 @@ async function handleSessions(
         ...(savedImages.length ? { images: savedImages, fileIds } : {}),
       } as Parameters<typeof transcript.appendEvent>[1]);
 
+      // tool-call 落账 promise 收集：流结束先等账本落齐再发 done——
+      // 否则「对话刚结束就刷新会话」可能与写盘竞态，账本读到不完整
+      const pendingWrites: Promise<void>[] = [];
       for await (const chunk of session.send(text, attachments.length ? attachments : undefined, {
         systemNote,
-        // 工具进度事件（子 agent spawn/result）→ SSE 'agent' 事件实时推前端委派卡片
-        onEvent: (evt) => send('agent', evt),
+        // 进度事件分流：子 agent spawn/result → 'agent'（委派卡片）；
+        // kind:'tool-call'（主 AI 工具循环中间轮）→ 落转录账本 + 'tool' 实时推——
+        // 不落账的话刷新会话后「AI 调过工具」完全蒸发；不进模型上下文，纯审计
+        // kind:'artifacts'（工具产出新图）→ 'artifacts'（前端实时刷 gallery）
+        onEvent: (evt) => {
+          if (evt.kind === 'tool-call') {
+            pendingWrites.push(
+              transcript.appendEvent(sessionId, {
+                ts: new Date().toISOString(),
+                kind: 'action',
+                action: 'tool-call',
+                detail: evt,
+              } as Parameters<typeof transcript.appendEvent>[1]),
+            );
+            send('tool', evt);
+          } else if (evt.kind === 'artifacts') send('artifacts', evt);
+          else send('agent', evt);
+        },
       })) {
         if (chunk.content) send('chunk', { content: chunk.content });
       }
+      await Promise.all(pendingWrites);
 
       // assistant 完整回复落盘(send 内部已 push 到历史)
       const msgs = session.messages;
@@ -574,41 +653,65 @@ async function buildLayoutNote(sessionId: string, layoutName?: string | null): P
 
 function handleArtifacts(res: ServerResponse, sessionId?: string | null) {
   void (async () => {
-    const layoutsRoot = sessionId ? join(await transcript.getWorkDir(sessionId), 'designs') : resolve('test_product/layout');
-    const layoutDir = layoutsRoot;
-  const items = existsSync(layoutDir)
-    ? readdirSync(layoutDir, { withFileTypes: true })
-        .filter((d) => d.isDirectory())
-        .map((d) => {
-          const abs = join(layoutDir, d.name);
-          // 不在优先级表里的文件统一垫底(indexOf 会返回 -1,须映射掉)
-          const rank = (f: string) => {
-            const i = PNG_PRIORITY.indexOf(f);
-            return i === -1 ? PNG_PRIORITY.length : i;
-          };
-          const files = readdirSync(abs).sort(
-            (a, b) => rank(a) - rank(b) || a.localeCompare(b),
-          );
-          return {
-            name: d.name,
-            // root:前端拼产物 URL 的分支依据——session 走 file API,
-            // legacy 走 /files/ 静态映射。dir 仅作展示/键用
-            root: sessionId ? ('session' as const) : ('legacy' as const),
-            dir: sessionId
-              ? `@session/${sessionId}`
-              : `test_product/layout/${d.name}`,
-            layoutsRoot,
-            pngs: files.filter((f) => f.endsWith('.png')),
-            htmls: files.filter((f) => f.endsWith('.html')),
-          };
-        })
-    : [];
-  res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(items));
-})().catch(() => {
-  res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end('[]');
-});
+    // 无 session → legacy 根（旧习惯保留）；有 session → 聚合工作目录下
+    // **所有注册项目**的 designs（gallery 按项目分组），旧数据
+    // <workDir>/designs（未设项目时代的产物）作为一组兜底。
+    if (!sessionId) {
+      const items = scanArtifactRoot(resolve('test_product/layout'), null, 'legacy', 'test_product/layout');
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      return res.end(JSON.stringify(items));
+    }
+    const workDir = await transcript.getWorkDir(sessionId);
+    const groups: { layoutsRoot: string; project: string | null }[] = [];
+    for (const p of listProjects(workDir)) {
+      const root = join(workDir, p.name, 'designs');
+      if (existsSync(root)) groups.push({ layoutsRoot: root, project: p.name });
+    }
+    const legacyRoot = join(workDir, 'designs');
+    if (existsSync(legacyRoot)) groups.push({ layoutsRoot: legacyRoot, project: null });
+    const items = groups.flatMap((g) =>
+      scanArtifactRoot(g.layoutsRoot, g.project, 'session', `@session/${sessionId}`),
+    );
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(items));
+  })().catch(() => {
+    res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end('[]');
+  });
+}
+
+/** 扫一个 layouts 根目录 → 产物条目（PNG 排序：final > sketch > 其他） */
+function scanArtifactRoot(
+  layoutsRoot: string,
+  project: string | null,
+  rootTag: 'session' | 'legacy',
+  dirLabel: string,
+) {
+  if (!existsSync(layoutsRoot)) return [];
+  return readdirSync(layoutsRoot, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => {
+      const abs = join(layoutsRoot, d.name);
+      // 不在优先级表里的文件统一垫底(indexOf 会返回 -1,须映射掉)
+      const rank = (f: string) => {
+        const i = PNG_PRIORITY.indexOf(f);
+        return i === -1 ? PNG_PRIORITY.length : i;
+      };
+      const files = readdirSync(abs).sort(
+        (a, b) => rank(a) - rank(b) || a.localeCompare(b),
+      );
+      return {
+        name: d.name,
+        project, // 所属项目（null = 旧数据未分组）——前端分组展示 + layout API 带回
+        // root:前端拼产物 URL 的分支依据——session 走 file API,
+        // legacy 走 /files/ 静态映射。dir 仅作展示/键用
+        root: rootTag,
+        dir: dirLabel,
+        layoutsRoot,
+        pngs: files.filter((f) => f.endsWith('.png')),
+        htmls: files.filter((f) => f.endsWith('.html')),
+      };
+    });
 }
 
 // ── 跑步骤:SSE ──
@@ -698,7 +801,7 @@ interface PipelineParams {
   slot: string; // 'all' 或 'PT01' 这类槽位号
   imagePath: string;
   bulletsPath: string;
-  /** 管线落盘根:会话工作目录(📂 设置)或缺省 test_product/<name> */
+  /** 产物根：会话工作目录，或其下的项目目录（<workDir>/<project>） */
   workDir: string;
 }
 
@@ -745,9 +848,20 @@ async function handlePipelinePost(req: IncomingMessage, res: ServerResponse) {
     const ext = m[1] === 'png' ? 'png' : m[1] === 'webp' ? 'webp' : 'jpg';
     // 管线产物落服务端 staging(test_product/<name>/)——前端负责搬运到用户所选目录
     const dir = resolve('test_product', name);
-    // 落盘根:请求带 sessionId → 该会话的工作目录(📂);否则缺省 test_product/<name>
+    // 落盘根:请求带 sessionId → 该会话工作目录下的**当前项目**(fail-loud:项目未设置
+    // 直接 400,产物不落无主位置);无 session → 缺省 staging(旧习惯保留)
     const reqSessionId = typeof body.sessionId === 'string' && body.sessionId ? body.sessionId : null;
-    const workDir = reqSessionId ? await transcript.getWorkDir(reqSessionId) : dir;
+    let workDir: string;
+    if (reqSessionId) {
+      const projectName = typeof body.project === 'string' && body.project.trim() ? body.project.trim() : null;
+      if (!projectName) {
+        res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+        return res.end('会话未设置项目——先在项目下拉里选择/新建（或聊天里说「项目叫 xxx」），再一键生成');
+      }
+      workDir = projectDir(await transcript.getWorkDir(reqSessionId), projectName);
+    } else {
+      workDir = dir;
+    }
     mkdirSync(workDir, { recursive: true });
     const imagePath = resolve(workDir, `${name}.${ext}`);
     writeFileSync(imagePath, Buffer.from(m[2], 'base64'));
@@ -955,7 +1069,8 @@ async function handlePipelineRun(res: ServerResponse, id: string, req: IncomingM
 }
 
 import * as transcript from '../designharness/session/transcript';
-import { getChatSession, dropChatSession } from '../designharness/session/chat-store';
+import { listProjects, registerProject, projectDir, PROJECT_NAME_RE } from '../designharness/session/projects';
+import { getChatSession, dropChatSession, isSessionStreaming } from '../designharness/session/chat-store';
 import type { Attachment } from '../designharness/gateway/type/chat';
 import { uploadImageFile, FILES_API_MAX_BYTES } from '../designharness/gateway/util/files-api';
 import { getOpenAICompatChatConfig } from '../config';
@@ -1039,9 +1154,49 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
     return res.end(JSON.stringify({ path: created }));
   }
 
+  if (path === '/api/projects' && req.method === 'GET') {
+    // 无会话时的项目清单（惰性会话：前端只缓存环境，建会话前就要能浏览项目下拉）
+    const dir = url.searchParams.get('dir') ?? '';
+    const HDR = { 'Content-Type': 'application/json; charset=utf-8' };
+    if (!dir || !existsSync(dir)) {
+      res.writeHead(200, HDR);
+      return res.end(JSON.stringify({ projects: [] }));
+    }
+    res.writeHead(200, HDR);
+    return res.end(
+      JSON.stringify({
+        projects: listProjects(dir).map((p) => ({ name: p.name, displayName: p.displayName ?? p.name })),
+      }),
+    );
+  }
+  if (path === '/api/projects' && req.method === 'POST') {
+    // 无会话时的项目注册（目录组头 ✎ 提交即建：文件夹与索引立即落盘——
+    // 用户要在文件管理器里先看到/先放素材是真实工作流）
+    const body = (await readJsonBody(req)) as { dir?: string; name?: string; displayName?: string };
+    const dir = String(body.dir ?? '').trim();
+    const name = String(body.name ?? '').trim();
+    const displayName = String(body.displayName ?? '').trim();
+    const HDR = { 'Content-Type': 'application/json; charset=utf-8' };
+    if (!dir || !existsSync(dir)) {
+      res.writeHead(400, HDR);
+      return res.end('工作目录不存在');
+    }
+    if (!PROJECT_NAME_RE.test(name)) {
+      res.writeHead(400, HDR);
+      return res.end('项目名非法：只能用英文、数字、点、下划线、连字符（展示名可以是中文）');
+    }
+    try {
+      const created = registerProject(dir, name, displayName || undefined);
+      res.writeHead(200, HDR);
+      return res.end(JSON.stringify({ ok: true, dir: created }));
+    } catch (e) {
+      res.writeHead(400, HDR);
+      return res.end((e as Error).message);
+    }
+  }
   if (path === '/api/artifacts') return handleArtifacts(res, url.searchParams.get('session'));
   if (path.startsWith('/api/layout/')) {
-    return await handleLayout(req, res, path.slice('/api/layout/'.length), url.searchParams.get('session'));
+    return await handleLayout(req, res, path.slice('/api/layout/'.length), url.searchParams.get('session'), url.searchParams.get('project'));
   }
   if (path === '/api/sessions' || path.startsWith('/api/sessions/')) {
     return await handleSessions(req, res, path, req.method ?? 'GET');

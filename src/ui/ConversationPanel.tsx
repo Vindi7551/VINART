@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import type { Message, SessionItem } from './types';
+import type { Message } from './types';
 import { StepPanel } from './StepPanel';
 import { NewPipelineForm, type PipelineFormValues } from './NewPipelineForm';
 
@@ -11,16 +11,15 @@ interface ConversationPanelProps {
   onRunStep: (id: string, label: string, query?: string) => void;
   /** 一键生成:图 + 卖点 → 自动跑完整链 */
   onRunPipeline: (v: PipelineFormValues) => void;
-  /** 会话列表 + 当前会话(会话层) */
-  sessions: SessionItem[];
-  activeSessionId: string | null;
   /** 当前会话的工作目录(📂 设置;null=未设置,落缺省位置) */
   workDir: string | null;
+  /** 项目层:工作目录下的产物分组(下拉切换/新建) */
+  projects: Array<{ name: string; displayName: string }>;
+  currentProject: string | null;
+  onSetProject: (name: string, displayName?: string) => void;
   /** 打开应用内目录浏览器 */
   onPickDir: () => void;
   onSetWorkDir: (dir: string) => void;
-  onSwitchSession: (id: string) => void;
-  onNewSession: () => void;
 }
 
 export function ConversationPanel({
@@ -29,13 +28,12 @@ export function ConversationPanel({
   onSend,
   onRunStep,
   onRunPipeline,
-  sessions,
-  activeSessionId,
   workDir,
+  projects,
+  currentProject,
+  onSetProject,
   onPickDir,
   onSetWorkDir,
-  onSwitchSession,
-  onNewSession,
 }: ConversationPanelProps) {
   const [input, setInput] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -47,6 +45,10 @@ export function ConversationPanel({
   const [showForm, setShowForm] = useState(false);
   const [dirInputOpen, setDirInputOpen] = useState(false);
   const [dirDraft, setDirDraft] = useState('');
+  // 项目新建输入:name(目录名,英文) + displayName(展示名,可中文)
+  const [projInputOpen, setProjInputOpen] = useState(false);
+  const [projNameDraft, setProjNameDraft] = useState('');
+  const [projDisplayDraft, setProjDisplayDraft] = useState('');
 
   const addFiles = (files: File[]) => {
     setPendingFiles((prev) => [
@@ -96,32 +98,7 @@ export function ConversationPanel({
 
   return (
     <aside className="conversation-panel">
-      {/* 会话条:列表切换 + 新建(会话历史持久化在服务端) */}
-      <div
-        className="session-bar"
-        style={{ display: 'flex', gap: 6, padding: '6px 10px', borderBottom: '1px solid #e5e7eb', alignItems: 'center' }}
-      >
-        <select
-          className="session-select"
-          style={{ flex: 1, fontSize: 12, border: '1px solid #d1d5db', borderRadius: 4, padding: '2px 4px' }}
-          value={activeSessionId ?? ''}
-          onChange={(e) => onSwitchSession(e.target.value)}
-        >
-          {sessions.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.title}
-            </option>
-          ))}
-        </select>
-        <button
-          className="session-new"
-          style={{ cursor: 'pointer', border: '1px solid #d1d5db', borderRadius: 4, padding: '2px 8px' }}
-          onClick={onNewSession}
-          title="新建会话"
-        >
-          ＋
-        </button>
-      </div>
+      {/* 会话切换已移至左侧对话列表（SessionListPanel）；此处只管工作目录/项目/聊天 */}
       {/* 工作目录:📂 设置(该会话的产物落这里;产品图只读引用原位) */}
       <div
         className="workdir-bar"
@@ -163,6 +140,89 @@ export function ConversationPanel({
             <a style={{ color: '#1b6fd1', cursor: 'pointer', fontSize: 11 }} onClick={() => setDirInputOpen(true)}>
               手输
             </a>
+          </>
+        )}
+      </div>
+      {/* 项目条:产物按项目分组(<工作目录>/<项目>/designs/…);下拉切换,＋ 新建 */}
+      <div
+        className="project-bar"
+        style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '5px 10px', borderBottom: '1px solid #eef0f3', fontSize: 12 }}
+      >
+        {projInputOpen ? (
+          <div style={{ flex: 1, display: 'flex', gap: 4 }}>
+            <input
+              autoFocus
+              style={{ flex: 1, minWidth: 0, fontSize: 12, border: '1px solid #d1d5db', borderRadius: 4, padding: '2px 6px' }}
+              placeholder="项目目录名(英文,如 tshirt-black)"
+              value={projNameDraft}
+              onChange={(e) => setProjNameDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setProjInputOpen(false);
+              }}
+            />
+            <input
+              style={{ flex: 1, minWidth: 0, fontSize: 12, border: '1px solid #d1d5db', borderRadius: 4, padding: '2px 6px' }}
+              placeholder="展示名(可中文,可选)"
+              value={projDisplayDraft}
+              onChange={(e) => setProjDisplayDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && projNameDraft.trim()) {
+                  onSetProject(projNameDraft.trim(), projDisplayDraft.trim() || undefined);
+                  setProjInputOpen(false);
+                  setProjNameDraft('');
+                  setProjDisplayDraft('');
+                }
+              }}
+            />
+            <button
+              style={{ cursor: 'pointer' }}
+              onClick={() => {
+                if (projNameDraft.trim()) {
+                  onSetProject(projNameDraft.trim(), projDisplayDraft.trim() || undefined);
+                  setProjInputOpen(false);
+                  setProjNameDraft('');
+                  setProjDisplayDraft('');
+                }
+              }}
+            >
+              确定
+            </button>
+          </div>
+        ) : (
+          <>
+            <span style={{ color: '#6b7280', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {currentProject
+                ? `项目:${projects.find((p) => p.name === currentProject)?.displayName ?? currentProject}`
+                : '未设置项目——产物暂落工作目录/designs(旧约定)'}
+            </span>
+            <select
+              style={{ maxWidth: 130, fontSize: 12, border: '1px solid #d1d5db', borderRadius: 4, padding: '2px 4px', cursor: 'pointer' }}
+              value={currentProject ?? ''}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v) {
+                  const p = projects.find((x) => x.name === v);
+                  onSetProject(v, p?.displayName);
+                }
+              }}
+              title="切换项目"
+            >
+              <option value="" disabled>
+                选择项目…
+              </option>
+              {projects.map((p) => (
+                <option key={p.name} value={p.name}>
+                  {p.displayName}
+                </option>
+              ))}
+            </select>
+            <button
+              style={{ cursor: 'pointer', border: '1px solid #d1d5db', borderRadius: 4, padding: '1px 7px' }}
+              onClick={() => setProjInputOpen(true)}
+              title="新建项目(目录名英文,展示名可中文)"
+            >
+              ＋
+            </button>
           </>
         )}
       </div>

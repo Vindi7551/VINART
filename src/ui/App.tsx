@@ -2,7 +2,8 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { Header } from './Header';
 import { PreviewPanel } from './PreviewPanel';
 import { ConversationPanel } from './ConversationPanel';
-import { ArtifactGallery } from './ArtifactGallery';
+import { ArtifactGallery, artifactDataUrl } from './ArtifactGallery';
+import { SessionListPanel } from './SessionListPanel';
 import { DirectoryBrowser } from './DirectoryBrowser';
 import { EditPanel } from './EditPanel';
 import type { PipelineFormValues } from './NewPipelineForm';
@@ -40,6 +41,16 @@ import type { LayoutData, HostSignal, LayerAppearance, SessionItem } from './typ
 
 /** agent 层清空后，这里暂时没有可用的生成能力 */
 const AGENT_LAYER_EMPTY = true;
+
+/** 工具调用账本事件 → 一行摘要（实时 SSE 与刷新重放共用同一格式，前后一致） */
+function formatToolLine(d: { name?: unknown; ok?: unknown; ms?: unknown; result?: unknown }): string {
+  const name = String(d.name ?? '?');
+  const mark = d.ok ? '✓' : '✗';
+  const ms = typeof d.ms === 'number' ? ` ${d.ms >= 1000 ? (d.ms / 1000).toFixed(1) + 's' : d.ms + 'ms'}` : '';
+  const res = String(d.result ?? '');
+  const brief = res ? ' → ' + res.slice(0, 120) + (res.length > 120 ? '…' : '') : '';
+  return `🔧 ${name} ${mark}${ms}${brief}`;
+}
 
 export function App() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -135,6 +146,15 @@ export function App() {
               delegations: [rec],
             };
           }
+        } else if (e.kind === 'action' && e.action === 'tool-call') {
+          // 主 AI 工具循环的中间轮：一行 log 摘要（与实时 SSE 'tool' 同格式）
+          flush();
+          out.push({
+            id: `tool_${crypto.randomUUID()}`,
+            role: 'assistant',
+            kind: 'log',
+            text: formatToolLine(e.detail ?? {}),
+          });
         }
         // 其他 action（open-layout/save-spec/render/pipeline-*）历史不进对话流
       }
@@ -144,6 +164,26 @@ export function App() {
       /* 忽略 */
     }
   }
+
+  // ── 项目层:工作目录下按项目分组产物(切换 = 会话 meta,聚合展示) ──
+  const [projects, setProjects] = useState<Array<{ name: string; displayName: string }>>([]);
+  const [currentProject, setCurrentProject] = useState<string | null>(null);
+
+  // ── 待用环境（harness 的 create 参数模型）：无会话时用户设置的 workDir/project
+  // 只缓存在前端（+localStorage），建会话那一刻作为创建参数落成 meta 事件——
+  // 「设目录」是写环境变量，不是开对话。环境独立于会话存活。
+  const PENDING_ENV_KEY = 'vinart.pendingEnv';
+  const [pendingEnv, setPendingEnv] = useState<{ workDir?: string; project?: string; projectDisplayName?: string }>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(PENDING_ENV_KEY) ?? '{}');
+    } catch {
+      return {};
+    }
+  });
+  const savePendingEnv = (env: { workDir?: string; project?: string; projectDisplayName?: string }) => {
+    setPendingEnv(env);
+    localStorage.setItem(PENDING_ENV_KEY, JSON.stringify(env));
+  };
 
   // 初始化:有存档 id 且在列表里 → 恢复;否则新建
   useEffect(() => {
@@ -156,13 +196,29 @@ export function App() {
           setSessionId(saved);
           await loadSessionMessages(saved);
           setWorkDir(await fetchWorkDir(saved));
+          void fetchProjects(saved);
           return;
         }
-        const r = await fetch('/api/sessions', { method: 'POST' });
-        const { id } = (await r.json()) as { id: string };
-        localStorage.setItem('vinart.sessionId', id);
-        setSessionId(id);
-        setSessions(await (await fetch('/api/sessions')).json());
+        // 惰性会话：恢复不了就保持无会话空态，**不自动创建**——
+        // 打开/浏览页面零成本，第一次真的发消息时才建（handleSend）。
+        // （此前「打开即建」在 StrictMode 双跑竞态下还会一次建俩）
+        localStorage.removeItem('vinart.sessionId');
+        setSessionId(null);
+        setSessions(list);
+        // 环境是前端缓存的（pendingEnv），无会话时照常显示——目录/项目不随会话消失
+        const env = pendingEnv;
+        if (env.workDir) {
+          setWorkDir(env.workDir);
+          if (env.project) setCurrentProject(env.project);
+          try {
+            const pr = (await (await fetch(`/api/projects?dir=${encodeURIComponent(env.workDir)}`)).json()) as {
+              projects?: Array<{ name: string; displayName: string }>;
+            };
+            setProjects(pr.projects ?? []);
+          } catch {
+            /* 清单拉不到不阻塞 */
+          }
+        }
       } catch {
         /* API 没跑——会话条空,消息区显示占位 */
       }
@@ -170,30 +226,145 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** 切换会话 */
+  /** 切换会话：环境跟会话走（清掉待用缓存——它只属于「还没建」的下一个会话） */
   const handleSwitchSession = useCallback(async (id: string) => {
     localStorage.setItem('vinart.sessionId', id);
     setSessionId(id);
     setSelectedLayer(null);
     setActiveWord(null);
+    savePendingEnv({});
     await loadSessionMessages(id);
     setWorkDir(await fetchWorkDir(id));
+    void fetchProjects(id);
     commitLayout(null as unknown as LayoutData);
   }, []);
 
-  /** 新建会话 */
-  const handleNewSession = useCallback(async () => {
+  /**
+   * 新对话（惰性）：只清空到「无会话」空态，不创建。
+   * 环境延续：当前显示的 workDir/project 写入待用缓存，作为下一个新会话的创建参数。
+   */
+  const handleNewSession = useCallback(
+    (envOverride?: { workDir?: string; project?: string; projectDisplayName?: string }) => {
+      localStorage.removeItem('vinart.sessionId');
+      setSessionId(null);
+      setSelectedLayer(null);
+      setActiveWord(null);
+      setMessages([]);
+      commitLayout(null as unknown as LayoutData);
+      // envOverride（组头 ✎）= 预填该组环境；无参 = 沿用当前显示环境
+      const env =
+        envOverride ?? {
+          ...(workDir ? { workDir } : {}),
+          ...(currentProject
+            ? {
+                project: currentProject,
+                projectDisplayName: projects.find((p) => p.name === currentProject)?.displayName,
+              }
+            : {}),
+        };
+      savePendingEnv(env);
+      setWorkDir(env.workDir ?? null);
+      setCurrentProject(env.project ?? null);
+      // 预填的 workDir 与当前显示不同 → 项目清单按新目录重拉（sessionless）。
+      // 环境里携带的新项目（目录组 ✎ 刚建、还没注册）必须并回去——
+      // 新目录在服务端查出来是空清单，直接覆盖会把刚 append 的组抹掉
+      if (env.workDir && env.workDir !== workDir) {
+        fetch(`/api/projects?dir=${encodeURIComponent(env.workDir)}`)
+          .then((r) => r.json())
+          .then((d: { projects?: Array<{ name: string; displayName: string }> }) => {
+            const list = d.projects ?? [];
+            const proj = env.project;
+            if (proj && !list.some((x) => x.name === proj)) {
+              list.push({ name: proj, displayName: env.projectDisplayName ?? proj });
+            }
+            setProjects(list);
+          })
+          .catch(() => {});
+      }
+      // workDir/currentProject/projects 同步为预填环境——新对话延续显示
+    },
+    [workDir, currentProject, projects],
+  );
+
+  /** 目录组头 ✎：在工作目录下新建项目——**提交即注册**（文件夹+索引立即落盘，
+   *  用户在文件管理器里可先看到/先放素材），然后清单 append + 环境预填 + 新对话态。 */
+  const handleNewProject = useCallback(
+    async (dir: string, name: string, displayName?: string) => {
+      try {
+        const resp = await fetch('/api/projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dir, name, displayName }),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}:${(await resp.text()).trim()}`);
+      } catch (e) {
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: 'assistant', text: `✗ 新建项目失败:${(e as Error).message}` },
+        ]);
+        return;
+      }
+      setProjects((prev) => [
+        ...prev.filter((p) => p.name !== name),
+        { name, displayName: displayName ?? name },
+      ]);
+      handleNewSession({ workDir: dir, project: name, projectDisplayName: displayName ?? name });
+    },
+    [handleNewSession],
+  );
+
+  /** 惰性会话的创建点：发第一条消息前确保有会话；待用环境此刻落成 meta。返回可用的 sessionId */
+  const ensureSession = useCallback(async (): Promise<string> => {
+    const existing = sessionId;
+    if (existing) return existing;
     const r = await fetch('/api/sessions', { method: 'POST' });
+    if (!r.ok) throw new Error(`创建会话失败：HTTP ${r.status}`);
     const { id } = (await r.json()) as { id: string };
     localStorage.setItem('vinart.sessionId', id);
     setSessionId(id);
-    setSelectedLayer(null);
-    setActiveWord(null);
-    setMessages([]);
-    setWorkDir(null);
-    commitLayout(null as unknown as LayoutData);
+    // 无会话时用户设置的环境（前端缓存）此刻正式归档到会话
+    if (pendingEnv.workDir) {
+      await fetch(`/api/sessions/${id}/workdir`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workDir: pendingEnv.workDir }),
+      }).catch(() => {});
+    }
+    if (pendingEnv.project) {
+      await fetch(`/api/sessions/${id}/project`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: pendingEnv.project, displayName: pendingEnv.projectDisplayName }),
+      }).catch(() => {});
+    }
+    savePendingEnv({});
     await refreshSessions();
-  }, []);
+    return id;
+  }, [sessionId, pendingEnv, refreshSessions]);
+
+  /** 删除会话(列表 🗑):confirm → DELETE → 刷新列表;删的是当前会话则自动新建 */
+  const handleDeleteSession = useCallback(
+    async (id: string, title: string) => {
+      if (
+        !confirm(
+          `删除会话「${title}」？\n只删除对话记录与工具账本；产物（designs/ 等磁盘文件）全部保留。`,
+        )
+      )
+        return;
+      try {
+        const resp = await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}:${(await resp.text()).trim()}`);
+        await refreshSessions();
+        if (id === sessionId) await handleNewSession();
+      } catch (e) {
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: 'assistant', text: `✗ 删除失败:${(e as Error).message}` },
+        ]);
+      }
+    },
+    [sessionId, refreshSessions, handleNewSession],
+  );
 
   /** 编辑器操作入会话流(打开版式/保存/重渲——设计历史与对话历史同流) */
   const logSessionAction = useCallback(
@@ -311,10 +482,10 @@ export function App() {
   /** 产物条点击:拉取版式数据(可交互编辑的来源) */
   /** 打开产物:fetch data(会话工作目录模式带 session query) */
   const handleOpenArtifact = useCallback(
-    async (url: string, name: string, _dir: string) => {
+    async (url: string, name: string, _dir: string, project: string | null) => {
       setPreviewUrl(url); // 兜底:数据没到之前先给 PNG
       try {
-        const dataUrl = sessionId ? `/api/layout/${name}/data?session=${sessionId}` : `/api/layout/${name}/data`;
+        const dataUrl = artifactDataUrl(sessionId, name, project);
         const resp = await fetch(dataUrl);
         if (!resp.ok) return; // 没有版式数据的产物保持 PNG 预览
         const data = (await resp.json()) as LayoutData;
@@ -329,13 +500,25 @@ export function App() {
     [sessionId, logSessionAction],
   );
 
-  /** 📂 设置本会话的工作目录(产物落这里;刷新后仍生效) */
+  /** 📂 设置工作目录：无会话 = 纯前端缓存环境（建会话时落 meta）；有会话 = meta 事件改环境 */
   const handleSetWorkDir = useCallback(
     async (dir: string) => {
-      const sid = sessionId;
-      if (!sid) return;
+      if (!sessionId) {
+        savePendingEnv({ workDir: dir }); // 换目录 = 项目无效，重新选
+        setWorkDir(dir);
+        setCurrentProject(null);
+        try {
+          const pr = (await (await fetch(`/api/projects?dir=${encodeURIComponent(dir)}`)).json()) as {
+            projects?: Array<{ name: string; displayName: string }>;
+          };
+          setProjects(pr.projects ?? []);
+        } catch {
+          setProjects([]);
+        }
+        return;
+      }
       try {
-        const resp = await fetch(`/api/sessions/${sid}/workdir`, {
+        const resp = await fetch(`/api/sessions/${sessionId}/workdir`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ workDir: dir }),
@@ -343,10 +526,11 @@ export function App() {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const { workDir: abs } = (await resp.json()) as { workDir: string };
         setWorkDir(abs);
-        // 目录变了:当前打开的版式属于旧位置,清掉(回到缩略图重选)
+        // 目录变了:当前打开的版式属于旧位置,清掉(回到缩略图重选);项目清单也跟着变
         commitLayout(null as unknown as LayoutData);
         setPreviewUrl(null);
         setGalleryKey((k) => k + 1);
+        void fetchProjects(sessionId);
         setMessages((prev) => [
           ...prev,
           { id: crypto.randomUUID(), role: 'assistant', text: `📂 工作目录已设为:${abs}\n产物将保存在这里。` },
@@ -358,7 +542,8 @@ export function App() {
         ]);
       }
     },
-    [sessionId],
+    // fetchProjects 为 useCallback([]) 稳定引用,省略无害
+    [sessionId, pendingEnv],
   );
 
   /** 读取当前会话的工作目录(切会话/初始化时) */
@@ -370,6 +555,59 @@ export function App() {
       return null;
     }
   }
+
+  /** 拉项目清单 + 当前项目(切会话/初始化时) */
+  const fetchProjects = useCallback(async (sid: string) => {
+    try {
+      const r = (await (await fetch(`/api/sessions/${sid}/projects`)).json()) as {
+        projects?: Array<{ name: string; displayName: string }>;
+        current?: string | null;
+      };
+      setProjects(r.projects ?? []);
+      setCurrentProject(r.current ?? null);
+    } catch {
+      /* API 没跑——保持现状 */
+    }
+  }, []);
+
+  /** 切换/新建项目(已存在只切换,新名字自动注册) */
+  const handleSetProject = useCallback(
+    async (name: string, displayName?: string) => {
+      if (!sessionId) {
+        // 无会话：切项目 = 纯前端缓存环境
+        const dir = pendingEnv.workDir ?? workDir ?? undefined;
+        savePendingEnv({
+          ...(dir ? { workDir: dir } : {}),
+          project: name,
+          ...(displayName ? { projectDisplayName: displayName } : {}),
+        });
+        setCurrentProject(name);
+        return;
+      }
+      try {
+        const resp = await fetch(`/api/sessions/${sessionId}/project`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, displayName }),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${(await resp.text()).trim()}`);
+        const r = (await resp.json()) as { project: string; displayName: string };
+        setCurrentProject(r.project);
+        await fetchProjects(sessionId);
+        setGalleryKey((k) => k + 1); // 项目变了,产物清单跟着变
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: 'assistant', text: `📁 当前项目:${r.displayName}（产物落 <工作目录>/${r.project}/）` },
+        ]);
+      } catch (e) {
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: 'assistant', text: `✗ 切换项目失败:${(e as Error).message}` },
+        ]);
+      }
+    },
+    [sessionId, fetchProjects],
+  );
 
   /** 📂 打开应用内目录浏览器(DSH 式:后端列目录,前端渲染,拿真实路径) */
   const [dirBrowserOpen, setDirBrowserOpen] = useState(false);
@@ -389,6 +627,17 @@ export function App() {
   const toggleRightCol = useCallback(() => {
     setRightColCollapsed((c) => {
       localStorage.setItem('vinart.rightColCollapsed', c ? '0' : '1');
+      return !c;
+    });
+  }, []);
+  // ── 左侧对话列表:收起/展开(镜像右栏那套;width→0 过渡 + 贴边开关按钮) ──
+  const LEFT_COL_WIDTH = 230;
+  const [leftColCollapsed, setLeftColCollapsed] = useState<boolean>(() =>
+    localStorage.getItem('vinart.leftColCollapsed') === '1',
+  );
+  const toggleLeftCol = useCallback(() => {
+    setLeftColCollapsed((c) => {
+      localStorage.setItem('vinart.leftColCollapsed', c ? '0' : '1');
       return !c;
     });
   }, []);
@@ -544,11 +793,14 @@ export function App() {
   const handleSend = useCallback(
     async (text: string, files?: File[]) => {
       if (!text.trim() && !files?.length) return;
-      const sid = sessionId;
-      if (!sid) {
+      // 惰性会话的创建点：无会话时此刻建一个（打开/浏览页面从不产生会话）
+      let sid: string;
+      try {
+        sid = await ensureSession();
+      } catch (e) {
         setMessages((prev) => [
           ...prev,
-          { id: crypto.randomUUID(), role: 'assistant', text: '⚠️ 会话未初始化——API 服务未运行?' },
+          { id: crypto.randomUUID(), role: 'assistant', text: `⚠️ ${(e as Error).message}——API 服务未运行?` },
         ]);
         return;
       }
@@ -644,15 +896,31 @@ export function App() {
             const data = JSON.parse(dataLine.slice(6)) as { content?: string; message?: string };
             if (ev === 'chunk' && data.content) setReply((t) => t + data.content);
             if (ev === 'agent') applyAgentEvent(data as Parameters<typeof applyAgentEvent>[0]);
+            // 主 AI 工具调用中间轮：实时插一行 log 摘要（刷新后由账本重放同格式）
+            if (ev === 'tool') {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: `tool_${crypto.randomUUID()}`,
+                  role: 'assistant',
+                  kind: 'log',
+                  text: formatToolLine(data as Record<string, unknown>),
+                },
+              ]);
+            }
+            // 工具产出新图（render_design / generate_assets / spawn 批次）→ 实时刷画廊
+            if (ev === 'artifacts') setGalleryKey((k) => k + 1);
             if (ev === 'error') throw new Error(data.message ?? 'unknown');
           }
         }
         void refreshSessions(); // 标题可能已随首条消息更新
+        setGalleryKey((k) => k + 1); // 兜底：流结束后无论如何刷一次（事件丢失也不漏图）
       } catch (e) {
         setReply((t) => t + `\n\n✗ ${(e as Error).message}`);
+        setGalleryKey((k) => k + 1); // 异常收尾同样兜底（工具可能已落了部分产物）
       }
     },
-    [sessionId, layout, refreshSessions, toChatImageDataURL],
+    [sessionId, ensureSession, layout, refreshSessions, toChatImageDataURL],
   );
 
   /**
@@ -717,19 +985,20 @@ export function App() {
     });
     let id: string;
     try {
-      const resp = await fetch('/api/pipeline', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: v.name,
-          lang: v.lang,
-          depth: v.depth,
-          slot: v.slot,
-          image: dataUrl,
-          bullets: v.bullets,
-          sessionId, // 产物落该会话的工作目录(📂 设置)
-        }),
-      });
+        const resp = await fetch('/api/pipeline', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: v.name,
+            lang: v.lang,
+            depth: v.depth,
+            slot: v.slot,
+            image: dataUrl,
+            bullets: v.bullets,
+            sessionId, // 产物落该会话的工作目录(📂 设置)
+            project: currentProject, // 落当前项目的 designs/briefs(未设置会被 400 拒绝)
+          }),
+        });
       if (!resp.ok) {
         const detail = (await resp.text()).trim();
         throw new Error(
@@ -790,7 +1059,7 @@ export function App() {
       );
     });
     es.onerror = () => finish('✗ 与 API 服务的连接中断');
-  }, [isGenerating]);
+  }, [isGenerating, currentProject]);
 
   const handleNewChat = useCallback(() => {
     setMessages([]);
@@ -825,6 +1094,30 @@ export function App() {
             onOpen={handleOpenArtifact}
           />
       <div className={`main${isResizingCol ? ' resizing' : ''}`}>
+        {/* 左侧对话列表:收起时 width→0,开关贴屏左缘;图标竖线靠左=侧栏在左 */}
+        <button
+          type="button"
+          className={`left-toggle${leftColCollapsed ? ' collapsed' : ''}`}
+          style={{ left: leftColCollapsed ? 10 : LEFT_COL_WIDTH + 10 }}
+          onClick={toggleLeftCol}
+          title={leftColCollapsed ? '展开对话列表' : '收起对话列表'}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="1.5" y="2.5" width="13" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
+            <line x1="5.5" y1="4" x2="5.5" y2="12" stroke="currentColor" strokeWidth="1.5" />
+          </svg>
+        </button>
+        <SessionListPanel
+          sessions={sessions}
+          activeSessionId={sessionId}
+          collapsed={leftColCollapsed}
+          envWorkDir={workDir}
+          projects={projects}
+          onSwitch={handleSwitchSession}
+          onDelete={handleDeleteSession}
+          onNew={handleNewSession}
+          onNewProject={handleNewProject}
+        />
         <PreviewPanel
           htmlCode={layout ? undefined : htmlCode}
           previewUrl={previewUrl}
@@ -898,13 +1191,12 @@ export function App() {
             onSend={handleSend}
             onRunStep={handleRunStep}
             onRunPipeline={handleRunPipeline}
-            sessions={sessions}
-            activeSessionId={sessionId}
             workDir={workDir}
+            projects={projects}
+            currentProject={currentProject}
+            onSetProject={handleSetProject}
             onPickDir={handlePickDir}
             onSetWorkDir={handleSetWorkDir}
-            onSwitchSession={handleSwitchSession}
-            onNewSession={handleNewSession}
           />
         </div>
       </div>

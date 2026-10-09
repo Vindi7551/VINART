@@ -8,7 +8,7 @@
  *
  * 参照 Claude Code 的 transcript 实现(sessions/<sessionId>.jsonl + enqueueWrite)。
  */
-import { appendFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { ChatMessage, ContentPart } from '../gateway/type/chat';
 import { fileToDataUrl, isSupportedImagePath } from '../gateway/util/data-url';
@@ -54,16 +54,23 @@ export type SessionEvent =
         | 'pipeline-done'
         // 子 agent 记账对：以 detail.runId 配对（spawn 输入全文 / result 结构化结果）
         | 'agent-spawn'
-        | 'agent-result';
+        | 'agent-result'
+        // 主 AI 工具循环的中间轮记账（一行摘要：工具名/参数/结果/耗时）——
+        // 审计用，deriveMessages 不消费（不喂模型，防大 JSON 烧上下文）
+        | 'tool-call';
       detail: Record<string, unknown>;
     }
-  | { seq?: number; ts: string; kind: 'meta'; title?: string; workDir?: string };
+  | { seq?: number; ts: string; kind: 'meta'; title?: string; workDir?: string; project?: string };
 
 export interface SessionIndexEntry {
   id: string;
   title: string;
   updatedAt: string;
   messageCount: number;
+  /** 会话最后一次设置的 workDir（meta 事件；null = 未设置过）——对话列表第一层分组 */
+  workDir: string | null;
+  /** 会话当前项目（meta 事件；null = 未设置）——对话列表第二层分组 */
+  project: string | null;
 }
 
 function sessionFile(id: string): string {
@@ -152,6 +159,9 @@ export async function deleteSession(sessionId: string): Promise<void> {
   } catch {
     /* 文件不存在——视为已删 */
   }
+  // 级联：子 agent 账本目录（agents/<sessionId>/）与会话同生命周期——
+  // 会话没了，其委派记录没有独立存在价值（产物在 designs/ 不受影响）
+  await rm(join(SESSIONS_DIR, 'agents', sessionId), { recursive: true, force: true });
   const list = await listSessions();
   await writeFile(
     INDEX_PATH,
@@ -260,11 +270,47 @@ export async function setWorkDir(sessionId: string, dir: string): Promise<string
   return abs;
 }
 
+/**
+ * 会话当前项目:取**最后一条**带 project 的 meta 事件(与 getWorkDir 同机制)。
+ * null = 未设置——写产物路径 fail-loud,读路径走旧数据回退(workDir/designs)。
+ */
+export async function getProject(sessionId: string): Promise<string | null> {
+  const events = await loadTranscript(sessionId);
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.kind === 'meta' && 'project' in e && typeof (e as { project?: unknown }).project === 'string') {
+      return (e as { project: string }).project;
+    }
+  }
+  return null;
+}
+
+/** 切换当前项目(meta 事件追加)。项目目录与索引由调用方(set_project 工具/API)负责 */
+export async function setProject(sessionId: string, name: string): Promise<void> {
+  await appendEvent(sessionId, {
+    ts: new Date().toISOString(),
+    kind: 'meta',
+    project: name,
+  } as SessionEvent);
+}
+
 function countMessages(events: SessionEvent[]): number {
   return events.filter((e) => e.kind === 'message').length;
 }
 
-/** 索引条目 upsert:title/messageCount/updatedAt 以最新事件流为准 */
+/** 事件流里最后一条 meta 的某字段（workDir / project 都靠它） */
+function lastMetaField(events: SessionEvent[], field: 'workDir' | 'project'): string | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.kind === 'meta' && field in e) {
+      const v = (e as Record<string, unknown>)[field];
+      if (typeof v === 'string') return v;
+    }
+  }
+  return null;
+}
+
+/** 索引条目 upsert:title/messageCount/workDir/project/updatedAt 以最新事件流为准 */
 async function touchIndex(sessionId: string, latest: SessionEvent): Promise<void> {
   const events = await loadTranscript(sessionId);
   const list = await listSessions();
@@ -273,6 +319,8 @@ async function touchIndex(sessionId: string, latest: SessionEvent): Promise<void
     title: deriveTitle(events),
     updatedAt: latest.ts,
     messageCount: countMessages(events),
+    workDir: lastMetaField(events, 'workDir'),
+    project: lastMetaField(events, 'project'),
   };
   const idx = list.findIndex((s) => s.id === sessionId);
   if (idx >= 0) list[idx] = entry;
@@ -295,9 +343,9 @@ export async function createSession(): Promise<string> {
     INDEX_PATH,
     JSON.stringify(
       [
-        { id, title: '新会话', updatedAt: ts, messageCount: 0 },
-        ...(await listSessions()),
-      ],
+          { id, title: '新会话', updatedAt: ts, messageCount: 0, workDir: null, project: null },
+          ...(await listSessions()),
+        ] satisfies SessionIndexEntry[],
       null,
       2,
     ) + '\n',

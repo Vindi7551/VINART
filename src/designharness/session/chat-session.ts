@@ -38,6 +38,16 @@ interface SessionConfig {
 const MAX_TOOL_ROUNDS = 6;
 
 /**
+ * 审计摘录：压平空白 + 超长截断。
+ * 转录事件只存摘要不存全量——read_spec 之类返回整个 spec 的结果会把
+ * JSONL 账本撑到难看，而审计需要的是「调了什么、成没成、多久」。
+ */
+function clip(s: string | undefined, max: number): string {
+  const t = (s ?? '').replace(/\s+/g, ' ').trim();
+  return t.length > max ? t.slice(0, max) + '…' : t;
+}
+
+/**
  * 创建 ChatSession 实例。
  *
  * Session 只管对话生命周期：维护历史、调用 context 组装请求、调用 gateway、中止控制。
@@ -182,6 +192,7 @@ export function createChatSession(config: SessionConfig): ChatSession {
             if (controller.signal.aborted) break;
 
             const tool = tools.find((t) => t.name === call.function.name);
+            const t0 = Date.now();
             let resultContent: string;
             if (!tool) {
               resultContent = `ERROR: 未知工具 "${call.function.name}"。可用工具：${tools.map((t) => t.name).join(', ')}`;
@@ -200,6 +211,18 @@ export function createChatSession(config: SessionConfig): ChatSession {
                 resultContent = `ERROR: 工具调用失败：${e instanceof Error ? e.message : String(e)}`;
               }
             }
+            // 中间轮记账：上抛给调用方落转录 + SSE 实时推——否则刷新会话后
+            // 「AI 调过工具」这件事完全蒸发（委派有 agent-spawn/result 账本兜底，
+            // render/generate/edit 此前没有）。中间轮照旧不进模型上下文
+            // （大 JSON 烧 token），这里只是审计摘要。
+            opts?.onEvent?.({
+              kind: 'tool-call',
+              name: call.function.name,
+              args: clip(call.function.arguments, 400),
+              ok: !resultContent.startsWith('ERROR: '),
+              ms: Date.now() - t0,
+              result: clip(resultContent, 600),
+            });
             requestMessages.push({ role: 'tool', tool_call_id: call.id, content: resultContent });
           }
           if (controller.signal.aborted) break;

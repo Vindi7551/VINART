@@ -20,7 +20,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
-import { checkAppearance, checkSketch, type CheckResult } from '../../workflow/design-sketch/validate';
+import { checkAppearance, checkAppearanceRefs, checkSketch, type CheckResult, type SketchIssue } from '../../workflow/design-sketch/validate';
 import { renderSketchFile } from '../../workflow/design-sketch/runtime';
 import type { AgentTool, AgentToolContext } from '../subagent/types';
 
@@ -111,9 +111,24 @@ const saveSpec: AgentTool = {
       };
     }
     const warns = check.issues.filter((i) => i.level === 'warn');
+    // appearance 引用复查：spec 覆写是「配色静默失效」的主要制造者
+    // （图层改名/删除后 appearance 里的旧 id 匹配不上）。保存照常，
+    // 但失配必须随返回冒出来——不静默。
+    const refWarns: SketchIssue[] = [];
+    const appearancePath = resolve(dir, 'design-appearance.json');
+    if (existsSync(appearancePath)) {
+      try {
+        refWarns.push(
+          ...checkAppearanceRefs(spec as Parameters<typeof checkAppearanceRefs>[0], JSON.parse(readFileSync(appearancePath, 'utf8'))),
+        );
+      } catch {
+        /* appearance 坏 JSON：validate_sketch / render_design 会报，保存不拦 */
+      }
+    }
+    const allWarns = [...warns, ...refWarns];
     return {
-      content: warns.length
-        ? `已保存并通过校验。有 ${warns.length} 条 warn 提示（不阻塞，但建议看一眼）：\n${fmtCheck(check)}`
+      content: allWarns.length
+        ? `已保存并通过校验。有 ${allWarns.length} 条 warn 提示（不阻塞，但建议看一眼）：\n${fmtCheck({ ok: true, issues: allWarns })}`
         : `已保存并通过校验，无任何问题。路径：${args.name}/design-sketch.json`,
     };
   },
@@ -152,8 +167,16 @@ const validateSketch: AgentTool = {
 
     const appearancePath = resolve(dir, 'design-appearance.json');
     if (existsSync(appearancePath)) {
-      const ac = checkAppearance(JSON.parse(readFileSync(appearancePath, 'utf8')));
+      let apRaw: unknown;
+      try {
+        apRaw = JSON.parse(readFileSync(appearancePath, 'utf8'));
+      } catch (e) {
+        return { content: `ERROR: design-appearance.json 不是合法 JSON（${(e as Error).message}）。修好它或删掉这个文件（没有外观就走渲染器兜底）。`, isError: true };
+      }
+      const ac = checkAppearance(apRaw);
       issues.push(...ac.issues);
+      // 跨文件引用：appearance 里的 id 必须在 spec 里存在（失配 = 配色静默失效）
+      if (check.ok) issues.push(...checkAppearanceRefs(check.spec!, apRaw as Parameters<typeof checkAppearanceRefs>[1]));
     }
     const hasError = issues.some((i) => i.level === 'error');
     if (hasError) {

@@ -21,7 +21,7 @@ import { generateAssets, type AssetJobResult } from '../../workflow/assetsgen/im
 import type { AssetOrders } from '../../workflow/assetsgen/asset-order';
 import type { DesignSketch } from '../../workflow/design-sketch/design-sketch';
 import type { AgentTool } from '../subagent/types';
-import { getWorkDir } from '../session/transcript';
+import { resolveDesignDir } from './project-paths';
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -58,7 +58,7 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
       },
       required: ['name', 'assets'],
     },
-    async execute(args) {
+    async execute(args, ctx) {
       const name = args.name;
       if (typeof name !== 'string' || !NAME_RE.test(name)) {
         return {
@@ -77,11 +77,12 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
         }
       }
 
-      const workDir = await getWorkDir(config.sessionId);
-      const dir = resolve(workDir, 'designs', name);
+      const r = await resolveDesignDir(config.sessionId, name);
+      const workDir = r.workDir;
+      const dir = r.dir;
       const specPath = resolve(dir, 'design-sketch.json');
       if (!existsSync(specPath)) {
-        return { content: `ERROR: ${name}/design-sketch.json 不存在。先出草案再谈素材。`, isError: true };
+        return { content: `ERROR: ${name}/design-sketch.json 不存在（在 ${dir} 下找的）。先出草案再谈素材。`, isError: true };
       }
       let spec: DesignSketch;
       try {
@@ -146,6 +147,11 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
       const rel = (p: string) => relative(resolve(workDir), resolve(dir, p));
       const ok = results.filter((r) => r.ok);
       const failed = results.filter((r) => !r.ok);
+      // 产物事件：本轮真的生成了新素材才推（skipped = 已存在，不算变更）——
+      // 前端据此实时刷新 gallery
+      if (ok.some((r) => !r.skipped)) {
+        ctx.onEvent?.({ kind: 'artifacts', source: 'generate_assets', name });
+      }
       return {
         content: JSON.stringify({
           name,

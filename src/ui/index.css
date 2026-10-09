@@ -166,6 +166,17 @@ html, body, #root {
   padding-bottom: 4px;
 }
 
+/* 项目分组标题（多项目聚合时显示;单项目隐藏,见 ArtifactGallery） */
+.artifact-group + .artifact-group {
+  margin-top: 10px;
+}
+.artifact-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
 .artifact-card {
   flex-shrink: 0;
   width: 96px;
@@ -783,6 +794,161 @@ html, body, #root {
 /* 拖拽调宽期间:宽度/位置过渡全关,不然拖拽发粘 */
 .main.resizing .right-col,
 .main.resizing .right-toggle {
+  transition: none;
+}
+
+/* ===== 左侧对话列表（Codex 式）===== */
+.session-list {
+  width: 230px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border, #e5e7eb);
+  background: var(--bg-secondary, #fafafa);
+  overflow: hidden;
+  transition: width 0.2s ease;
+}
+.session-list-head {
+  padding: 8px;
+}
+.session-new-btn {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 13px;
+  text-align: left;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+.session-new-btn:hover { background: var(--bg-hover); }
+.session-list-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 6px 10px;
+}
+.session-list-empty {
+  padding: 16px 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.session-group-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.session-group-head:hover { background: var(--bg-hover); }
+.session-group-head .group-mark { display: inline-block; transition: transform 0.15s; }
+.session-group-head.closed .group-mark { transform: rotate(90deg) translateY(-2px); }
+.session-group-head.proj { padding-left: 14px; }
+.group-count {
+  margin-left: auto;
+  font-weight: 400;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.session-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  margin: 1px 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+}
+.session-item:hover { background: var(--bg-hover); }
+.session-item.active { background: var(--bg-active, #e8eaf0); }
+.session-item-title {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.session-item-del {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  visibility: hidden;
+}
+.session-item:hover .session-item-del { visibility: visible; }
+.session-item-del:hover { background: #fde8e8; }
+
+/* 组头 ✎（新建项目/新建会话）：hover 组头才显示 */
+.group-new {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  visibility: hidden;
+}
+.session-group-head:hover .group-new { visibility: visible; }
+.group-new:hover { background: var(--bg-hover); color: var(--text-primary); }
+.group-label {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+/* 目录组头 ✎ 的新建项目走弹窗（无行内输入样式） */
+
+/* ===== 左栏收起/展开开关（镜像右栏）===== */
+.left-toggle {
+  position: absolute;
+  top: 10px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  z-index: 30;
+  transition: left 0.2s ease, background 0.15s, color 0.15s;
+}
+.left-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.left-toggle line { transition: transform 0.2s ease; }
+/* 收起态:竖线滑到紧贴左边框(侧栏收进这条边) */
+.left-toggle.collapsed line { transform: translateX(-1.75px); }
+.main.resizing .session-list,
+.main.resizing .left-toggle {
   transition: none;
 }
 

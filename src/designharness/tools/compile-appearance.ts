@@ -21,7 +21,7 @@ import { checkSketch } from '../../workflow/design-sketch/validate';
 import { compileAppearance } from '../../workflow/appearance/compile';
 import type { DesignSketch } from '../../workflow/design-sketch/design-sketch';
 import type { AgentTool } from '../subagent/types';
-import { getWorkDir } from '../session/transcript';
+import { resolveDesignDir } from './project-paths';
 
 /** 版式名 = 目录名，与 validate.ts 对 spec.name 的规则一致（防路径注入） */
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -61,12 +61,13 @@ export function createCompileAppearanceTool(config: { sessionId: string }): Agen
         };
       }
 
-      const workDir = await getWorkDir(config.sessionId);
-      const dir = resolve(workDir, 'designs', name);
+      const r = await resolveDesignDir(config.sessionId, name);
+      const workDir = r.workDir;
+      const dir = r.dir;
       const specPath = resolve(dir, 'design-sketch.json');
       if (!existsSync(specPath)) {
         return {
-          content: `ERROR: ${name}/design-sketch.json 不存在（在 ${relative(resolve(workDir), dir)} 下找的）。` +
+          content: `ERROR: ${name}/design-sketch.json 不存在（在 ${dir} 下找的）。` +
             '还没有这个版式的话，先用 spawn_design_agents 出草案。',
           isError: true,
         };

@@ -10,14 +10,18 @@
  *   目录、记账全部由这里固化组装——主 AI 写业务内容，代码管执行
  * - **brief 必须自包含**（CC/DSH 共识：上下文零继承是默认）：
  *   子 agent 看不到主 AI 的聊天记录，画面意图与逐字文案都要写进 brief
- * - 产物落 `<workDir>/designs/<name>/`——与现有 artifacts / layout / 预览
- *   端点同根，跑完前端产物清单自动可见
+ * - 产物落 `<workDir>/<项目>/designs/<name>/`（项目 = 会话当前项目，
+ *   set_project 设置；未设置 fail-loud）——与 artifacts / layout 端点同根
+ * - 撞名防护（2026-10-08）：批内 name 重复整批拒绝；撞已有版式名拒绝——
+ *   spawn 语义是「出新草案」，改现有版式走 edit_spec，重做请换新名
  * - 记账：runAgentBatch 内部落 agent-spawn / agent-result 事件对到父会话
  * - signal 透传：用户点停止 → 主 AI 流中止 → 批次取消一路传播
  */
 
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { getWorkDir } from '../session/transcript';
+import { getWorkDir, getProject } from '../session/transcript';
+import { NO_PROJECT_HINT } from '../tools/project-paths';
 import { getChatGateway } from '../../config';
 import { runAgentBatch } from './runner';
 import { designAgentSystem } from './design-system';
@@ -81,7 +85,32 @@ export function createSpawnTool(config: SpawnToolConfig): AgentTool {
       }
 
       const workDir = await getWorkDir(config.sessionId);
-      const dir = join(workDir, 'designs');
+      const project = await getProject(config.sessionId);
+      if (!project) {
+        return { content: `ERROR: ${NO_PROJECT_HINT}`, isError: true };
+      }
+      const dir = join(workDir, project, 'designs');
+
+      // 撞名防护（fail-loud，批次未启动零成本）：批内重名 = 两个子 agent
+      // 并发写同一目录互相覆盖；撞已有版式 = 静默覆盖旧版。都整批拒绝。
+      const names = jobsIn.map((j) => j.name as string);
+      const dup = names.find((n, i) => names.indexOf(n) !== i);
+      if (dup) {
+        return {
+          content: `ERROR: 批次里有重复的版式名 "${dup}"——两个 job 会并发写同一个目录互相覆盖。每个 job 用不同的 name。`,
+          isError: true,
+        };
+      }
+      const existing = names.filter((n) => existsSync(join(dir, n)));
+      if (existing.length > 0) {
+        return {
+          content: `ERROR: 以下版式名在项目「${project}」下已存在：${existing.join('、')}。` +
+            'spawn 是出新草案，不会覆盖：重做一版请换新名（如 ' +
+            existing.map((n) => `${n}-v2`).join('、') +
+            '）；只是要改现有版式的话用 edit_spec 直接改（不委派，零成本）。',
+          isError: true,
+        };
+      }
 
       const batch = await runAgentBatch({
         sessionId: config.sessionId,
@@ -111,6 +140,12 @@ export function createSpawnTool(config: SpawnToolConfig): AgentTool {
         artifacts: o.artifacts,
         diagnostic: o.diagnostic ?? null,
       }));
+
+      // 产物事件：批次里有子 agent 落了盘（新 spec / sketch.png）→ 前端实时刷 gallery，
+      // 不用等主 AI 写完总结
+      if (batch.outcomes.some((o) => o.artifacts.length > 0)) {
+        ctx.onEvent?.({ kind: 'artifacts', source: 'spawn_design_agents' });
+      }
 
       return {
         content: JSON.stringify({ aborted: batch.aborted, usage: batch.usage, results }),

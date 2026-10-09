@@ -34,7 +34,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { NODE_TYPES, SHAPES, type DesignSketch, type NodeType } from './design-sketch';
-import { APPEARANCE_KEYS } from './design-appearance';
+import { APPEARANCE_KEYS, type DesignAppearance } from './design-appearance';
 
 // ══════════════════════════════════════════════════════════════════════
 // 结果
@@ -563,6 +563,48 @@ export function checkAppearance(raw: unknown): CheckResult {
   }
 
   return { ok: issues.every((x) => x.level !== 'error'), issues };
+}
+
+/**
+ * 跨文件引用检查：appearance.layers 的每个 id 必须能在 spec 里找到。
+ *
+ * 这是「配色静默失效」的正面堵截：applyAppearance 按 id 匹配，匹配不上
+ * **不报错也不警告**，该层直接走兜底色。典型成因：图层改名 / 删除后
+ * spec 覆写了，appearance 没跟着改——等到人眼发现「编译的配色没生效」，
+ * 中间已经隔了好几张图。
+ *
+ * 级别是 **warn** 不是 error：失配不破坏渲染（其余层照常上色），
+ * 但每个调用方都必须把这条带出来——静默才是要消灭的东西。
+ */
+export function checkAppearanceRefs(
+  spec: DesignSketch,
+  appearance: DesignAppearance,
+): SketchIssue[] {
+  const ids = new Set<string>();
+  const walk = (layers: unknown): void => {
+    if (!Array.isArray(layers)) return;
+    for (const l of layers) {
+      if (!isObj(l)) continue;
+      if (typeof l.id === 'string') ids.add(l.id);
+      walk(l.children); // 防御性：契约暂无 children，将来加了也不漏
+    }
+  };
+  walk((spec as { layers?: unknown }).layers);
+
+  const issues: SketchIssue[] = [];
+  for (const id of Object.keys(appearance.layers ?? {})) {
+    if (ids.has(id)) continue;
+    issues.push({
+      level: 'warn',
+      path: `layers["${id}"]`,
+      message:
+        `appearance 为 "${id}" 写的外观在 spec 里没有同 id 图层，渲染时会被**静默跳过**，` +
+        `该层走兜底色。通常是图层改名 / 删除后 appearance 没跟上：` +
+        `改成 spec 里的现有 id（${[...ids].join(' / ') || '（spec 没有任何图层）'}），` +
+        `或从 appearance.layers 删掉这条（重编配色也会清理）。`,
+    });
+  }
+  return issues;
 }
 
 // ══════════════════════════════════════════════════════════════════════
