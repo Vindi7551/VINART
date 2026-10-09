@@ -171,8 +171,66 @@ export interface AssetJobResult {
   error?: string;
 }
 
+function guessRole(ref: string): 'subject' | 'compose' | 'detail' {
+  if (ref === '@product') return 'subject';
+  if (ref === '@sketch') return 'compose';
+  return 'detail';
+}
+
+/**
+ * orders 归一化（容错 LLM 写出的宽松形态）：
+ * 实测：主 AI 会把 references 写成字符串数组 ["@product"]（契约是对象数组
+ * [{ref, role}]）——不归一化会在参考图解析时 resolve(outDir, undefined) 炸掉整批
+ * （paths[1] undefined，实测泳衣 PT04/PT05）。字符串按语义推断 role。
+ */
+/**
+ * 移除提示词里含禁词的短语片段（逗号/分号分隔）。
+ * 否定式免责语（'no logos, no watermark'）是实测陷阱：负面提及照样触发
+ * 内容审核（BANNED_WORDS 是字面匹配，不管否定）。移除即安全——生图模型
+ * 不加免责语也不会画水印。
+ */
+function stripBannedPhrases(prompt: string): string {
+  BANNED_WORDS.lastIndex = 0;
+  if (!BANNED_WORDS.test(prompt)) return prompt;
+  const cleaned = prompt.split(/[,;；，]s*/)
+    .filter((part) => {
+      BANNED_WORDS.lastIndex = 0;
+      return !BANNED_WORDS.test(part);
+    })
+    .join(", ")
+    .replace(/s{2,}/g, " ")
+    .replace(/[,;，]s*$/, "")
+    .trim();
+  BANNED_WORDS.lastIndex = 0;
+  return cleaned || prompt; // 全被移除的极端情况：保留原文让 assertPromptSafe 拦
+}
+
+function normalizeOrders(orders: AssetOrders): AssetOrders {
+  return orders.map((o) => {
+    const refs = (o as { references?: unknown }).references;
+    let references: AssetReference[] | undefined;
+    if (typeof refs === 'string') references = [{ ref: refs, role: guessRole(refs) }];
+    else if (Array.isArray(refs)) {
+      references = refs.map((r) => {
+        const ref = typeof r === 'string' ? r : (r as AssetReference).ref;
+        const role = typeof r === 'object' && r !== null && (r as AssetReference).role
+          ? (r as AssetReference).role
+          : guessRole(ref);
+        return { ref, role };
+      });
+    }
+    // 禁词短语清理：否定式免责语（如 'no logos, no watermark'）本身就会触发审核
+    // （BANNED_WORDS 命中，实测）——按逗号/分号拆句移除含禁词的片段。
+    // 移除后仍命中的（句中禁词）由 assertPromptSafe 拦（fail-loud 兜底）。
+    const promptClean = stripBannedPhrases(o.prompt);
+    return { ...o, ...(references ? { references } : {}), prompt: promptClean, size: o.size ?? '2048x2048' };
+  });
+}
+
+
 export async function generateAssets(opts: GenerateAssetsOptions): Promise<AssetJobResult[]> {
-  const { orders, spec, outDir, force } = opts;
+  const { spec, outDir, force } = opts;
+  const orders = normalizeOrders(opts.orders);
 
   if (!orders.length) {
     console.log('\n[2] 规格里没有声明要生成的素材');
@@ -180,6 +238,7 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<Asset
   }
 
   // ── 前置检查 ──
+
   const needsProduct = orders.some((o) => o.references?.some((r) => r.ref === '@product'));
   if (needsProduct && !opts.productPath) {
     throw new Error('订单引用了 @product，但没有提供商品照路径（productPath）');
@@ -357,7 +416,11 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<Asset
   async function worker(): Promise<void> {
     while (next < orders.length) {
       const i = next++;
-      results[i] = await generateOne(orders[i]);
+      results[i] = await generateOne(orders[i]).catch((e) => ({
+        file: orders[i]!.file,
+        ok: false,
+        error: String((e as Error).message ?? e),
+      }));
     }
   }
   await Promise.all(

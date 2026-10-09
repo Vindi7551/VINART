@@ -19,7 +19,7 @@
  * 这样两条路径共用同一份模板，不会出现「改了一处忘了另一处」。
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 /** 模板占位符 → 资源文件名的映射 */
@@ -33,8 +33,8 @@ export interface EmitHtmlOptions {
   template: string;
   /** 占位符 → 相对文件名（如 { SCENE: 'scene.png' }） */
   assets: HtmlAssets;
-  /** 资源文件所在目录（读取内联用） */
-  assetDir: string;
+  /** 资源搜索根（按序找第一个存在；首个=版式目录，其后为回退根如工作目录） */
+  assetRoots: string[];
   /** 输出目录 */
   outDir: string;
   /** 输出名，不含扩展名，如 'final' */
@@ -66,11 +66,24 @@ const MIME: Record<string, string> = {
   gif: 'image/gif',
 };
 
-function readAsDataUrl(dir: string, filename: string): string {
+/**
+ * 多根素材解析：按序找第一个存在的文件。
+ * 版式目录优先；找不到再试调用方给的回退根（如工作目录）——
+ * 贴图等素材可能以工作目录相对路径被 spec 引用（如 uploads/chat-x.jpg）。
+ */
+function resolveAssetFile(dirs: string[], filename: string): string {
+  for (const dir of dirs) {
+    const p = resolve(dir, filename);
+    if (existsSync(p)) return p;
+  }
+  return resolve(dirs[0]!, filename); // 都不存在：回退首根，让上层报错带上首根路径
+}
+
+function readAsDataUrl(dirs: string[], filename: string): string {
   const ext = (filename.split('.').pop() ?? '').toLowerCase();
   const mime = MIME[ext];
   if (!mime) throw new Error(`不支持的图片类型：${filename}`);
-  return `data:${mime};base64,${readFileSync(resolve(dir, filename)).toString('base64')}`;
+  return `data:${mime};base64,${readFileSync(resolveAssetFile(dirs, filename)).toString('base64')}`;
 }
 
 /** 按 `{{KEY}}` 替换模板 */
@@ -91,11 +104,11 @@ function substitute(template: string, map: Record<string, string>): string {
 export function inlineAssets(
   template: string,
   assets: HtmlAssets,
-  assetDir: string,
+  assetRoots: string[],
 ): string {
   const inlineMap: Record<string, string> = {};
   for (const [key, filename] of Object.entries(assets)) {
-    inlineMap[key] = readAsDataUrl(assetDir, filename);
+    inlineMap[key] = readAsDataUrl(assetRoots, filename);
   }
   return substitute(template, inlineMap);
 }
@@ -116,13 +129,13 @@ function provenance(meta: Record<string, string>): string {
 }
 
 export function emitHtml(opts: EmitHtmlOptions): EmitHtmlResult {
-  const { template, assets, assetDir, outDir, name, meta } = opts;
+  const { template, assets, assetRoots, outDir, name, meta } = opts;
   mkdirSync(outDir, { recursive: true });
 
   // 自包含版：图片内联为 data URL
   const inlineMap: Record<string, string> = {};
   for (const [key, filename] of Object.entries(assets)) {
-    inlineMap[key] = readAsDataUrl(assetDir, filename);
+    inlineMap[key] = readAsDataUrl(assetRoots, filename);
   }
   const selfContainedHtml = provenance(meta) + '\n' + substitute(template, inlineMap);
 

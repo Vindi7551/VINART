@@ -350,7 +350,7 @@ async function main() {
         const emitted = emitHtml({
           template,
           assets: { PRODUCT_CUTOUT: 'product-cutout.png' },
-          assetDir: OUT,
+          assetRoots: [OUT],
           outDir: OUT,
           name: 'sketch',
           meta: {
@@ -462,7 +462,7 @@ async function main() {
           SCENE: 'scene.png',
           DETAIL: 'detail.png',
         },
-        assetDir: OUT,
+        assetRoots: [OUT],
         outDir: OUT,
         name: 'final',
         meta: {

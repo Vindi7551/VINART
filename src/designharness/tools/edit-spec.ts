@@ -13,7 +13,7 @@
  * 掉的图层若在 appearance 有配色分配，只警告不代删（重编即清理）。
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { checkAppearanceRefs, checkSketch, type CheckResult } from '../../workflow/design-sketch/validate';
 import type { AgentTool } from '../subagent/types';
@@ -51,9 +51,18 @@ async function loadSpec(
   const r = await resolveDesignDir(sessionId, name);
   const specPath = resolve(r.dir, 'design-sketch.json');
   if (!existsSync(specPath)) {
+    // 可行动报错：列出同项目下已有的版式名——主 AI 忘记版式全名时能立刻自我纠正
+    // （真实案例：连错 4 次裸名后误判「产物丢失」擅自重跑，双份版式就是这么来的）
+    const designsDir = resolve(r.dir, '..');
+    const existing = existsSync(designsDir)
+      ? readdirSync(designsDir, { withFileTypes: true })
+          .filter((d) => d.isDirectory() && existsSync(resolve(designsDir, d.name, 'design-sketch.json')))
+          .map((d) => d.name)
+      : [];
+    const hint = existing.length ? `该项目下已有版式：${existing.join('、')}。` : '';
     return {
       ok: false,
-      error: `${name}/design-sketch.json 不存在（在 ${r.dir} 下找的）。` +
+      error: `${name}/design-sketch.json 不存在（在 ${r.dir} 下找的）。${hint}` +
         '还没有这个版式的话，先用 spawn_design_agents 出草案。',
     };
   }

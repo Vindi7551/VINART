@@ -22,6 +22,7 @@ import { compileAppearance } from '../../workflow/appearance/compile';
 import type { DesignSketch } from '../../workflow/design-sketch/design-sketch';
 import type { AgentTool } from '../subagent/types';
 import { resolveDesignDir } from './project-paths';
+import { getProject } from '../session/transcript';
 
 /** 版式名 = 目录名，与 validate.ts 对 spec.name 的规则一致（防路径注入） */
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -106,9 +107,16 @@ export function createCompileAppearanceTool(config: { sessionId: string }): Agen
       // 假装「看图取色」的氛围配色（compileAppearance 对缺失路径是静默跳过的）
       let productAbs: string | null = null;
       if (typeof args.productPath === 'string' && args.productPath.trim()) {
-        productAbs = resolve(workDir, args.productPath);
-        if (!existsSync(productAbs)) {
-          return { content: `ERROR: productPath 不存在：${args.productPath}`, isError: true };
+        // 多根回退：先按工作目录相对解析，找不到再按「工作目录/<当前项目>/」相对
+        // （贴图落项目 uploads/ 时，主 AI 常写 uploads/chat-x.jpg 这种相对 workDir 的路径）
+        const project = await getProject(config.sessionId);
+        const roots = [workDir, ...(project ? [resolve(workDir, project)] : [])];
+        productAbs = roots.map((r) => resolve(r, args.productPath as string)).find((p) => existsSync(p)) ?? null;
+        if (!productAbs) {
+          return {
+            content: `ERROR: productPath 不存在：${args.productPath}（试过 ${roots.join(' 与 ')}）`,
+            isError: true,
+          };
         }
       }
 

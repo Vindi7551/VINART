@@ -41,6 +41,11 @@ export interface AssembleOptions {
   orders: AssetOrders;
   /** 素材与产物的目录（同一目录，linked.html 用相对路径引用素材） */
   outDir: string;
+  /**
+   * 素材回退搜索根（可选）：asset 相对路径在 outDir 找不到时按序尝试这些根。
+   * 用途：贴图等素材以工作目录相对路径被 spec 引用（uploads/chat-x.jpg）——
+   * 聊天链传 [workDir] 即可让「贴图直接当素材」。 */
+  searchRoots?: string[];
   palette: Palette;
   typography: Typography;
   /** 提供浏览器页（文字自适应的测量在页面里做） */
@@ -66,6 +71,7 @@ export interface AssembleResult {
 
 export async function assembleFinal(opts: AssembleOptions): Promise<AssembleResult> {
   const { spec, orders, outDir, palette, typography, host } = opts;
+  const assetRoots = [outDir, ...(opts.searchRoots ?? [])];
 
   console.log('\n[3] 成品');
   const { html, assets } = renderDesign(spec, { mode: 'final', palette, typography });
@@ -75,7 +81,7 @@ export async function assembleFinal(opts: AssembleOptions): Promise<AssembleResu
   // 继续的话 emitHtml 读不到文件会崩，而且会渲染出一张断图的空壳 PNG，
   // 那种图体积会明显偏小，容易被误当成"渲染成功"。
   // 抛错而不是 process.exit：本函数也被服务进程（聊天工具链路）调用，exit 会带走整个服务。
-  const missing = Object.entries(assets).filter(([, f]) => !existsSync(resolve(outDir, f)));
+  const missing = Object.entries(assets).filter(([, f]) => !assetRoots.some((r) => existsSync(resolve(r, f))));
   if (missing.length) {
     throw new Error(
       `缺少素材：${missing.map(([k, f]) => `${k}=${f}`).join(', ')}。` +
@@ -100,7 +106,7 @@ export async function assembleFinal(opts: AssembleOptions): Promise<AssembleResu
     };
     // 测量视口必须与画布同尺寸——否则量出的可用宽是错的
     await measurePage.setViewportSize({ width: C.width, height: C.height });
-    await measurePage.setContent(inlineAssets(html, assets, outDir), { waitUntil: 'load' });
+    await measurePage.setContent(inlineAssets(html, assets, assetRoots), { waitUntil: 'load' });
     // ⚠️ 等字体就绪：woff2 内联是异步的，不等就量 = 量到兜底字体的宽，系数全错
     await measurePage.evaluate(() => document.fonts?.ready);
     fits = await measurePage.evaluate((keys: unknown) => {
@@ -132,7 +138,7 @@ export async function assembleFinal(opts: AssembleOptions): Promise<AssembleResu
   const emitted = emitHtml({
     template: finalRender.html,
     assets: finalRender.assets,
-    assetDir: outDir,
+    assetRoots,
     outDir,
     name: finalName,
     meta: finalMeta(spec, orders, fits, typography),
