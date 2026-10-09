@@ -19,7 +19,7 @@ interface PreviewPanelProps {
   selectedElements: Set<string>;
   onToggleElement: (id: string) => void;
   onExport?: () => void;
-  /** 版式编辑模式:有值 = 加载 linked.html + 受控编辑器(逐元素修改) */
+  /** 版式编辑模式:有值 = 用服务端现场渲染的 HTML + 受控编辑器(逐元素修改) */
   layoutData?: LayoutData | null;
   /** 会话 id:有值 = 素材 base 走 file API(工作目录模式);无 = 旧约定 /files/ */
   sessionId?: string | null;
@@ -89,18 +89,10 @@ export function PreviewPanel({
   }, [layoutData, base]);
   const layoutSrcdoc = useMemo(() => {
     if (!base) return '';
-    // 防御:后端旧实例返回的 linked.html 可能带着独立编辑器的注入——
-    // 剥干净,否则两套脚本同屏互相吞事件(实测:交互全部失效)
-    let html = base.html;
-    const s0 = html.indexOf('<!--vinart-editor-start-->');
-    if (s0 >= 0) {
-      const e0 = html.indexOf('<!--vinart-editor-end-->', s0);
-      if (e0 >= 0) html = html.slice(0, s0) + html.slice(e0 + 26);
-    }
-    html = html.replace(
-      /<script type="application\/json" id="__vinart-data">[\s\S]*?<\/script>\s*/g,
-      '',
-    );
+    // 服务端现场渲染的成品 HTML（data 端点）——不再有"独立编辑器注入残留"要剥：
+    // 那份注入（scripts/editor.inject.js + injectEditor）已于 2026-10-09 随
+    // final.html / final.linked.html 一起删除（见 emit-html.ts 头注释）。
+    const html = base.html;
     // 相对素材的基准(必须进 head):
     // - 会话工作目录模式:file API 作 base——query 型 base 下,相对文件名会追加到
     //   rel 参数后(base 带 ?rel=designs/<name>/ + img src="hero.png"

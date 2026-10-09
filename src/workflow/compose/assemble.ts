@@ -1,15 +1,15 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════
- * 最终组装 —— 版式 + 素材 → final.html / final.png
+ * 最终组装 —— 版式 + 素材 → final.png
  * ═══════════════════════════════════════════════════════════════════════
  *
- * 从 `step-layout.ts` 的 final 段抽出（它原来长在驱动的 main 里）。
+ * 从旧驱动脚本的 final 段抽出（那时各阶段都长在同一个 main 里；那个驱动已于 2026-10-09 删除）。
  *
  * ## 职责
  *
  *   ① 缺素材检查（缺 → 中止——继续会渲出断图空壳 PNG，体积偏小易误判成功）
  *   ② 文字自适应（实测两遍：量 scrollWidth/clientWidth → 回填系数重渲）
- *   ③ emitHtml 双输出（final.html 自包含快照 / final.linked.html 可编辑源码）
+ *   ③ emitHtml 组装自包含 HTML（**渲染输入，不落盘**）
  *   ④ Blink 渲染 → final.png（交付成品）
  *
  * ## 不在这里的
@@ -17,11 +17,11 @@
  *   版式渲染器（`design-sketch/render.ts`）· 素材生成（`assetsgen/`）·
  *   草图渲染（`design-sketch/sketch.ts`）——本阶段只**消费**它们的产物。
  *
- * ## 产物分工
+ * ## 产物
  *
- *   final.linked.html = 源码（给人改：改 CSS/文案 → 重跑 final，零模型调用）
- *   final.html        = 快照（图内联 data URL，单文件可分享）
- *   final.png         = 成品（Blink 渲自包含版，交付上传）
+ *   final.png = 成品（Blink 渲自包含 HTML，交付上传）
+ *   ⚠️ final.html / final.linked.html 已于 2026-10-09 删除——零消费方，
+ *      且 PNG 渲染用的是内存字符串、从不读文件（详见 emit-html.ts 头注释）。
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -39,7 +39,7 @@ export interface AssembleOptions {
   spec: DesignSketch;
   /** 素材订单——写进溯源注释（这张图用了哪些生成素材） */
   orders: AssetOrders;
-  /** 素材与产物的目录（同一目录，linked.html 用相对路径引用素材） */
+  /** 素材与产物的目录（同一目录；PNG 也落在这里） */
   outDir: string;
   /**
    * 素材回退搜索根（可选）：asset 相对路径在 outDir 找不到时按序尝试这些根。
@@ -63,10 +63,6 @@ export interface AssembleOptions {
 export interface AssembleResult {
   /** 成品 PNG 绝对路径 */
   png: string;
-  /** 自包含快照 HTML 绝对路径 */
-  html: string;
-  /** 可编辑源码 HTML 绝对路径 */
-  linked: string;
 }
 
 export async function assembleFinal(opts: AssembleOptions): Promise<AssembleResult> {
@@ -135,12 +131,10 @@ export async function assembleFinal(opts: AssembleOptions): Promise<AssembleResu
   const finalRender = renderDesign(spec, { mode: 'final', fits, palette, typography });
   // --font 试字体时给文件名带方案名，多个变体可以并存比较
   const finalName = opts.nameOverride ? `final-${opts.nameOverride}` : 'final';
-  const emitted = emitHtml({
+  const selfContainedHtml = emitHtml({
     template: finalRender.html,
     assets: finalRender.assets,
     assetRoots,
-    outDir,
-    name: finalName,
     meta: finalMeta(spec, orders, fits, typography),
   });
 
@@ -153,7 +147,7 @@ export async function assembleFinal(opts: AssembleOptions): Promise<AssembleResu
   try {
     // ⚠️ 必须渲 selfContainedHtml（占位符已替换成真素材）——
     // 拿含 {{占位符}} 的模板渲是断图的空壳。
-    const out = await r.render({ html: emitted.selfContainedHtml }, outDir, {
+    const out = await r.render({ html: selfContainedHtml }, outDir, {
       width: C.width, height: C.height, format: 'png', filename: finalName,
     });
     pngPath = out.imagePath;
@@ -169,10 +163,7 @@ export async function assembleFinal(opts: AssembleOptions): Promise<AssembleResu
     // 只在内部自建的实例上 dispose——注入的渲染器归调用方管
     if (!opts.renderer) await (r as Awaited<ReturnType<typeof createBlinkRenderer>>).dispose();
   }
-  console.log(`    HTML → ${finalName}.html（${(emitted.selfContainedBytes / 1024).toFixed(0)} KB 自包含）`);
-  console.log(`           ${finalName}.linked.html（${(emitted.linkedBytes / 1024).toFixed(0)} KB 可编辑）`);
-
-  return { png: pngPath, html: emitted.selfContained, linked: emitted.linked };
+  return { png: pngPath };
 }
 
 // ── 溯源注释 ──

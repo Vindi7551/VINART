@@ -9,7 +9,7 @@
  *   主 AI 把清单转告用户 → 用户确认 → 第二次调用带 confirm:true → 真正执行
  *
  * 订单（assets）由主 AI 按 asset-order.ts 的写法规范当场写好，随参数传入；
- * 执行时落盘 assets.json（与 step-layout 链路同约定——将来 CLI 重跑有据可查）。
+ * 执行时落盘 assets.json（落进版式目录，与设计链路既有约定同名同目录——素材生成有据可查）。
  * 未确认的订单不落盘。
  */
 
@@ -119,7 +119,7 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
       }
 
       // ── 闸门第二段：执行 ──
-      // 订单落盘（确认过的才写——与 step-layout 的 assets.json 约定同目录同名）
+      // 订单落盘（确认过的才写——与 assets.json 既有约定同目录同名）
       mkdirSync(dir, { recursive: true });
       writeFileSync(resolve(dir, 'assets.json'), JSON.stringify(orders, null, 2) + '\n', 'utf8');
 

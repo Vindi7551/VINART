@@ -24,13 +24,15 @@
 | `compile.ts` | **编译器**：创意方案 → spec → 校验 → 渲草图 → VLM 验收（多轮循环）|
 | `README.md` | 本文件 |
 
-**入口在 `scripts/`**（不属于本阶段，只是调用它的壳）：
+**入口**：
 
 ```bash
-npm run step src/workflow/design-sketch/compile.ts -- <方案.md>   # 编译器
-npm run step scripts/render-sketch.ts -- <spec.json>              # 只渲草图
-npm run step scripts/check-sketch.ts -- <spec.json>               # 只校验
+npm run step src/workflow/design-sketch/compile.ts -- <方案.md>   # 编译器（唯一 CLI）
 ```
+
+「只渲草图」与「只校验」**不再有 CLI**（2026-10-09 随 `src/workflow/steps/` 整层删除）——
+进程内直接调 `runtime.ts` 的 `renderSketchFile(specPath, outDir?)`、
+`validate.ts` 的 `checkSketch(raw)`；子 agent 工具集就是这么包的。
 
 ### 这个阶段在整条链上的位置
 

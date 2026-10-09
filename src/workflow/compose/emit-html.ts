@@ -1,25 +1,22 @@
 /**
- * HTML 产出模块 —— 把版式源文件落盘。
+ * HTML 产出模块 —— 把版式渲染结果组装成**可直接喂渲染器的自包含 HTML**。
  *
- * 为什么必须有这一步：
- * PNG 只是**渲染结果**，HTML+CSS 才是**源文件**。
- * 之前 HTML 只作为模板字符串存在脚本内存里，喂给渲染器就丢了——
- * 后果是"想改一版版式就必须重跑整个脚本"，而脚本里含大模型调用。
- * 落盘之后，改版式 = 改 HTML 的 CSS + 重渲（3 秒），不碰模型。
+ * ## 历史：这个模块曾经落盘两份文件
  *
- * 产出两种形态，各有用途：
+ * 以前它写 `<name>.html`（自包含）与 `<name>.linked.html`（素材走相对路径），
+ * 定位是"人手改 CSS 再重渲"。**2026-10-09 全部删除**，理由：
+ *   1. PNG 渲染一直用的是**内存里的字符串**（`selfContainedHtml`），从不读文件；
+ *   2. 网页可编辑视图的 HTML 由服务端**现场渲染**，也不读文件；
+ *   3. 全仓库零消费方；而"手改 CSS"那条回路本就自相矛盾——CSS 是渲染器从
+ *      spec 生成的，手改必被下一次 final 覆盖。
  *
- * | 文件 | 形态 | 用途 |
- * |---|---|---|
- * | `<name>.html` | **自包含**，图片以 data URL 内联 | 就是渲染出 PNG 的那份，可单独打开/转发，结果绝对一致 |
- * | `<name>.linked.html` | 图片走**相对路径** | 体积小、可读可编辑，适合改 CSS 迭代 |
+ * 要单文件分享版时，从这里把组装结果写出去即可（本模块已产出完整字符串）。
  *
- * 实现上用占位符替换而不是拼两遍字符串：
- * 页面模板里写 `{{SCENE}}`，自包含版替换成 data URL，链接版替换成文件名。
- * 这样两条路径共用同一份模板，不会出现「改了一处忘了另一处」。
+ * 实现上用**占位符替换**而不是拼字符串：模板里写 `{{SCENE}}`，替换成 data URL。
+ * 这样"量文字宽度"和"正式渲染"两条路径共用同一份模板，不会改了一处忘了另一处。
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 /** 模板占位符 → 资源文件名的映射 */
@@ -35,27 +32,8 @@ export interface EmitHtmlOptions {
   assets: HtmlAssets;
   /** 资源搜索根（按序找第一个存在；首个=版式目录，其后为回退根如工作目录） */
   assetRoots: string[];
-  /** 输出目录 */
-  outDir: string;
-  /** 输出名，不含扩展名，如 'final' */
-  name: string;
-  /** 溯源信息，会写成 HTML 注释放在文件头 */
+  /** 溯源信息，会写成 HTML 注释放在返回的 HTML 头部 */
   meta: Record<string, string>;
-}
-
-export interface EmitHtmlResult {
-  /** 自包含版（图片内联）的路径 */
-  selfContained: string;
-  /** 相对路径版的路径 */
-  linked: string;
-  /** 自包含版的完整 HTML —— **渲染必须用这个**，不能拿含占位符的模板去渲染，
-   *  否则图片是断的（这个坑踩过一次：PNG 从 3.9MB 掉到 122KB） */
-  selfContainedHtml: string;
-  /** 相对路径版的完整 HTML */
-  linkedHtml: string;
-  /** 自包含版的字节数 */
-  selfContainedBytes: number;
-  linkedBytes: number;
 }
 
 const MIME: Record<string, string> = {
@@ -128,32 +106,19 @@ function provenance(meta: Record<string, string>): string {
   ].join('\n');
 }
 
-export function emitHtml(opts: EmitHtmlOptions): EmitHtmlResult {
-  const { template, assets, assetRoots, outDir, name, meta } = opts;
-  mkdirSync(outDir, { recursive: true });
+/**
+ * 组装出**可直接渲染**的完整 HTML（图片已内联为 data URL）。
+ *
+ * ⚠️ 渲染必须用这个返回值，不能拿含 `{{占位符}}` 的模板去渲染——
+ * 否则图片是断的（踩过一次：PNG 从 3.9MB 掉到 122KB）。
+ */
+export function emitHtml(opts: EmitHtmlOptions): string {
+  const { template, assets, assetRoots, meta } = opts;
 
-  // 自包含版：图片内联为 data URL
+  // 图片内联为 data URL
   const inlineMap: Record<string, string> = {};
   for (const [key, filename] of Object.entries(assets)) {
     inlineMap[key] = readAsDataUrl(assetRoots, filename);
   }
-  const selfContainedHtml = provenance(meta) + '\n' + substitute(template, inlineMap);
-
-  // 相对路径版：图片名直接用
-  const linkedHtml = provenance(meta) + '\n' + substitute(template, assets);
-
-  const selfContained = resolve(outDir, `${name}.html`);
-  const linked = resolve(outDir, `${name}.linked.html`);
-
-  writeFileSync(selfContained, selfContainedHtml, 'utf8');
-  writeFileSync(linked, linkedHtml, 'utf8');
-
-  return {
-    selfContained,
-    linked,
-    selfContainedHtml,
-    linkedHtml,
-    selfContainedBytes: Buffer.byteLength(selfContainedHtml, 'utf8'),
-    linkedBytes: Buffer.byteLength(linkedHtml, 'utf8'),
-  };
+  return provenance(meta) + '\n' + substitute(template, inlineMap);
 }

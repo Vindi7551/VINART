@@ -1,7 +1,7 @@
 /**
  * compile_appearance 工具 —— 主 AI 为版式编译**专属配色**。
  *
- * 包装 workflow/appearance/compile.ts 的 compileAppearance（CLI step-05 同一实现）：
+ * 包装 workflow/appearance/compile.ts 的 compileAppearance（与 compile.ts 挂载的外观编译同一实现）：
  * 版式 spec + 创意方案 + 产品照（可选，看图取色）→ design-appearance.json
  * （内嵌 palette 角色表 + 逐图层颜色分配）。产出是数据——用户可手改 hex
  * 重渲 final（零 API），好用的配色再由人提升进 designassets/elements/palette/。

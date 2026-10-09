@@ -16,9 +16,8 @@
  *
  * ## 与 compile 的关系
  *
- * 独立命令（scripts/step-order.ts）先跑通、验证好之后，挂到 compile.ts 尾部
- * （产完版式顺手产订单，--prompt-lang 透传）——那时 brief → 订单 → 素材 → final
- * 全链无手工。
+ * 先独立跑通、验证好之后挂到 compile.ts 尾部（**2026-10-09 起已挂上**：
+ * 产完版式顺手产订单，--prompt-lang 透传）——brief → 订单 → 素材 → final 全链无手工。
  *
  * ## 写法规范
  *

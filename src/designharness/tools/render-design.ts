@@ -10,7 +10,7 @@
  * 花钱动作，不在这工具里做（第 2 步再接，且必须有人确认闸门）。
  *
  * 目录语义：版式在会话工作目录的 designs/<name>/ 下（spawn 子 agent 的
- * 产物落点）。与 step-layout 的 test_product/layout/<name>/ 同构——
+ * 产物落点）。与既有的 test_product/layout/<name>/ 布局同构——
  * 一个版式目录 = design-sketch.json + (design-appearance.json) + (assets.json) + 素材。
  */
 
@@ -32,7 +32,7 @@ export function createRenderDesignTool(config: { sessionId: string }): AgentTool
   return {
     name: 'render_design',
     description:
-      '把已保存的版式渲染成**成品图**（final.png + 自包含 final.html + 可编辑 final.linked.html）。' +
+      '把已保存的版式渲染成**成品图**（final.png）。' +
       '真实素材、文字自适应排版；纯本地渲染（零模型调用），约 5–10 秒。' +
       '版式必须在会话工作目录的 designs/<name>/design-sketch.json（spawn 产出的就在那）。' +
       '素材缺失时会失败并列出缺哪些文件——此时告诉用户需要先生成素材，不要自己重试。',
@@ -111,9 +111,9 @@ export function createRenderDesignTool(config: { sessionId: string }): AgentTool
 
       // ⚠️ 外观合并不能漏：palette/typography 只是「表」，appearance.layers 里的
       // 逐图层颜色分配（title.color / accent 染色词 / shape.fill…）必须先合进
-      // 图层树再渲染——CLI 链路（step-layout）一直是这么做的，本工具此前漏了
+      // 图层树再渲染——设计链路一直是这么做的，本工具此前漏了
       // 这步，图层分配被静默丢弃、文字全走 palette.ink 兜底（实测 demo-with-image
-      // 标题显示为 ink 深蓝而非设计的 cream + accent，才暴露）。顺序同 CLI：
+      // 标题显示为 ink 深蓝而非设计的 cream + accent，才暴露）。顺序同设计链路：
       // 先合并外观、再交给渲染器（渲染器内部才展开 repeat）。
       const painted = {
         ...spec,
@@ -157,8 +157,6 @@ export function createRenderDesignTool(config: { sessionId: string }): AgentTool
       return {
         content: JSON.stringify({
           png: rel(result.png),
-          html: rel(result.html),
-          linked: rel(result.linked),
           // id 失配不阻塞渲染（其余层照常上色），但警告必须跟着产物走——
           // 主 AI 看到就该告诉用户，或让 compile_appearance 重编清理
           appearanceWarnings: refWarns.length

@@ -3,8 +3,8 @@
  * spec 运行时 —— 把一份 design-sketch.json 变成草图 PNG
  * ═══════════════════════════════════════════════════════════════════════
  *
- * 这段逻辑原本长在 `step-layout.ts` 里，是驱动的私产。抽出来的原因很实际：
- * **编译器（step-05）也要渲草图做校验**——但不能起子进程
+ * 这段逻辑原本长在旧驱动脚本里，是它的私产。抽出来的原因很实际：
+ * **编译器（compile.ts）也要渲草图做校验**——但不能起子进程
  * （实测：某些环境里进程内 spawn 会 `EBUSY`，连 cmd.exe 都不用就走了 node 也不行）。
  *
  * 于是"读 spec → 读配色/字体 → 渲染 → 落盘"必须能**在当前进程内**调用。
@@ -68,7 +68,7 @@ let exitHooksInstalled = false;
 /**
  * **显式清理共享渲染器**（关闭浏览器并等待退出；自管 userDataDir 后 ~1.5s）。
  *
- * CLI 脚本（render-sketch / compile 等）在收尾 `process.exit` 前必须
+ * CLI 脚本（compile 等）在收尾 `process.exit` 前必须
  * **await** 本函数——`process.exit` 会立刻终止进程，浏览器若还活着，
  * 整条命令组会被 SIGTERM 带走（实测 exit 1，连 shell 里后续命令都不执行）。
  * 服务进程（design harness）不调用：靠 5 分钟空闲定时器自动回收。

@@ -5,25 +5,29 @@
 
 ---
 
-## 产物分工——三件东西，三种受众
+## 产物——只有一件
 
 | 文件 | 是什么 | 给谁 |
 |---|---|---|
-| `final.linked.html` | **版式源码**（相对路径引用素材，人可读）| **你**——改 CSS/文案 → 重跑 final，零模型调用 |
-| `final.html` | **自包含快照**（图以 data URL 内联）| 分享 / 存档——单文件到处能开 |
-| `final.png` | **成品图**（Blink 渲自包含版）| Amazon——上传交付 |
+| `final.png` | **成品图**（Blink 渲自包含 HTML）| Amazon——上传交付 |
 
-**PNG 不是源头，HTML 才是。** 文字零 typo 的保证在 HTML+CSS 里；
-想改任何东西都是"改源码 → 重跑渲染 → 新 PNG"，PNG 随时可再生。
+⚠️ 以前还落盘 `final.html`（自包含快照）与 `final.linked.html`（相对路径源码），
+**2026-10-09 删除**。理由：PNG 渲染用的是**内存里的 HTML 字符串**、从不读文件；
+网页可编辑视图也由服务端**现场渲染**——两者零消费方。而且"手改 CSS 再重渲"
+那条回路本就自相矛盾：CSS 是渲染器从 spec 生成的，手改必被下一次 final 覆盖。
+改版式的正规入口是 **spec + 编辑器**（`design-sketch.json` / `design-appearance.json`）。
+
+**PNG 不是源头，spec 才是。** 文字零 typo 的保证在渲染器生成的 HTML+CSS 里；
+想改任何东西都是"改 spec → 重渲 → 新 PNG"，PNG 随时可再生（零模型调用）。
 
 ## 文件
 
 | 文件 | 职责 |
 |---|---|
-| `assemble.ts` | `assembleFinal()`：缺素材检查 → 文字自适应（实测两遍）→ 双输出 HTML → 渲 PNG |
-| `emit-html.ts` | 占位符替换 + 双输出 HTML + 溯源注释头（这张图怎么来的完整档案）|
+| `assemble.ts` | `assembleFinal()`：缺素材检查 → 文字自适应（实测两遍）→ 组装自包含 HTML → 渲 PNG |
+| `emit-html.ts` | 占位符 → data URL 内联 + 溯源注释头（**只产出 HTML 字符串，不落盘**）|
 
-**入口**：`scripts/step-layout.ts -- <规格.json> final [--no-library]`
+**入口**：聊天链的 `render_design` 工具（`designharness/tools/render-design.ts`）调 `assembleFinal()`。
 
 ## 文字自适应——为什么"渲两遍"
 

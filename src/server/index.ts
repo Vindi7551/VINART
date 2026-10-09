@@ -85,9 +85,9 @@ async function handleLayout(
     const appearance = existsSync(appPath)
       ? JSON.parse(readFileSync(appPath, 'utf8'))
       : {};
-    // ⚠️ html **始终现场生成**,不读 final.linked.html——那个文件是渲染快照,
-    // 可能带着独立编辑器的注入残留;残留脚本与 React 下发的受控编辑器同屏
-    // 会互相吞事件(实测:点选/拖拽全部失效)。spec 才是编辑的数据源。
+    // ⚠️ html **始终现场生成**——不从任何落盘快照读。这样编辑视图永远与
+    // spec + appearance 一致；落盘快照（final.html / final.linked.html）已于
+    // 2026-10-09 删除，那条路整个消失。spec 才是编辑的数据源。
     const { renderDesign } = await import('../workflow/design-sketch/render');
     const { applyAppearance } = await import('../workflow/design-sketch/design-appearance');
     const { loadAppearance, loadPalette, loadTypography } = await import(
@@ -108,7 +108,7 @@ async function handleLayout(
     // <项目>/designs/、贴图在 <项目>/uploads/，固定 base 必 404（可编辑视图图片全空的实锤根因）。
     const projectForAssets = project ?? null;
     const assetRoots = [dir, ...(workDir && projectForAssets ? [join(workDir, projectForAssets)] : []), ...(workDir ? [workDir] : [])];
-    let html = rendered.html.replace(
+    const html = rendered.html.replace(
       /\{\{(\w+)\}\}/g,
       (key: string) => {
         const filename = (rendered.assets as Record<string, string>)[key.slice(2, -2)] ?? key;
@@ -124,16 +124,6 @@ async function handleLayout(
         }
         return filename;
       },
-    );
-    // 防御:即使未来读文件,也剥掉一切历史注入
-    const s0 = html.indexOf('<!--vinart-editor-start-->');
-    if (s0 >= 0) {
-      const e0 = html.indexOf('<!--vinart-editor-end-->', s0);
-      if (e0 >= 0) html = html.slice(0, s0) + html.slice(e0 + '<!--vinart-editor-end-->'.length);
-    }
-    html = html.replace(
-      /<script type="application\/json" id="__vinart-data">[\s\S]*?<\/script>\s*/g,
-      '',
     );
     // 回填 project：客户端保存/重渲时要拿它拼 `?session=&project=`——
     // 没有它就会退回硬编码 test_product/layout（改了不生效的实锤根因）

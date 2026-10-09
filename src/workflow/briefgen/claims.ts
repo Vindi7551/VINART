@@ -14,7 +14,7 @@
  * 若只在条级给一个状态，「可补证的尺寸」会跟「无法证明的材质」压扁成一个，
  * **尺寸图这种刚需素材就从需求清单里漏掉了**。
  *
- * ⚠️ 纯文本对文本，本步不看图——step-01 的识别结果是「可见事实」的唯一来源，
+ * ⚠️ 纯文本对文本，本步不看图——`perceive` 的识别结果是「可见事实」的唯一来源，
  * 保证链路可追溯（否则两份独立视觉判断，出错无法定位）。
  *
  * ⚠️ 语言中性（2026-10-02 翻新）：listing 面向哪个市场是**业务输入**（listingLang），
@@ -178,7 +178,7 @@ function stripFence(s: string): string {
 /**
  * 审计卖点。
  *
- * @param factsJson   step-01 识别结果（parsed 对象的 JSON）
+ * @param factsJson   `perceive` 的识别结果（parsed 对象的 JSON）
  * @param bullets     五点描述原文（listing 语言）
  * @param listingLang listing 市场语言代码（de / en / …）——决定图内文字字段用什么语言
  * @param outJson     完整记录落盘路径；null = 只返回

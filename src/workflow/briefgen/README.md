@@ -8,20 +8,20 @@
 
 ## 四步
 
-| 步 | 模块 | 输入 → 输出 | 单步入口 |
-|---|---|---|---|
-| ① 图像识别 | `perceive.ts` | 产品照 → 可见事实 JSON（含 uncertain，不猜） | `scripts/step-01-perceive.ts` |
-| ② 卖点审计 | `claims.ts` | 事实 + 五点描述 → 要素级证据状态（已有证据/可补证/无法证明） | `scripts/step-02-claims.ts` |
-| ③ 套图规划 | `plan.ts` | 要素清单 → 图位方案 MAIN+PT01…（购买问题归并 + 覆盖验收） | `scripts/step-03-slots.ts` |
-| ④ brief 编写 | `draft.ts` | 规划 + 卖点 + 事实 → **每个图位一份 brief md** | `scripts/step-04-brief.ts` |
+| 步 | 模块 | 输入 → 输出 |
+|---|---|---|
+| ① 图像识别 | `perceive.ts` | 产品照 → 可见事实 JSON（含 uncertain，不猜） |
+| ② 卖点审计 | `claims.ts` | 事实 + 五点描述 → 要素级证据状态（已有证据/可补证/无法证明） |
+| ③ 套图规划 | `plan.ts` | 要素清单 → 图位方案 MAIN+PT01…（购买问题归并 + 覆盖验收） |
+| ④ brief 编写 | `draft.ts` | 规划 + 卖点 + 事实 → **每个图位一份 brief md** |
 
-```bash
-npm run step scripts/step-01-perceive.ts -- <产品照>
-npm run step scripts/step-02-claims.ts
-npm run step scripts/step-03-slots.ts
-npm run step scripts/step-04-brief.ts            # 产全部副图 brief
-npm run step scripts/step-04-brief.ts -- --only PT01
-```
+⚠️ **没有 CLI 入口了**。此前这四个模块各配一个 `npm run step` 薄壳
+（`src/workflow/steps/step-01..04`），2026-10-09 随整层入口一起删除。
+
+现在怎么用：**产品链路已把这四步整体搬进对话**——`amazon-listing` 技能手册
+（内容就源自本目录）把流程与规范直接交给主 AI，主 AI 自己看图/审计/规划/
+写方案，产物留对话内。本目录的四个模块是那套流程的**代码化实现与规范来源**；
+要单跑时从模块导出调用（`perceiveProduct` / `auditClaims` / `planSlots` / `draftBrief`）。
 
 产出落点：中间产物（识别/审计/规划 JSON）在 `test_product/` 根目录；
 **brief 落 `test_product/briefs/<产品名>-<slot>.md`**——与手写 brief 同目录，

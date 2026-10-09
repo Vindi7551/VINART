@@ -9,7 +9,7 @@
  * ⚠️ 本步只做「识别」，不碰卖点和文案。
  * ⚠️ detail 用 'original'——识别小字/雕刻必须全分辨率（low 档省 76% token 但漏字，实测）。
  *
- * 与旧实现（scripts/step-01-perceive.ts）的差异：
+ * 与旧 CLI 实现（已删）的差异：
  * 直接调 gateway.stream（与 order.ts / compile.ts 同模式），
  * 不再走 session/context 封装——视觉请求就是一个带 image_url 内容块的消息。
  */

@@ -195,7 +195,7 @@ function isCovered(element: string, covers: string[]): boolean {
  * 套图规划。
  *
  * @param bullets       五点描述原文（listing 语言）
- * @param claims        step-02 的审计结果
+ * @param claims        `claims` 的审计结果
  * @param workList      必须覆盖的「可补证」需求清单
  * @param listingLang   listing 市场语言代码
  * @param outJson       落盘路径；null = 只返回
@@ -255,7 +255,7 @@ export async function planSlots(
           ts: new Date().toISOString(),
           input: { listingLang },
           usage,
-          // claims 一起落盘——step-04 写 brief 时要按 slot 挑覆盖的要素
+          // claims 一起落盘——`draft` 写 brief 时要按 slot 挑覆盖的要素
           claims: claimsCompact,
           slots,
           coverage_note: parsed?.coverage_note,

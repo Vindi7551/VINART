@@ -1,7 +1,8 @@
 /**
  * 版式受控编辑脚本 —— 注入 PreviewPanel 的 iframe,与 React 宿主 postMessage 通信。
  *
- * 能力(从 scripts/editor.inject.js 的独立版移植):点选/拖拽移动/四角缩放(Shift 等比)/
+ * 能力(早期从一份**独立版**编辑器脚本 `scripts/editor.inject.js` 移植——那份独立版
+ * 连同它注入的 final.linked.html 已于 2026-10-09 删除,本文件是唯一的编辑器实现):点选/拖拽移动/四角缩放(Shift 等比)/
  * 顶柄旋转/双击就地改字。与独立版的区别:**没有面板与导出**——参数编辑在 React 侧,
  * 这里只管「图上直接操作」并把数据变更上报。
  *

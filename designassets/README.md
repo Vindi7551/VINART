@@ -43,13 +43,17 @@ designassets/
 | `designassets/` | **用户认定有价值的可沉淀资产**（参考图复刻的版式、字体、图标、配色、纹理） | 用户 |
 | `test_product/` | **分析链跑出的工作产物**（PT 系列的版式与图） | 管线 |
 
-**入库规则（已实现于 step-layout.ts）**：只有 **spec 本身位于 `designassets/layouts/`**
-的版式，跑 sketch 时才会同步回库。工作版式的版式文件在
-`test_product/layout/<名>/design-sketch.json`，
-跑多少次都不会进资产库。
+**入库规则 = 策展，不是自动倒库**：只有**用户认定有价值**的版式才进
+`designassets/layouts/`。工作版式（`test_product/layout/<名>/`）跑多少次都不进库。
 
 > 2026-09-28 教训：曾把分析链跑出的 8 个 PT 工作版式全部同步进了资产库——
 > 资产库应该是**策展**的结果（用户挑过的），不是管线自动倾倒的。
+
+⚠️ **"入库"目前没有入口**（2026-10-09）。旧机制是「spec 位于库里 → 跑 sketch 顺手
+回写 spec / 草图 / 自动生成的资产卡 README」，实现在 `src/workflow/steps/step-layout.ts`
+——该文件已随整层 CLI 入口删除。而且那机制的条件与当代链路**相反**（版式生在会话
+工作目录，永不在库里），所以它从未真正触发过：**实测库 2 个 / 工作目录 32 个，交集为空**。
+「把定稿版式提升进库」这个动作待做。
 
 ## 版式（layouts）
 
@@ -65,20 +69,21 @@ designassets/
 
 ### 用版式出图
 
-```bash
-npm run step scripts/step-layout.ts -- designassets/layouts/<name>/design-sketch.json sketch gen final
-```
+产品链路的入口是**对话**（`amazon-listing` 技能手册）：主 AI 读版式规格 → 渲草图 →
+生成素材 → 渲成品。对应工具 `render_sketch` / `generate_assets` / `render_design`。
 
-| 阶段 | 做什么 | 产出 |
-|---|---|---|
-| `sketch` | 渲染版式草图（分区虚线框 + 灰条 + 商品抠图） | `sketch.png` + 两种 HTML |
-| `gen` | 把 `[商品参考图] + [草图] + 提示词` 交给生图模型 | `scene*.png` |
-| `final` | AI 图作底 + HTML+CSS 文字层合成 | `final.png` + 两种 HTML |
+⚠️ 旧的 `npm run step scripts/step-layout.ts -- … sketch gen final` CLI 已于
+2026-10-09 随 `src/workflow/steps/` 整层删除——而且它写的 `scripts/` 路径本就失效
+（文件更早就迁走了），照抄命令只会报"找不到文件"。
 
-**输出落到 `test_product/layout/<name>/`，不落回库里**——库只存版式本身
-（规格 + 草图 + 可编辑 HTML），产物（生成素材、成品图）留在工作目录。
+| 阶段 | 工具 | 做什么 | 产出 |
+|---|---|---|---|
+| 草图 | `render_sketch` | 分区虚线框 + 灰条 + 区域标签 | `sketch.png` + `sketch.html` |
+| 素材 | `generate_assets` | 把 `[商品参考图] + [草图] + 提示词` 交给生图模型 | `scene*.png` |
+| 成品 | `render_design` | AI 图作底 + HTML+CSS 文字层合成 | `final.png` |
 
-跑 `sketch` 时会**自动把版式同步回库**（用 `--no-library` 可临时关掉）。
+**产物落到会话工作目录的 `<项目>/designs/<名>/`，不落回库里**——库只存版式本身
+（规格 + 草图 + 资产卡），产物（生成素材、成品图）留在工作目录。
 
 ### 版式与产物的分工
 
@@ -141,11 +146,8 @@ fonts/
 `display-alfaslab` · `legacy-system`（对照，系统字体）
 
 ```bash
-# 用规格里声明的方案
-npm run step scripts/step-layout.ts -- designassets/layouts/<name>/design-sketch.json final
-
-# 临时换方案试（不改规格，输出文件名会带方案名以便并存比较）
-npm run step scripts/step-layout.ts -- designassets/layouts/<name>/design-sketch.json final --font slab-bitter
+# 用哪套方案由版式的 design-appearance.json 的 fontScheme 字段声明
+# 换方案 = 改这个字段 → 重渲（对话里的 render_design，零 API 成本）
 ```
 
 **字体以内联 woff2（data URL）方式嵌入 HTML**——每个约 33KB，

@@ -26,7 +26,9 @@
 
 ## 用法
 
-```bash
-# 用这个版式出图（草图 → 生图 → 成品）
-npm run step scripts/step-layout.ts -- designassets/layouts/banner-topleft/design-sketch.json sketch gen final
-```
+这个版式由产品链路的**对话**流程使用（`amazon-listing` 技能手册）：主 AI 读
+`design-sketch.json` → `render_sketch` 渲草图 → `generate_assets` 出素材 →
+`render_design` 渲成品。
+
+⚠️ 旧的 `npm run step scripts/step-layout.ts -- … sketch gen final` 命令已于
+2026-10-09 删除——而且它写的 `scripts/` 路径本就失效，照抄只会报"找不到文件"。

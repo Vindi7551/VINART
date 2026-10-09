@@ -1,6 +1,6 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════
- * step-05 —— 创意方案 → design-sketch.json（编译器）
+ * 编译器 —— 创意方案 → design-sketch.json
  * ═══════════════════════════════════════════════════════════════════════
  *
  * 这是链 A（内容分析）与链 B（出图）之间那座一直空着的桥。
@@ -8,7 +8,7 @@
  * ## 闭环
  *
  * ```
- *   创意方案（step-04 草案）
+ *   创意方案（brief md / 草案）
  *        ↓ ① 组装提示词（契约 + 草案）
  *   模型产 design-sketch.json
  *        ↓ ② 静态校验（checkSketch）
@@ -33,8 +33,8 @@
  * ## 用法
  *
  * ```bash
- * npm run step scripts/step-05-compile-sketch.ts -- test_product/step-04-design.PT01.json
- * npm run step scripts/step-05-compile-sketch.ts -- <草案> --name PT10 --rounds 5
+ * npm run step src/workflow/design-sketch/compile.ts -- <方案.md>
+ * npm run step src/workflow/design-sketch/compile.ts -- <方案.md> --name PT10 --rounds 5
  * ```
  */
 
@@ -67,7 +67,7 @@ const positional = argv.filter((_a, i) => !used.has(i));
 const DRAFT_PATH = resolve(positional[0] ?? '');
 const MAX_ROUNDS = Number(argVal('--rounds') ?? 5);
 /**
- * 素材订单的**提示词语言**（挂载的 step-order 逻辑透传）。
+ * 素材订单的**提示词语言**（挂载的 assetsgen/order 逻辑透传）。
  * 默认 en——提示词的读者是生图模型（seedream 中英双语原生），
  * 与 listing 的市场语言无关。曾经默认 de 是设计混淆，已修正。
  */
@@ -489,7 +489,7 @@ ${draftText}
 
 async function main(): Promise<void> {
   console.log('\n' + '═'.repeat(70));
-  console.log('step-05 —— 创意方案 → design-sketch.json');
+  console.log('编译器 —— 创意方案 → design-sketch.json');
   console.log('═'.repeat(70));
 
   if (!existsSync(DRAFT_PATH)) {
@@ -608,8 +608,8 @@ async function main(): Promise<void> {
       const notePath = writeInferredReport(OUT_DIR, NAME, inferred);
       console.log(`  ✓ 视觉验收通过${review.raw ? '' : '（验收未返回结论，放行）'}`);
 
-      // ── 素材订单（挂载 step-order 逻辑：产完版式顺手产订单）──
-      // 失败**不回滚版式**——版式本身有效，重跑 scripts/step-order.ts 即可补。
+      // ── 素材订单（挂载 assetsgen/order 逻辑：产完版式顺手产订单）──
+      // 失败**不回滚版式**——版式本身有效，补订单即可（见下面的提示文案）。
       try {
         const { generateOrders } = await import('../assetsgen/order');
         const orders = await generateOrders({
@@ -625,7 +625,7 @@ async function main(): Promise<void> {
       } catch (e) {
         console.error(`  ⚠️ 素材订单生成失败：${(e as Error).message.split('\n')[0]}`);
         console.error(
-          '    版式已产出，不受影响。补跑：npm run step scripts/step-order.ts -- <版式> --brief <方案>',
+          '    版式已产出，不受影响。补订单：重跑本命令，或在对话里让主 AI 按 asset-order.ts 的规范写订单交给 generate_assets（它会落盘 assets.json）。',
         );
       }
 
@@ -672,7 +672,7 @@ async function main(): Promise<void> {
     console.log(`素材订单 —— ${ordersPath}（${orders.length} 条）`);
   } catch (e) {
     console.error(`⚠️ 素材订单生成失败：${(e as Error).message.split('\n')[0]}`);
-    console.error('  补跑：npm run step scripts/step-order.ts -- <版式> --brief <方案>');
+    console.error('  补订单：重跑本命令，或在对话里让主 AI 按 asset-order.ts 的规范写订单交给 generate_assets（落盘 assets.json）。');
   }
 
   console.log(`自报补全 —— ${notePath}（${inferred.length} 项）`);

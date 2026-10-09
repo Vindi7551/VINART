@@ -2,7 +2,7 @@
 
 这个阶段负责**产出素材文件**：位图（调生图模型）与 SVG（素材库 / 模型）。
 它消费 `design-sketch` 阶段的版式规格（`design-sketch.json`），产出的素材由
-final 组装（目前还在 `scripts/step-layout.ts` 的 final 段）回填进成品图。
+final 组装（`compose/assemble.ts` 的 `assembleFinal()`）回填进成品图。
 
 **与 design-sketch 的衔接点只有一个字符串**：节点的 `asset: "hero.png"` =
 订单的 `file: "hero.png"`——直接拿文件名当引用，不做 id 映射。
@@ -18,7 +18,7 @@ final 组装（目前还在 `scripts/step-layout.ts` 的 final 段）回填进�
 | `cutout.ts` | **商品照预处理**：实测主体边界 / 阈值抠白底 / 裁刻字区 / 压参考图 |
 | `README.md` | 本文件 |
 
-**入口**：`scripts/step-layout.ts -- <规格.json> gen`（CLI 壳，实现在本目录）。
+**入口**：聊天链的 `generate_assets` 工具（`designharness/tools/generate-assets.ts`）调本目录的 `generateAssets()`。
 
 ---
 
