@@ -15,6 +15,9 @@ import { createGenerateAssetsTool } from '../tools/generate-assets';
 import { createCompileAppearanceTool } from '../tools/compile-appearance';
 import { createReadSpecTool, createEditSpecTool } from '../tools/edit-spec';
 import { createSetProjectTool } from '../tools/set-project';
+import { createSkillTool } from '../skills/skill-tool';
+// 副作用注册内置 skill（须在 listSkills/getSkill 首次调用前执行）
+import '../skills/bundled/amazon-listing';
 import type { ChatSession } from './types';
 
 const DESIGN_ASSISTANT_PROMPT = `你是 Vinart 的设计助手。Vinart 是一个基于 HTML/CSS 版式语言、
@@ -85,6 +88,7 @@ export function getChatSession(sessionId: string): ChatSession {
       createReadSpecTool({ sessionId }),
       createEditSpecTool({ sessionId }),
       createSetProjectTool({ sessionId }),
+      createSkillTool({ sessionId }),
     ],
   });
   chatSessions.set(sessionId, session);
