@@ -10,6 +10,7 @@ import type { ChatGateway } from '../gateway/index';
 import type { ChatContext } from '../context/index';
 import { foldToolCallDeltas } from '../gateway/util/toolcalls';
 import { buildUserMessage } from '../context/chat-context';
+import { DSML_CALLS_CLOSE, DSML_OPEN, extractDsmlInvocations, stripDsmlBlocks } from '../gateway/util/dsml';
 import type { AgentTool } from '../subagent/types';
 import type { ChatSession, SessionUsage } from './types';
 
@@ -145,10 +146,83 @@ export function createChatSession(config: SessionConfig): ChatSession {
         let totalPrompt = 0;
         let totalCompletion = 0;
 
+        /** 单个工具调用执行（正常路径与 DSML 救场路径共用）：含记账事件与 fail-loud 回喂 */
+        const runToolCall = async (name: string, argsJson: string): Promise<string> => {
+          const tool = tools.find((t) => t.name === name);
+          const t0 = Date.now();
+          let resultContent: string;
+          if (!tool) {
+            resultContent = `ERROR: 未知工具 "${name}"。可用工具：${tools.map((t) => t.name).join(', ')}`;
+          } else {
+            try {
+              const args = JSON.parse(argsJson || '{}') as Record<string, unknown>;
+              // 主 AI 的工具自管路径（如 spawn 内部取 workDir），dir 仅满足接口形状；
+              // onEvent 把工具的进度事件上抛给 send 的调用方（SSE → 前端卡片）
+              const result = await tool.execute(args, {
+                dir: process.cwd(),
+                signal: controller.signal,
+                onEvent: opts?.onEvent,
+              });
+              resultContent = (result.isError ? 'ERROR: ' : '') + result.content;
+            } catch (e) {
+              resultContent = `ERROR: 工具调用失败：${e instanceof Error ? e.message : String(e)}`;
+            }
+          }
+          // 中间轮记账：上抛给调用方落转录 + SSE 实时推——否则刷新会话后
+          // 「AI 调过工具」这件事完全蒸发。中间轮照旧不进模型上下文（大 JSON 烧 token），
+          // 这里只是审计摘要。
+          opts?.onEvent?.({
+            kind: 'tool-call',
+            name,
+            args: clip(argsJson, 400),
+            ok: !resultContent.startsWith('ERROR: '),
+            ms: Date.now() - t0,
+            result: clip(resultContent, 600),
+          });
+          return resultContent;
+        };
+
         for (let round = 0; ; round++) {
-          let roundContent = '';
+          // rawRound = 原始输出（供 DSML 解析）；filteredRound = 过滤后正文（供显示/历史）
+          let rawRound = '';
+          let filteredRound = '';
           const deltas: ToolCallDelta[] = [];
           let roundUsage: TokenUsage | null = null;
+
+          // ── DSML 泄漏过滤（流式状态机）──
+          // DeepSeek 偶发把内部工具调用语法（<｜｜DSML｜｜ …>）直接写进 content——
+          // 原样透传会显示给用户、进历史后模型还会模仿（自我强化）。
+          // 状态机：遇 DSML 开标记起吞，遇 calls 闭标记止吞；跨 chunk 用滚动缓冲。
+          let dsmlBuf = '';
+          let inDsml = false;
+          const rawContent = (chunk: string): string => {
+            dsmlBuf += chunk;
+            let out = '';
+            for (;;) {
+              if (!inDsml) {
+                const i = dsmlBuf.indexOf(DSML_OPEN);
+                if (i < 0) {
+                  // 尾部留出「半个开标记」的缓冲，防止标记跨 chunk 被漏放行
+                  const keep = Math.min(dsmlBuf.length, DSML_OPEN.length - 1);
+                  out += dsmlBuf.slice(0, dsmlBuf.length - keep);
+                  dsmlBuf = dsmlBuf.slice(dsmlBuf.length - keep);
+                  break;
+                }
+                out += dsmlBuf.slice(0, i);
+                dsmlBuf = dsmlBuf.slice(i + DSML_OPEN.length);
+                inDsml = true;
+              } else {
+                const j = dsmlBuf.indexOf(DSML_CALLS_CLOSE);
+                if (j < 0) {
+                  dsmlBuf = ''; // 仍在块内：整段吞掉
+                  break;
+                }
+                dsmlBuf = dsmlBuf.slice(j + DSML_CALLS_CLOSE.length);
+                inDsml = false;
+              }
+            }
+            return out;
+          };
 
           // 到达轮数上限的最后一轮不下发 tools——模型只能文本收尾
           const withTools = tools.length > 0 && round < MAX_TOOL_ROUNDS;
@@ -160,16 +234,26 @@ export function createChatSession(config: SessionConfig): ChatSession {
             // ── 中止检查 ──
             if (aborted || controller.signal.aborted) break;
 
-            roundContent += chunk.content;
+            rawRound += chunk.content;
+            const visible = rawContent(chunk.content);
+            filteredRound += visible;
             if (chunk.toolCallDeltas?.length) deltas.push(...chunk.toolCallDeltas);
             if (chunk.usage) {
-              roundUsage = chunk.usage;
-            } else {
-              yield chunk; // 中间正文照常流式透传（usage chunk 是记账用的，不透传）
+              roundUsage = chunk.usage; // usage chunk 是记账用的，不透传
+            } else if (visible) {
+              // 过滤后的正文照常流式透传（DSML 块被吞，用户看不到）
+              yield { ...chunk, content: visible };
             }
           }
+          // 流结束冲刷：不在 DSML 块内的缓冲正文放出（否则句尾会滞留在过滤缓冲里）
+          if (!inDsml && dsmlBuf) {
+            filteredRound += dsmlBuf;
+            yield { content: dsmlBuf };
+          }
+          dsmlBuf = '';
+          inDsml = false;
 
-          fullContent += roundContent;
+          fullContent += stripDsmlBlocks(filteredRound);
           if (roundUsage) {
             totalPrompt += roundUsage.promptTokens;
             totalCompletion += roundUsage.completionTokens;
@@ -178,51 +262,47 @@ export function createChatSession(config: SessionConfig): ChatSession {
           if (aborted || controller.signal.aborted) break;
 
           const calls = foldToolCallDeltas(deltas);
-          if (calls.length === 0) break; // 自然收尾：纯文本回复
+          if (calls.length === 0) {
+            // ── DSML 泄漏救场 ──
+            // DeepSeek 偶发把内部工具调用语法直接写进 content（不走 tool_calls 通道）。
+            // 解析泄漏的 invoke 块转成结构化调用照常执行——泄漏被转回正常工作流；
+            // DSML 文本已从 fullContent/流式输出剥除，不会进历史（防自我强化）。
+            const dsmlCalls = extractDsmlInvocations(rawRound);
+            if (!dsmlCalls || round + 1 >= MAX_TOOL_ROUNDS) break; // 无泄漏或轮数尽 → 自然收尾
+            const dsmlStructured = dsmlCalls.map((inv, i) => ({
+              id: `dsml_${round}_${i}`,
+              type: 'function' as const,
+              function: { name: inv.name, arguments: inv.arguments },
+            }));
+            requestMessages.push({
+              role: 'assistant',
+              content: stripDsmlBlocks(filteredRound) || null,
+              tool_calls: dsmlStructured,
+            });
+            for (const [i, inv] of dsmlCalls.entries()) {
+              if (controller.signal.aborted) break;
+              const resultContent = await runToolCall(inv.name, inv.arguments);
+              requestMessages.push({
+                role: 'tool',
+                tool_call_id: `dsml_${round}_${i}`,
+                content: resultContent,
+              });
+            }
+            if (controller.signal.aborted) break;
+            continue; // 带着救回的工具结果续流
+          }
 
           // assistant 消息回喂：正文与 tool_calls 同条消息共存（协议要求），丢正文破坏协议
           requestMessages.push({
             role: 'assistant',
-            content: roundContent || null,
+            content: stripDsmlBlocks(filteredRound) || null,
             tool_calls: calls,
           });
 
           // 逐个执行工具（顺序；未知工具 / 参数损坏 / 异常一律 ERROR 回喂，fail-loud）
           for (const call of calls) {
             if (controller.signal.aborted) break;
-
-            const tool = tools.find((t) => t.name === call.function.name);
-            const t0 = Date.now();
-            let resultContent: string;
-            if (!tool) {
-              resultContent = `ERROR: 未知工具 "${call.function.name}"。可用工具：${tools.map((t) => t.name).join(', ')}`;
-            } else {
-              try {
-                const args = JSON.parse(call.function.arguments || '{}') as Record<string, unknown>;
-                // 主 AI 的工具自管路径（如 spawn 内部取 workDir），dir 仅满足接口形状；
-                // onEvent 把工具的进度事件上抛给 send 的调用方（SSE → 前端卡片）
-                const result = await tool.execute(args, {
-                  dir: process.cwd(),
-                  signal: controller.signal,
-                  onEvent: opts?.onEvent,
-                });
-                resultContent = (result.isError ? 'ERROR: ' : '') + result.content;
-              } catch (e) {
-                resultContent = `ERROR: 工具调用失败：${e instanceof Error ? e.message : String(e)}`;
-              }
-            }
-            // 中间轮记账：上抛给调用方落转录 + SSE 实时推——否则刷新会话后
-            // 「AI 调过工具」这件事完全蒸发（委派有 agent-spawn/result 账本兜底，
-            // render/generate/edit 此前没有）。中间轮照旧不进模型上下文
-            // （大 JSON 烧 token），这里只是审计摘要。
-            opts?.onEvent?.({
-              kind: 'tool-call',
-              name: call.function.name,
-              args: clip(call.function.arguments, 400),
-              ok: !resultContent.startsWith('ERROR: '),
-              ms: Date.now() - t0,
-              result: clip(resultContent, 600),
-            });
+            const resultContent = await runToolCall(call.function.name, call.function.arguments);
             requestMessages.push({ role: 'tool', tool_call_id: call.id, content: resultContent });
           }
           if (controller.signal.aborted) break;
