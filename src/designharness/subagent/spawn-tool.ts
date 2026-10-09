@@ -101,6 +101,15 @@ export function createSpawnTool(config: SpawnToolConfig): AgentTool {
           isError: true,
         };
       }
+      // 单轮 jobs 上限：主 AI 单轮输出有 maxTokens 上限（含思考），一次写 7 个
+      // 完整 brief 的参数 JSON 会被截断（实测 Unterminated string）——拆成
+      // 多次调用，每次 ≤3 个。硬校验比手册提醒可靠。
+      if (jobsIn.length > 3) {
+        return {
+          content: `ERROR: 一次派了 ${jobsIn.length} 个 job——单次调用最多 3 个（brief 都要完整写进参数，批次太大参数会被输出上限截断）。把 jobs 拆成多次调用，每次 ≤3 个。`,
+          isError: true,
+        };
+      }
       const existing = names.filter((n) => existsSync(join(dir, n)));
       if (existing.length > 0) {
         return {
