@@ -599,23 +599,24 @@ async function buildLayoutNote(sessionId: string, layoutName?: string | null): P
 
 function handleArtifacts(res: ServerResponse, sessionId?: string | null) {
   void (async () => {
-    // 无 session → legacy 根（旧习惯保留）；有 session → 聚合工作目录下
-    // **所有注册项目**的 designs（gallery 按项目分组），旧数据
-    // <workDir>/designs（未设项目时代的产物）作为一组兜底。
+    // 无 session → legacy 根（旧习惯保留）；有 session → **只列当前项目**的
+    // designs（gallery 跟随项目走，切项目即切清单——不聚合其他项目）；
+    // 未设置项目 → 旧约定 <workDir>/designs（历史数据兼容）。
     if (!sessionId) {
       const items = scanArtifactRoot(resolve('test_product/layout'), null, 'legacy', 'test_product/layout');
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       return res.end(JSON.stringify(items));
     }
     const workDir = await transcript.getWorkDir(sessionId);
-    const groups: { layoutsRoot: string; project: string | null }[] = [];
-    for (const p of listProjects(workDir)) {
-      const root = join(workDir, p.name, 'designs');
-      if (existsSync(root)) groups.push({ layoutsRoot: root, project: p.name });
+    const project = await transcript.getProject(sessionId);
+    const roots: { layoutsRoot: string; project: string | null }[] = [];
+    if (project) {
+      const root = join(workDir, project, 'designs');
+      if (existsSync(root)) roots.push({ layoutsRoot: root, project });
     }
     const legacyRoot = join(workDir, 'designs');
-    if (existsSync(legacyRoot)) groups.push({ layoutsRoot: legacyRoot, project: null });
-    const items = groups.flatMap((g) =>
+    if (!project && existsSync(legacyRoot)) roots.push({ layoutsRoot: legacyRoot, project: null });
+    const items = roots.flatMap((g) =>
       scanArtifactRoot(g.layoutsRoot, g.project, 'session', `@session/${sessionId}`),
     );
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
