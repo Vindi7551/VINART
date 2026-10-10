@@ -1,63 +1,58 @@
 import { useMemo, useState } from 'react';
-import { Button, Dialog, Field, TextInput } from './primitives';
 import type { SessionItem } from './types';
 
 /**
- * 左侧对话列表 —— Codex 式：两层折叠分组（工作目录 → 项目）+ 会话项。
+ * 左侧对话列表 —— **一级分组：一个工作目录就是一个项目**。
  *
+ * - 组 = 工作目录（分组键 = session.home，老数据回退 workDir）；组名 = 目录末段
  * - 组头点击折叠/展开；组序按组内最新活动（新→旧）
  * - 会话项 = 首条消息前 20 字（title），当前项高亮，hover 出 🗑
- * - 组头 hover 出 ✎：
- *   · 目录组头 ✎ = 在该工作目录下**新建项目**（行内输入目录名/展示名，惰性注册）
- *   · 项目组头 ✎ = 在该项目下**新建会话**（惰性：环境预填 + 清空到新对话态，发消息才建）
+ * - 组头 ✎ = 在该工作目录下**新建对话**（惰性：预填环境 + 清空到新对话态，发消息才建）
  * - 删除只清对话记录与账本，产物保留（confirm 文案在 App 的 onDelete 里）
  * - 收起态由外层控制（width→0 + .main 上的贴边开关按钮，镜像右栏那套）
+ *
+ * 2026-10-10：原来是「工作目录 → 项目」两层，项目层已整体拆除
+ * （project.json 索引、set_project 工具、会话 meta 的 project 字段全删）。
  */
-interface NewSessionEnv {
-  workDir?: string;
-  project?: string;
-  projectDisplayName?: string;
-}
-
 interface SessionListPanelProps {
   sessions: SessionItem[];
   activeSessionId: string | null;
   collapsed: boolean;
   /** 栏宽(px)——由 App 的拖拽状态驱动 */
   width: number;
-  /** 当前环境的工作目录——projects 清单所属目录；清单里还没有会话的项目补成空组头 */
+  /** 当前待用环境的工作目录——清单里还没有会话的目录补成空组头 */
   envWorkDir: string | null;
-  /** 项目清单（当前环境的；会话项 🗑 同款显隐） */
-  projects: Array<{ name: string; displayName: string }>;
   onSwitch: (id: string) => void;
   onDelete: (id: string, title: string) => void;
-  /** 新对话：无参 = 沿用当前环境；带参 = 预填该组环境（组头 ✎） */
-  onNew: (env?: NewSessionEnv) => void;
-  /** 目录组头 ✎：在工作目录下新建项目（App 侧 append 清单 + 预填 + 新对话态） */
-  onNewProject: (workDir: string, name: string, displayName?: string) => void;
+  /** 新对话：无参 = 沿用当前环境；带参 = 预填该目录（组头 ✎） */
+  onNew: (env?: { workDir?: string }) => void;
   /** 右缘拖拽手柄 mousedown（App 侧接管 mousemove 调宽） */
   onResizeStart: (e: React.MouseEvent) => void;
 }
 
 const UNCATEGORIZED_DIR = '（未指定目录）';
-const UNCATEGORIZED_PROJ = '未分组';
 
 /** 路径末段（Windows/Unix 通吃），组头只显示 basename */
 function basename(p: string): string {
   return p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 }
 
-interface ProjGroup {
+/**
+ * 分组键归一：Windows 上 `D:/a/b` 与 `D:\a\b`、大小写不同是**同一个目录**。
+ * 不归一的话前端缓存的待用环境（用户手输时可能写正斜杠）会和会话实际的
+ * home（服务端 resolve 后是反斜杠）分到两个组头——实测同屏出现两个 test_product。
+ */
+function normKey(p: string): string {
+  return p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+interface DirGroup {
+  /** 归一后的分组键（仅用于比较/折叠状态） */
   key: string;
-  /** project name（未分组 = UNCATEGORIZED_PROJ） */
-  name: string;
+  /** 原始路径（tooltip 与「在此目录下新建对话」用真路径） */
+  raw: string;
   label: string;
   items: SessionItem[];
-}
-interface DirGroup {
-  key: string;
-  label: string;
-  projects: ProjGroup[];
   latest: string;
 }
 
@@ -77,14 +72,12 @@ export function SessionListPanel({
   collapsed,
   width,
   envWorkDir,
-  projects,
   onSwitch,
   onDelete,
   onNew,
-  onNewProject,
   onResizeStart,
 }: SessionListPanelProps) {
-  // 折叠状态记在组件内（key = dir||project）——切会话不重置
+  // 折叠状态记在组件内（key = 目录）——切会话不重置
   const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(new Set());
   const toggleGroup = (key: string) => {
     setCollapsedKeys((prev) => {
@@ -94,77 +87,39 @@ export function SessionListPanel({
       return next;
     });
   };
-  // 目录组头 ✎ → 弹窗新建项目（modal 而非行内输入：不挤占列表）
-  const [projModal, setProjModal] = useState<{ dirKey: string; dirLabel: string } | null>(null);
-  const [projNameDraft, setProjNameDraft] = useState('');
-  const [projDisplayDraft, setProjDisplayDraft] = useState('');
-  const closeProjModal = () => {
-    setProjModal(null);
-    setProjNameDraft('');
-    setProjDisplayDraft('');
-  };
-  const submitNewProject = () => {
-    if (!projModal) return;
-    const name = projNameDraft.trim();
-    if (!name) return;
-    onNewProject(projModal.dirKey, name, projDisplayDraft.trim() || undefined);
-    closeProjModal();
-  };
 
   const dirGroups = useMemo<DirGroup[]>(() => {
-    const byDir = new Map<string, Map<string, SessionItem[]>>();
+    const byDir = new Map<string, DirGroup>();
     for (const s of sessions) {
-      const dirKey = s.workDir ?? UNCATEGORIZED_DIR;
-      const projKey = s.project ?? UNCATEGORIZED_PROJ;
-      let byProj = byDir.get(dirKey);
-      if (!byProj) byProj = new Map();
-      if (!byProj.has(projKey)) byProj.set(projKey, []);
-      byProj.get(projKey)!.push(s);
-      byDir.set(dirKey, byProj);
-    }
-    const groups: DirGroup[] = [];
-    for (const [dirKey, byProj] of byDir) {
-      const projects: ProjGroup[] = [];
-      let latest = '';
-      for (const [projKey, items] of byProj) {
-        items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-        latest = items[0]?.updatedAt ?? latest;
-        const displayName =
-          (projKey !== UNCATEGORIZED_PROJ && (items[0]?.projectDisplayName || projKey)) || projKey;
-        projects.push({ key: `${dirKey}||${projKey}`, name: projKey, label: displayName, items });
+      // 分组键 = 数据实际落点（home）——老数据（还没迁移）回退它自己记的 workDir
+      const raw = s.home ?? s.workDir ?? UNCATEGORIZED_DIR;
+      const key = raw === UNCATEGORIZED_DIR ? raw : normKey(raw);
+      let g = byDir.get(key);
+      if (!g) {
+        g = { key, raw, label: raw === UNCATEGORIZED_DIR ? raw : basename(raw), items: [], latest: '' };
+        byDir.set(key, g);
       }
-      projects.sort((a, b) => b.items[0]!.updatedAt.localeCompare(a.items[0]!.updatedAt));
-      groups.push({
-        key: dirKey,
-        label: dirKey === UNCATEGORIZED_DIR ? dirKey : basename(dirKey),
-        projects,
-        latest,
-      });
+      g.items.push(s);
+    }
+    const groups = [...byDir.values()];
+    for (const g of groups) {
+      g.items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      g.latest = g.items[0]?.updatedAt ?? '';
     }
     groups.sort((a, b) => b.latest.localeCompare(a.latest));
-    // 新建项目立即可见：当前环境目录下、清单里有但还没有会话的项目 → 补成空组头
-    // （组注册在发消息后才落盘，这里纯 UI 补全——刷新后没会话的组随清单在/不在）
-    if (envWorkDir) {
-      let dirG = groups.find((g) => g.key === envWorkDir);
-      if (!dirG) {
-        dirG = { key: envWorkDir, label: basename(envWorkDir), projects: [], latest: '' };
-        groups.push(dirG);
-      }
-      for (const p of projects) {
-        if (!dirG.projects.some((pg) => pg.name === p.name)) {
-          dirG.projects.push({
-            key: `${envWorkDir}||${p.name}`,
-            name: p.name,
-            label: p.displayName,
-            items: [],
-          });
-        }
-      }
-      // 空组（新项目无会话）沉底——items[0] 可能是 undefined，不能参与 updatedAt 比较
-      dirG.projects.sort((a, b) => (b.items[0]?.updatedAt ?? '').localeCompare(a.items[0]?.updatedAt ?? ''));
+    // 已选目录但还没有会话 → 补一个空组头（「＋ 新对话」的落点看得见）。
+    // 归一后比较——用户手输的正斜杠路径不能长出第二个同名组头。
+    if (envWorkDir && !byDir.has(normKey(envWorkDir))) {
+      groups.unshift({
+        key: normKey(envWorkDir),
+        raw: envWorkDir,
+        label: basename(envWorkDir),
+        items: [],
+        latest: '',
+      });
     }
     return groups;
-  }, [sessions, projects, envWorkDir]);
+  }, [sessions, envWorkDir]);
 
   if (collapsed) return null;
 
@@ -175,7 +130,7 @@ export function SessionListPanel({
         <div className="left-resizer" onMouseDown={onResizeStart} title="拖拽调整宽度" />
       )}
       <div className="session-list-head">
-        <button className="session-new-btn" onClick={() => onNew()} title="新建对话（沿用当前环境）">
+        <button className="session-new-btn" onClick={() => onNew()} title="新建对话（沿用当前目录）">
           ＋ 新对话
         </button>
       </div>
@@ -183,9 +138,10 @@ export function SessionListPanel({
         {dirGroups.length === 0 && <div className="session-list-empty">还没有会话</div>}
         {dirGroups.map((dirG) => {
           const dirCollapsed = collapsedKeys.has(dirG.key);
+          const uncat = dirG.raw === UNCATEGORIZED_DIR;
           return (
             <div key={dirG.key} className="session-group">
-              {/* 目录组头：点击折叠；hover ✎ = 弹窗新建项目。
+              {/* 目录组头：点击折叠；hover ✎ = 在此目录下新建对话。
                   组头用 div+role 而非 button——里面要嵌真 button（HTML 禁止 button 嵌 button） */}
               <div
                 className={`session-group-head dir${dirCollapsed ? ' closed' : ''}`}
@@ -195,20 +151,18 @@ export function SessionListPanel({
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') toggleGroup(dirG.key);
                 }}
-                title={dirG.key === UNCATEGORIZED_DIR ? dirG.key : `工作目录:${dirG.key}`}
+                title={uncat ? dirG.raw : `工作目录:${dirG.raw}（一个工作目录就是一个项目）`}
               >
                 <span className="group-mark">▸</span>
                 <span className="group-label">{dirG.label}</span>
-                <span className="group-count">{dirG.projects.reduce((n, p) => n + p.items.length, 0)}</span>
-                {dirG.key !== UNCATEGORIZED_DIR && (
+                <span className="group-count">{dirG.items.length}</span>
+                {!uncat && (
                   <button
                     className="group-new"
-                    title="在此工作目录下新建项目"
+                    title="在此工作目录下新建对话"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setProjModal({ dirKey: dirG.key, dirLabel: dirG.label });
-                      setProjNameDraft('');
-                      setProjDisplayDraft('');
+                      onNew({ workDir: dirG.raw });
                     }}
                   >
                     <PencilIcon />
@@ -216,107 +170,29 @@ export function SessionListPanel({
                 )}
               </div>
               {!dirCollapsed &&
-                dirG.projects.map((projG) => {
-                  const projCollapsed = collapsedKeys.has(projG.key);
-                  const uncat = projG.name === UNCATEGORIZED_PROJ;
-                  return (
-                    <div key={projG.key} className="session-subgroup">
-                      {dirG.projects.length > 1 && (
-                        <div
-                          className={`session-group-head proj${projCollapsed ? ' closed' : ''}`}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => toggleGroup(projG.key)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') toggleGroup(projG.key);
-                          }}
-                        >
-                          <span className="group-mark">▸</span>
-                          <span className="group-label">{projG.label}</span>
-                          <span className="group-count">{projG.items.length}</span>
-                          {!uncat && (
-                            <button
-                              className="group-new"
-                              title="在此项目下新建会话"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onNew({ workDir: dirG.key, project: projG.name, projectDisplayName: projG.label });
-                              }}
-                            >
-                              <PencilIcon />
-                            </button>
-                          )}
-                        </div>
-                      )}
-                      {!projCollapsed &&
-                        projG.items.map((s) => (
-                          <div
-                            key={s.id}
-                            className={`session-item${s.id === activeSessionId ? ' active' : ''}`}
-                            onClick={() => onSwitch(s.id)}
-                          >
-                            <span className="session-item-title">{s.title}</span>
-                            <button
-                              className="session-item-del"
-                              title="删除会话（产物保留）"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onDelete(s.id, s.title);
-                              }}
-                            >
-                              🗑
-                            </button>
-                          </div>
-                        ))}
-                    </div>
-                  );
-                })}
+                dirG.items.map((s) => (
+                  <div
+                    key={s.id}
+                    className={`session-item${s.id === activeSessionId ? ' active' : ''}`}
+                    onClick={() => onSwitch(s.id)}
+                  >
+                    <span className="session-item-title">{s.title}</span>
+                    <button
+                      className="session-item-del"
+                      title="删除会话（产物保留）"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(s.id, s.title);
+                      }}
+                    >
+                      🗑
+                    </button>
+                  </div>
+                ))}
             </div>
           );
         })}
       </div>
-      {/* 新建项目弹窗（Dialog 基元，与目录浏览器共用遮罩/卡片） */}
-      {projModal && (
-        <Dialog
-          open
-          onClose={closeProjModal}
-          title="新建项目"
-          width={360}
-          subtitle={<span>工作目录：{projModal.dirLabel}</span>}
-          footer={
-            <>
-              <Button onClick={closeProjModal}>取消</Button>
-              <Button variant="primary" disabled={!projNameDraft.trim()} onClick={submitNewProject}>
-                创建项目
-              </Button>
-            </>
-          }
-        >
-          <Field>
-            <TextInput
-              autoFocus
-              placeholder="目录名（如 tshirt-black）"
-              value={projNameDraft}
-              onChange={(e) => setProjNameDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && projNameDraft.trim()) submitNewProject();
-                if (e.key === 'Escape') closeProjModal();
-              }}
-            />
-          </Field>
-          <Field>
-            <TextInput
-              placeholder="展示名（可选，如 黑T恤）"
-              value={projDisplayDraft}
-              onChange={(e) => setProjDisplayDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && projNameDraft.trim()) submitNewProject();
-                if (e.key === 'Escape') closeProjModal();
-              }}
-            />
-          </Field>
-        </Dialog>
-      )}
     </aside>
   );
 }

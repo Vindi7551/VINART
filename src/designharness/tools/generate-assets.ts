@@ -14,7 +14,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { relative, resolve } from 'node:path';
+import { basename, relative, resolve } from 'node:path';
 import { checkSketch } from '../../workflow/design-sketch/validate';
 import { getSharedRenderer } from '../../workflow/design-sketch/runtime';
 import { generateAssets, type AssetJobResult } from '../../workflow/assetsgen/image';
@@ -22,8 +22,6 @@ import type { AssetOrders } from '../../workflow/assetsgen/asset-order';
 import type { DesignSketch } from '../../workflow/design-sketch/design-sketch';
 import type { AgentTool } from '../subagent/types';
 import { resolveDesignDir } from './project-paths';
-import { getProject } from '../session/transcript';
-import { listProjects } from '../session/projects';
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -123,10 +121,8 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
       mkdirSync(dir, { recursive: true });
       writeFileSync(resolve(dir, 'assets.json'), JSON.stringify(orders, null, 2) + '\n', 'utf8');
 
-      // productPath 多根回退：主 AI 常写 uploads/chat-x.jpg（相对工作目录），
-      // 而贴图落项目 uploads/（<工作目录>/<项目>/uploads/）——两个根按序试
-      const project = await getProject(config.sessionId);
-      const productRoots = [workDir, ...(project ? [resolve(workDir, project)] : [])];
+      // productPath 按工作目录相对解析（贴图落 <workDir>/uploads/）
+      const productRoots = [workDir];
       const productArg = typeof args.productPath === 'string' && args.productPath.trim()
         ? productRoots.map((r) => resolve(r, args.productPath as string)).find((p) => existsSync(p)) ?? null
         : null;
@@ -138,19 +134,14 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
       }
 
       // 品牌词消毒：生成提示词里写品牌名（如 Gogokids）会触发内容审核拦截（实测）。
-      // 品牌词唯一真源 = 项目的 displayName/name（英文词提取）；替换为中性词。
-      // 用户看到的确认清单仍是原文（清单在第一段）。
+      // 品牌词唯一真源 = **工作目录名**（一个工作目录就是一个项目，目录名通常就是
+      // 产品/listing 的英文标识）；替换为中性词。用户看到的确认清单仍是原文（清单在第一段）。
       const brandWords = (() => {
-        if (!project) return [];
         try {
-          const entry = listProjects(workDir).find((p) => p.name === project);
-          if (!entry) return [];
           const words = new Set<string>();
           const GENERIC = new Set(['test', 'demo', 'e2e', 'probe', 'the', 'and']);
-          for (const src of [entry.displayName ?? '', entry.name]) {
-            for (const w of src.match(/[A-Za-z][A-Za-z0-9]{2,}/g) ?? []) {
-              if (!GENERIC.has(w.toLowerCase())) words.add(w);
-            }
+          for (const w of basename(workDir).match(/[A-Za-z][A-Za-z0-9]{2,}/g) ?? []) {
+            if (!GENERIC.has(w.toLowerCase())) words.add(w);
           }
           return [...words];
         } catch {

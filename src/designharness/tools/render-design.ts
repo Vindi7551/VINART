@@ -23,7 +23,6 @@ import { assembleFinal } from '../../workflow/compose/assemble';
 import type { AssetOrders } from '../../workflow/assetsgen/asset-order';
 import type { AgentTool } from '../subagent/types';
 import { resolveDesignDir } from './project-paths';
-import { getProject } from '../session/transcript';
 
 /** 版式名 = 目录名，与 validate.ts 对 spec.name 的规则一致（防路径注入） */
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -130,11 +129,9 @@ export function createRenderDesignTool(config: { sessionId: string }): AgentTool
       const renderer = await getSharedRenderer();
       let result;
       try {
-        // 素材回退根：贴图落 <工作目录>/<项目>/uploads/，而 spec 常以
-        // uploads/chat-x.jpg（相对项目根）被引用——版式目录找不到就去项目根找。
-        // workDir 本身也兜底（覆盖 workDir 相对引用的历史写法）。
-        const project = await getProject(config.sessionId);
-        const fallbackRoots = [workDir, ...(project ? [resolve(workDir, project)] : [])];
+        // 素材回退根：贴图落 <工作目录>/uploads/，spec 常以 uploads/chat-x.jpg
+        // （相对工作目录）被引用——版式目录找不到就去工作目录找。
+        const fallbackRoots = [workDir];
         result = await assembleFinal({
           spec: painted,
           orders,

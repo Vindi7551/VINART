@@ -14,7 +14,6 @@ import { createRenderDesignTool } from '../tools/render-design';
 import { createGenerateAssetsTool } from '../tools/generate-assets';
 import { createCompileAppearanceTool } from '../tools/compile-appearance';
 import { createReadSpecTool, createEditSpecTool } from '../tools/edit-spec';
-import { createSetProjectTool } from '../tools/set-project';
 import { createSkillTool } from '../skills/skill-tool';
 // 副作用注册内置 skill（须在 listSkills/getSkill 首次调用前执行）
 import '../skills/bundled/amazon-listing';
@@ -27,10 +26,9 @@ rect 为 0–1 相对画布坐标)与 design-appearance.json(颜色/字体/透�
 用户会在对话里要求调整设计或询问产品信息。回答要简洁、直接、可执行;涉及修改时说明
 改的是哪个版式的哪些元素,以及是否需要重渲才能看到效果。
 
-产物按**项目**分组:工作目录/<项目名>/designs/…、briefs/、uploads/。用户提到新产品
-或要换产品时,用 set_project 建好并切换(name 用英文连字符,displayName 给中文名);
-之后所有版式/素材/成品都落当前项目,直到再次切换。用户没提项目且会话未设置时,
-spawn_design_agents 会拒绝——先问清项目叫什么再 set_project。
+产物按**工作目录**组织:一个工作目录就是一个项目,所有版式/素材/成品都落
+<工作目录>/designs/…、uploads/、briefs/。目录在会话创建时就绑定、不可更改
+(用户要换目录 = 新开会话),所以不需要也不存在「切换项目」这回事——直接干活。
 
 你有一个委派工具 spawn_design_agents:当用户要你「出一张/一套版式草案」时(而不是问答
 或改细节),用它委派版式设计子 agent——每个子 agent 独立完成 spec 编写、静态校验、草图
@@ -87,7 +85,6 @@ export function getChatSession(sessionId: string): ChatSession {
       createCompileAppearanceTool({ sessionId }),
       createReadSpecTool({ sessionId }),
       createEditSpecTool({ sessionId }),
-      createSetProjectTool({ sessionId }),
       createSkillTool({ sessionId }),
     ],
   });

@@ -10,8 +10,8 @@
  *   目录、记账全部由这里固化组装——主 AI 写业务内容，代码管执行
  * - **brief 必须自包含**（CC/DSH 共识：上下文零继承是默认）：
  *   子 agent 看不到主 AI 的聊天记录，画面意图与逐字文案都要写进 brief
- * - 产物落 `<workDir>/<项目>/designs/<name>/`（项目 = 会话当前项目，
- *   set_project 设置；未设置 fail-loud）——与 artifacts / layout 端点同根
+ * - 产物落 `<workDir>/designs/<name>/`（workDir = 会话绑定的工作目录，
+ *   一个工作目录就是一个项目）——与 artifacts / layout 端点同根
  * - 撞名防护（2026-10-08）：批内 name 重复整批拒绝；撞已有版式名拒绝——
  *   spawn 语义是「出新草案」，改现有版式走 edit_spec，重做请换新名
  * - 记账：runAgentBatch 内部落 agent-spawn / agent-result 事件对到父会话
@@ -20,8 +20,7 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { getWorkDir, getProject } from '../session/transcript';
-import { NO_PROJECT_HINT } from '../tools/project-paths';
+import { getWorkDir } from '../session/transcript';
 import { getChatGateway } from '../../config';
 import { runAgentBatch } from './runner';
 import { designAgentSystem } from './design-system';
@@ -85,11 +84,7 @@ export function createSpawnTool(config: SpawnToolConfig): AgentTool {
       }
 
       const workDir = await getWorkDir(config.sessionId);
-      const project = await getProject(config.sessionId);
-      if (!project) {
-        return { content: `ERROR: ${NO_PROJECT_HINT}`, isError: true };
-      }
-      const dir = join(workDir, project, 'designs');
+      const dir = join(workDir, 'designs');
 
       // 撞名防护（fail-loud，批次未启动零成本）：批内重名 = 两个子 agent
       // 并发写同一目录互相覆盖；撞已有版式 = 静默覆盖旧版。都整批拒绝。
@@ -113,7 +108,7 @@ export function createSpawnTool(config: SpawnToolConfig): AgentTool {
       const existing = names.filter((n) => existsSync(join(dir, n)));
       if (existing.length > 0) {
         return {
-          content: `ERROR: 以下版式名在项目「${project}」下已存在：${existing.join('、')}。` +
+          content: `ERROR: 以下版式名在工作目录下已存在：${existing.join('、')}。` +
             'spawn 是出新草案，不会覆盖：重做一版请换新名（如 ' +
             existing.map((n) => `${n}-v2`).join('、') +
             '）；只是要改现有版式的话用 edit_spec 直接改（不委派，零成本）。',

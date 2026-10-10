@@ -163,17 +163,6 @@ html, body, #root {
   padding-bottom: 4px;
 }
 
-/* 项目分组标题（多项目聚合时显示;单项目隐藏,见 ArtifactGallery） */
-.artifact-group + .artifact-group {
-  margin-top: 10px;
-}
-.artifact-group-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted);
-  margin-bottom: 4px;
-}
-
 .artifact-card {
   flex-shrink: 0;
   width: 96px;
@@ -852,7 +841,6 @@ html, body, #root {
 .session-group-head:hover { background: var(--bg-hover); }
 .session-group-head .group-mark { display: inline-block; transition: transform 0.15s; }
 .session-group-head.closed .group-mark { transform: rotate(90deg) translateY(-2px); }
-.session-group-head.proj { padding-left: 14px; }
 .group-count {
   margin-left: auto;
   font-weight: 400;

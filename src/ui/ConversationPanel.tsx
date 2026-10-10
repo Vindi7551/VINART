@@ -5,12 +5,10 @@ interface ConversationPanelProps {
   messages: Message[];
   isGenerating: boolean;
   onSend: (text: string, files?: File[]) => void;
-  /** 当前会话的工作目录(📂 设置;null=未设置,落缺省位置) */
+  /** 当前会话的工作目录(📂 设置;null=未选,此时不允许发消息——会话跟着目录走) */
   workDir: string | null;
-  /** 项目层:工作目录下的产物分组(下拉切换/新建) */
-  projects: Array<{ name: string; displayName: string }>;
-  currentProject: string | null;
-  onSetProject: (name: string, displayName?: string) => void;
+  /** 会话是否已绑定目录(已绑定 → 📂 置灰:换目录 = 新开会话) */
+  dirLocked?: boolean;
   /** 打开应用内目录浏览器 */
   onPickDir: () => void;
   onSetWorkDir: (dir: string) => void;
@@ -21,9 +19,7 @@ export function ConversationPanel({
   isGenerating,
   onSend,
   workDir,
-  projects,
-  currentProject,
-  onSetProject,
+  dirLocked = false,
   onPickDir,
   onSetWorkDir,
 }: ConversationPanelProps) {
@@ -34,10 +30,9 @@ export function ConversationPanel({
   const streamRef = useRef<HTMLDivElement>(null);
   const [dirInputOpen, setDirInputOpen] = useState(false);
   const [dirDraft, setDirDraft] = useState('');
-  // 项目新建输入:name(目录名,英文) + displayName(展示名,可中文)
-  const [projInputOpen, setProjInputOpen] = useState(false);
-  const [projNameDraft, setProjNameDraft] = useState('');
-  const [projDisplayDraft, setProjDisplayDraft] = useState('');
+
+  /** 没选目录 = 没有产物的家，聊天被门禁挡住（与后端 400 同一条规则） */
+  const noWorkDir = !workDir;
 
   const addFiles = (files: File[]) => {
     setPendingFiles((prev) => [
@@ -51,6 +46,7 @@ export function ConversationPanel({
   const handleSend = () => {
     const text = input.trim();
     if (!text && pendingFiles.length === 0) return;
+    if (noWorkDir) return; // 双保险：按钮已 disabled
     onSend(text, pendingFiles.length > 0 ? pendingFiles.map((p) => p.file) : undefined);
     pendingFiles.forEach((p) => URL.revokeObjectURL(p.url));
     setInput('');
@@ -88,14 +84,28 @@ export function ConversationPanel({
   return (
     <aside className="conversation-panel">
       {/* 会话切换已移至左侧对话列表（SessionListPanel）；此处只管工作目录/项目/聊天 */}
-      {/* 工作目录:📂 设置(该会话的产物落这里;产品图只读引用原位) */}
+      {/* 工作目录:📂 设置(该会话的产物落这里;产品图只读引用原位)。
+          一个工作目录就是一个项目——不再有项目条;会话绑定后 📂 置灰(换目录 = 新开会话) */}
       <div
         className="workdir-bar"
         style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '5px 10px', borderBottom: '1px solid var(--border-light)', fontSize: 12 }}
       >
         <button
-          style={{ cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '1px 7px' }}
-          title={workDir ? `当前:${workDir}\n点击重新选择` : '点击浏览并选择工作目录'}
+          style={{
+            cursor: dirLocked ? 'not-allowed' : 'pointer',
+            opacity: dirLocked ? 0.45 : 1,
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-sm)',
+            padding: '1px 7px',
+          }}
+          disabled={dirLocked}
+          title={
+            dirLocked
+              ? `本会话已绑定:${workDir}\n工作目录创建时绑定、不可更改——要换目录请新建对话`
+              : workDir
+                ? `当前:${workDir}\n点击重新选择`
+                : '点击浏览并选择工作目录'
+          }
           onClick={onPickDir}
         >
           📂
@@ -124,101 +134,20 @@ export function ConversationPanel({
         ) : (
           <>
             <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }} title={workDir ?? ''}>
-              {workDir ?? '未设置工作目录——点击 📂 弹出选择框'}
+              {workDir ?? '未选工作目录——先点 📂 选一个目录才能开始对话'}
             </span>
-            <a style={{ color: 'var(--accent)', cursor: 'pointer', fontSize: 11 }} onClick={() => setDirInputOpen(true)}>
-              手输
-            </a>
-          </>
-        )}
-      </div>
-      {/* 项目条:产物按项目分组(<工作目录>/<项目>/designs/…);下拉切换,＋ 新建 */}
-      <div
-        className="project-bar"
-        style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '5px 10px', borderBottom: '1px solid var(--border-light)', fontSize: 12 }}
-      >
-        {projInputOpen ? (
-          <div style={{ flex: 1, display: 'flex', gap: 4 }}>
-            <input
-              autoFocus
-              style={{ flex: 1, minWidth: 0, fontSize: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '2px 6px' }}
-              placeholder="项目目录名(英文,如 tshirt-black)"
-              value={projNameDraft}
-              onChange={(e) => setProjNameDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') setProjInputOpen(false);
-              }}
-            />
-            <input
-              style={{ flex: 1, minWidth: 0, fontSize: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '2px 6px' }}
-              placeholder="展示名(可中文,可选)"
-              value={projDisplayDraft}
-              onChange={(e) => setProjDisplayDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && projNameDraft.trim()) {
-                  onSetProject(projNameDraft.trim(), projDisplayDraft.trim() || undefined);
-                  setProjInputOpen(false);
-                  setProjNameDraft('');
-                  setProjDisplayDraft('');
-                }
-              }}
-            />
-            <button
-              style={{ cursor: 'pointer' }}
-              onClick={() => {
-                if (projNameDraft.trim()) {
-                  onSetProject(projNameDraft.trim(), projDisplayDraft.trim() || undefined);
-                  setProjInputOpen(false);
-                  setProjNameDraft('');
-                  setProjDisplayDraft('');
-                }
-              }}
-            >
-              确定
-            </button>
-          </div>
-        ) : (
-          <>
-            <span style={{ color: 'var(--text-secondary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {currentProject
-                ? `项目:${projects.find((p) => p.name === currentProject)?.displayName ?? currentProject}`
-                : '未设置项目——产物暂落工作目录/designs(旧约定)'}
-            </span>
-            <select
-              style={{ maxWidth: 130, fontSize: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '2px 4px', cursor: 'pointer' }}
-              value={currentProject ?? ''}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v) {
-                  const p = projects.find((x) => x.name === v);
-                  onSetProject(v, p?.displayName);
-                }
-              }}
-              title="切换项目"
-            >
-              <option value="" disabled>
-                选择项目…
-              </option>
-              {projects.map((p) => (
-                <option key={p.name} value={p.name}>
-                  {p.displayName}
-                </option>
-              ))}
-            </select>
-            <button
-              style={{ cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '1px 7px' }}
-              onClick={() => setProjInputOpen(true)}
-              title="新建项目(目录名英文,展示名可中文)"
-            >
-              ＋
-            </button>
+            {!dirLocked && !workDir && (
+              <a style={{ color: 'var(--accent)', cursor: 'pointer', fontSize: 11 }} onClick={() => setDirInputOpen(true)}>
+                手输
+              </a>
+            )}
           </>
         )}
       </div>
       <div className="chat-stream" ref={streamRef}>
         {messages.length === 0 && (
           <div className="chat-empty">
-            描述你的设计需求，开始创作
+            {noWorkDir ? '先选一个工作目录——会话与产物都跟着它走' : '描述你的设计需求，开始创作'}
           </div>
         )}
         {messages.map((msg) => (
@@ -309,17 +238,22 @@ export function ConversationPanel({
         <div className="input-row">
           <textarea
             rows={1}
-            placeholder="描述你的设计想法，可直接粘贴图片（Ctrl+V）…"
+            placeholder={
+              noWorkDir
+                ? '未选工作目录——不允许开始对话（先点上方 📂 选目录）'
+                : '描述你的设计想法，可直接粘贴图片（Ctrl+V）…'
+            }
             value={input}
+            disabled={noWorkDir}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
           />
           <button
             className="btn-icon primary"
-            title="发送"
+            title={noWorkDir ? '未选工作目录，不允许开始对话' : '发送'}
             onClick={handleSend}
-            disabled={isGenerating || (!input.trim() && pendingFiles.length === 0)}
+            disabled={noWorkDir || isGenerating || (!input.trim() && pendingFiles.length === 0)}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="22" y1="2" x2="11" y2="13" />

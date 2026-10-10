@@ -41,6 +41,34 @@ import type { LayoutData, HostSignal, LayerAppearance, SessionItem } from './typ
 /** agent 层清空后，这里暂时没有可用的生成能力 */
 const AGENT_LAYER_EMPTY = true;
 
+/**
+ * 本浏览器用过的工作目录（最近 8 个）。**这是启动自愈的燃料**：
+ * 会话数据住在工作目录里（删目录即删会话，零清理），但「机器上有哪些目录」
+ * 只能靠一个中央指针文件（`~/.vinart/workdirs.json`）——它丢了/换机器，
+ * 数据还在盘上、侧栏却是空的。所以每次选目录都记一笔，下次打开页面时
+ * 逐个报给后端认领，把会话自动找回来（不用一个个手动重选）。
+ */
+const RECENT_WORKDIRS_KEY = 'vinart.recentWorkDirs';
+function rememberWorkDir(dir: string): void {
+  try {
+    const list = (JSON.parse(localStorage.getItem(RECENT_WORKDIRS_KEY) ?? '[]') as string[]).filter(
+      (d) => d !== dir,
+    );
+    list.unshift(dir);
+    localStorage.setItem(RECENT_WORKDIRS_KEY, JSON.stringify(list.slice(0, 8)));
+  } catch {
+    /* 隐私模式/配额——记不住就算了，不影响正常使用 */
+  }
+}
+function rememberedWorkDirs(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RECENT_WORKDIRS_KEY) ?? '[]') as unknown;
+    return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 /** 工具调用账本事件 → 一行摘要（实时 SSE 与刷新重放共用同一格式，前后一致） */
 function formatToolLine(d: { name?: unknown; ok?: unknown; ms?: unknown; result?: unknown }): string {
   const name = String(d.name ?? '?');
@@ -52,18 +80,18 @@ function formatToolLine(d: { name?: unknown; ok?: unknown; ms?: unknown; result?
 }
 
 /**
- * 版式 API 的 URL。**保存/重渲必须带 session+project**——服务端靠它定位
- * `<workDir>/<project>/designs/<name>`；缺失就会退回硬编码 `test_product/layout/<name>`，
- * 表现为「改了、保存了、项目里的图没变」，同名版式还会覆盖仓库里的副本（实测事故）。
+ * 版式 API 的 URL。**保存/重渲必须带 session**——服务端靠它定位
+ * `<workDir>/designs/<name>`；缺失就会退回仓库硬编码 `test_product/layout/<name>`，
+ * 表现为「改了、保存了、工作目录里的图没变」。客户端拼 URL 统一走这里。
+ * （2026-10-10 项目层拆除：不再需要 &project=。）
  */
 function layoutApiUrl(
-  cur: { name: string; project: string | null },
+  cur: { name: string },
   action: 'save' | 'render',
   sessionId: string | null,
 ): string {
   const q = new URLSearchParams();
   if (sessionId) q.set('session', sessionId);
-  if (cur.project) q.set('project', cur.project);
   const s = q.toString();
   return `/api/layout/${cur.name}/${action}${s ? `?${s}` : ''}`;
 }
@@ -92,6 +120,43 @@ export function App() {
     } catch {
       /* API 没跑——忽略,会话条显示空 */
     }
+  }
+
+  /**
+   * **认领工作目录** = 「选目录」这个动作的完整语义（后端：登记注册表 + 对账目录索引）。
+   * 登记只影响「列表能不能看见」，不参与聊天链路 —— 失败不阻塞，只记一笔。
+   */
+  async function claimWorkDir(dir: string) {
+    rememberWorkDir(dir);
+    try {
+      await fetch('/api/workdirs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dir }),
+      });
+    } catch {
+      /* API 没跑——忽略 */
+    }
+    await refreshSessions();
+  }
+
+  /**
+   * 启动自愈：把本浏览器记得的工作目录逐个报给后端认领。
+   * 必须在**取列表之前**跑完——否则注册表丢失时，存档的 sessionId 不在列表里，
+   * 会被当成「会话已不存在」而丢掉（用户看到的是"我的对话全没了"）。
+   */
+  async function reclaimRememberedDirs() {
+    const dirs = rememberedWorkDirs();
+    if (dirs.length === 0) return;
+    await Promise.all(
+      dirs.map((d) =>
+        fetch('/api/workdirs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dir: d }),
+        }).catch(() => undefined),
+      ),
+    );
   }
 
   /**
@@ -182,38 +247,38 @@ export function App() {
     }
   }
 
-  // ── 项目层:工作目录下按项目分组产物(切换 = 会话 meta,聚合展示) ──
-  const [projects, setProjects] = useState<Array<{ name: string; displayName: string }>>([]);
-  const [currentProject, setCurrentProject] = useState<string | null>(null);
-
-  // ── 待用环境（harness 的 create 参数模型）：无会话时用户设置的 workDir/project
+  // ── 待用环境（harness 的 create 参数模型）：无会话时用户选的 workDir
   // 只缓存在前端（+localStorage），建会话那一刻作为创建参数落成 meta 事件——
   // 「设目录」是写环境变量，不是开对话。环境独立于会话存活。
+  // 2026-10-10：项目层拆除，环境里只剩 workDir 一项。
   const PENDING_ENV_KEY = 'vinart.pendingEnv';
-  const [pendingEnv, setPendingEnv] = useState<{ workDir?: string; project?: string; projectDisplayName?: string }>(() => {
+  const [pendingEnv, setPendingEnv] = useState<{ workDir?: string }>(() => {
     try {
-      return JSON.parse(localStorage.getItem(PENDING_ENV_KEY) ?? '{}');
+      const raw = JSON.parse(localStorage.getItem(PENDING_ENV_KEY) ?? '{}') as { workDir?: string };
+      return raw.workDir ? { workDir: raw.workDir } : {};
     } catch {
       return {};
     }
   });
-  const savePendingEnv = (env: { workDir?: string; project?: string; projectDisplayName?: string }) => {
+  const savePendingEnv = (env: { workDir?: string }) => {
     setPendingEnv(env);
     localStorage.setItem(PENDING_ENV_KEY, JSON.stringify(env));
   };
 
-  // 初始化:有存档 id 且在列表里 → 恢复;否则新建
+  // 初始化:① 启动自愈（认领记得的目录）② 取列表 ③ 恢复存档会话 / 回到「无会话」态
   useEffect(() => {
     void (async () => {
       try {
+        await reclaimRememberedDirs();
         const list = (await (await fetch('/api/sessions')).json()) as SessionItem[];
         setSessions(list);
         const saved = localStorage.getItem('vinart.sessionId');
         if (saved && list.some((s) => s.id === saved)) {
           setSessionId(saved);
           await loadSessionMessages(saved);
-          setWorkDir(await fetchWorkDir(saved));
-          void fetchProjects(saved);
+          const wd = await fetchWorkDir(saved);
+          setWorkDir(wd);
+          if (wd) rememberWorkDir(wd); // 自愈燃料：下次注册表丢了也能把它认回来
           return;
         }
         // 惰性会话：恢复不了就保持无会话空态，**不自动创建**——
@@ -221,21 +286,7 @@ export function App() {
         // （此前「打开即建」在 StrictMode 双跑竞态下还会一次建俩）
         localStorage.removeItem('vinart.sessionId');
         setSessionId(null);
-        setSessions(list);
-        // 环境是前端缓存的（pendingEnv），无会话时照常显示——目录/项目不随会话消失
-        const env = pendingEnv;
-        if (env.workDir) {
-          setWorkDir(env.workDir);
-          if (env.project) setCurrentProject(env.project);
-          try {
-            const pr = (await (await fetch(`/api/projects?dir=${encodeURIComponent(env.workDir)}`)).json()) as {
-              projects?: Array<{ name: string; displayName: string }>;
-            };
-            setProjects(pr.projects ?? []);
-          } catch {
-            /* 清单拉不到不阻塞 */
-          }
-        }
+        setWorkDir(pendingEnv.workDir ?? null);
       } catch {
         /* API 没跑——会话条空,消息区显示占位 */
       }
@@ -251,109 +302,53 @@ export function App() {
     setActiveWord(null);
     savePendingEnv({});
     await loadSessionMessages(id);
-    setWorkDir(await fetchWorkDir(id));
-    void fetchProjects(id);
+    const wd = await fetchWorkDir(id);
+    setWorkDir(wd);
+    if (wd) rememberWorkDir(wd); // 自愈燃料
     commitLayout(null as unknown as LayoutData);
   }, []);
 
   /**
    * 新对话（惰性）：只清空到「无会话」空态，不创建。
-   * 环境延续：当前显示的 workDir/project 写入待用缓存，作为下一个新会话的创建参数。
+   * 环境延续：当前显示的 workDir 写入待用缓存，作为下一个新会话的创建参数。
    */
   const handleNewSession = useCallback(
-    (envOverride?: { workDir?: string; project?: string; projectDisplayName?: string }) => {
+    (envOverride?: { workDir?: string }) => {
       localStorage.removeItem('vinart.sessionId');
       setSessionId(null);
       setSelectedLayer(null);
       setActiveWord(null);
       setMessages([]);
       commitLayout(null as unknown as LayoutData);
-      // envOverride（组头 ✎）= 预填该组环境；无参 = 沿用当前显示环境
-      const env =
-        envOverride ?? {
-          ...(workDir ? { workDir } : {}),
-          ...(currentProject
-            ? {
-                project: currentProject,
-                projectDisplayName: projects.find((p) => p.name === currentProject)?.displayName,
-              }
-            : {}),
-        };
+      // envOverride（组头 ✎）= 预填该目录；无参 = 沿用当前显示环境
+      const env = envOverride ?? (workDir ? { workDir } : {});
       savePendingEnv(env);
       setWorkDir(env.workDir ?? null);
-      setCurrentProject(env.project ?? null);
-      // 预填的 workDir 与当前显示不同 → 项目清单按新目录重拉（sessionless）。
-      // 环境里携带的新项目（目录组 ✎ 刚建、还没注册）必须并回去——
-      // 新目录在服务端查出来是空清单，直接覆盖会把刚 append 的组抹掉
-      if (env.workDir && env.workDir !== workDir) {
-        fetch(`/api/projects?dir=${encodeURIComponent(env.workDir)}`)
-          .then((r) => r.json())
-          .then((d: { projects?: Array<{ name: string; displayName: string }> }) => {
-            const list = d.projects ?? [];
-            const proj = env.project;
-            if (proj && !list.some((x) => x.name === proj)) {
-              list.push({ name: proj, displayName: env.projectDisplayName ?? proj });
-            }
-            setProjects(list);
-          })
-          .catch(() => {});
-      }
-      // workDir/currentProject/projects 同步为预填环境——新对话延续显示
     },
-    [workDir, currentProject, projects],
+    [workDir],
   );
 
-  /** 目录组头 ✎：在工作目录下新建项目——**提交即注册**（文件夹+索引立即落盘，
-   *  用户在文件管理器里可先看到/先放素材），然后清单 append + 环境预填 + 新对话态。 */
-  const handleNewProject = useCallback(
-    async (dir: string, name: string, displayName?: string) => {
-      try {
-        const resp = await fetch('/api/projects', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dir, name, displayName }),
-        });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}:${(await resp.text()).trim()}`);
-      } catch (e) {
-        setMessages((prev) => [
-          ...prev,
-          { id: crypto.randomUUID(), role: 'assistant', text: `✗ 新建项目失败:${(e as Error).message}` },
-        ]);
-        return;
-      }
-      setProjects((prev) => [
-        ...prev.filter((p) => p.name !== name),
-        { name, displayName: displayName ?? name },
-      ]);
-      handleNewSession({ workDir: dir, project: name, projectDisplayName: displayName ?? name });
-    },
-    [handleNewSession],
-  );
-
-  /** 惰性会话的创建点：发第一条消息前确保有会话；待用环境此刻落成 meta。返回可用的 sessionId */
+  /**
+   * 惰性会话的创建点：发第一条消息前确保有会话。
+   * 此时待用环境（workDir）**成为会话的绑定**并写进诞生 meta——之后不可更改。
+   * 没选工作目录直接拒绝：会话跟着目录走，没有目录就没有家（产物也无处可放）。
+   */
   const ensureSession = useCallback(async (): Promise<string> => {
     const existing = sessionId;
     if (existing) return existing;
-    const r = await fetch('/api/sessions', { method: 'POST' });
+    if (!pendingEnv.workDir) {
+      throw new Error('请先选择工作目录——会话跟着目录走，没选目录不允许开始对话');
+    }
+    rememberWorkDir(pendingEnv.workDir); // 自愈燃料
+    const r = await fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir: pendingEnv.workDir }),
+    });
     if (!r.ok) throw new Error(`创建会话失败：HTTP ${r.status}`);
     const { id } = (await r.json()) as { id: string };
     localStorage.setItem('vinart.sessionId', id);
     setSessionId(id);
-    // 无会话时用户设置的环境（前端缓存）此刻正式归档到会话
-    if (pendingEnv.workDir) {
-      await fetch(`/api/sessions/${id}/workdir`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workDir: pendingEnv.workDir }),
-      }).catch(() => {});
-    }
-    if (pendingEnv.project) {
-      await fetch(`/api/sessions/${id}/project`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: pendingEnv.project, displayName: pendingEnv.projectDisplayName }),
-      }).catch(() => {});
-    }
     savePendingEnv({});
     await refreshSessions();
     return id;
@@ -495,13 +490,12 @@ export function App() {
     setActiveWord(null); // 点元素其他部分 → 回到基色上下文
   }, []);
 
-  /** 产物条点击:拉取版式数据(可交互编辑的来源) */
   /** 打开产物:fetch data(会话工作目录模式带 session query) */
   const handleOpenArtifact = useCallback(
-    async (url: string, name: string, _dir: string, project: string | null) => {
+    async (url: string, name: string, _dir: string) => {
       setPreviewUrl(url); // 兜底:数据没到之前先给 PNG
       try {
-        const dataUrl = artifactDataUrl(sessionId, name, project);
+        const dataUrl = artifactDataUrl(sessionId, name);
         // 网络失败自动重试一次（覆盖「8787 刚重启」的窗口期——点开瞬间服务未就绪）
         let resp: Response | null = null;
         let lastErr: Error | null = null;
@@ -560,21 +554,18 @@ export function App() {
     [sessionId, logSessionAction],
   );
 
-  /** 📂 设置工作目录：无会话 = 纯前端缓存环境（建会话时落 meta）；有会话 = meta 事件改环境 */
+  /**
+   * 📂 设置工作目录。
+   * - 无会话 = 纯前端缓存环境（建会话时落成 meta 事件），**并立即认领该目录**：
+   *   「选目录」这个动作本身就让列表能看见那个目录里已有的会话，不用等你说第一句话。
+   * - 有会话 = 只对尚未落盘的惰性会话有效（服务端 409，一旦绑定就不可改）。
+   */
   const handleSetWorkDir = useCallback(
     async (dir: string) => {
       if (!sessionId) {
-        savePendingEnv({ workDir: dir }); // 换目录 = 项目无效，重新选
+        savePendingEnv({ workDir: dir });
         setWorkDir(dir);
-        setCurrentProject(null);
-        try {
-          const pr = (await (await fetch(`/api/projects?dir=${encodeURIComponent(dir)}`)).json()) as {
-            projects?: Array<{ name: string; displayName: string }>;
-          };
-          setProjects(pr.projects ?? []);
-        } catch {
-          setProjects([]);
-        }
+        await claimWorkDir(dir); // 选目录即登记（+ 目录索引对账）
         return;
       }
       try {
@@ -583,14 +574,13 @@ export function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ workDir: dir }),
         });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        if (!resp.ok) throw new Error((await resp.text()).trim() || `HTTP ${resp.status}`);
         const { workDir: abs } = (await resp.json()) as { workDir: string };
         setWorkDir(abs);
-        // 目录变了:当前打开的版式属于旧位置,清掉(回到缩略图重选);项目清单也跟着变
+        // 目录变了:当前打开的版式属于旧位置,清掉(回到缩略图重选)
         commitLayout(null as unknown as LayoutData);
         setPreviewUrl(null);
         setGalleryKey((k) => k + 1);
-        void fetchProjects(sessionId);
         setMessages((prev) => [
           ...prev,
           { id: crypto.randomUUID(), role: 'assistant', text: `📂 工作目录已设为:${abs}\n产物将保存在这里。` },
@@ -602,8 +592,7 @@ export function App() {
         ]);
       }
     },
-    // fetchProjects 为 useCallback([]) 稳定引用,省略无害
-    [sessionId, pendingEnv],
+    [sessionId],
   );
 
   /** 读取当前会话的工作目录(切会话/初始化时) */
@@ -615,59 +604,6 @@ export function App() {
       return null;
     }
   }
-
-  /** 拉项目清单 + 当前项目(切会话/初始化时) */
-  const fetchProjects = useCallback(async (sid: string) => {
-    try {
-      const r = (await (await fetch(`/api/sessions/${sid}/projects`)).json()) as {
-        projects?: Array<{ name: string; displayName: string }>;
-        current?: string | null;
-      };
-      setProjects(r.projects ?? []);
-      setCurrentProject(r.current ?? null);
-    } catch {
-      /* API 没跑——保持现状 */
-    }
-  }, []);
-
-  /** 切换/新建项目(已存在只切换,新名字自动注册) */
-  const handleSetProject = useCallback(
-    async (name: string, displayName?: string) => {
-      if (!sessionId) {
-        // 无会话：切项目 = 纯前端缓存环境
-        const dir = pendingEnv.workDir ?? workDir ?? undefined;
-        savePendingEnv({
-          ...(dir ? { workDir: dir } : {}),
-          project: name,
-          ...(displayName ? { projectDisplayName: displayName } : {}),
-        });
-        setCurrentProject(name);
-        return;
-      }
-      try {
-        const resp = await fetch(`/api/sessions/${sessionId}/project`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, displayName }),
-        });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${(await resp.text()).trim()}`);
-        const r = (await resp.json()) as { project: string; displayName: string };
-        setCurrentProject(r.project);
-        await fetchProjects(sessionId);
-        setGalleryKey((k) => k + 1); // 项目变了,产物清单跟着变
-        setMessages((prev) => [
-          ...prev,
-          { id: crypto.randomUUID(), role: 'assistant', text: `📁 当前项目:${r.displayName}（产物落 <工作目录>/${r.project}/）` },
-        ]);
-      } catch (e) {
-        setMessages((prev) => [
-          ...prev,
-          { id: crypto.randomUUID(), role: 'assistant', text: `✗ 切换项目失败:${(e as Error).message}` },
-        ]);
-      }
-    },
-    [sessionId, fetchProjects],
-  );
 
   /** 📂 打开应用内目录浏览器(DSH 式:后端列目录,前端渲染,拿真实路径) */
   const [dirBrowserOpen, setDirBrowserOpen] = useState(false);
@@ -872,11 +808,10 @@ export function App() {
       const result = (await resp.json()) as { ok: boolean; log?: string };
       if (result.ok) {
         setGalleryKey((k) => k + 1);
-        // 成品落在版式目录里，走会话文件 API 取。
-        // 此前硬编码 `/files/test_product/layout/<name>/final.png`——项目化后必 404。
+        // 成品落在版式目录里，走会话文件 API 取（一个工作目录就是一个项目）
         setPreviewUrl(
           sessionId
-            ? `/api/sessions/${sessionId}/file/${cur.project ? `${cur.project}/designs` : 'designs'}/${cur.name}/final.png?t=${Date.now()}`
+            ? `/api/sessions/${sessionId}/file/designs/${cur.name}/final.png?t=${Date.now()}`
             : `/files/test_product/layout/${cur.name}/final.png?t=${Date.now()}`,
         );
         logSessionAction('render', { layout: cur.name });
@@ -1117,11 +1052,9 @@ export function App() {
           activeSessionId={sessionId}
           collapsed={leftColCollapsed}
           envWorkDir={workDir}
-          projects={projects}
           onSwitch={handleSwitchSession}
           onDelete={handleDeleteSession}
           onNew={handleNewSession}
-          onNewProject={handleNewProject}
           onResizeStart={handleResizeStartLeft}
         />
         <PreviewPanel
@@ -1221,9 +1154,7 @@ export function App() {
             isGenerating={isGenerating}
             onSend={handleSend}
             workDir={workDir}
-            projects={projects}
-            currentProject={currentProject}
-            onSetProject={handleSetProject}
+            dirLocked={sessionId !== null}
             onPickDir={handlePickDir}
             onSetWorkDir={handleSetWorkDir}
           />

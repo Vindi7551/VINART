@@ -33,12 +33,10 @@ export interface SessionItem {
   title: string;
   updatedAt: string;
   messageCount: number;
-  /** 会话最后设置的 workDir(meta 事件;null=未设置)——列表第一层分组 */
+  /** 会话绑定的工作目录(meta 事件;null=老数据未记录)——单层分组键 */
   workDir?: string | null;
-  /** 会话当前项目(name;null=未设置)——列表第二层分组 */
-  project?: string | null;
-  /** 项目展示名(服务端从该 workDir 的 project.json 映射;null=回退用 project) */
-  projectDisplayName?: string | null;
+  /** 会话数据的实际落点(= 工作目录 = 项目根)。由文件位置决定,不由 meta 决定 */
+  home?: string;
 }
 
 // ══════════════════════════════════════════════
@@ -90,9 +88,6 @@ export interface LayoutAppearance {
 /** GET /api/layout/<name>/data 的返回 */
 export interface LayoutData {
   name: string;
-  /** 版式所属项目——保存/重渲必须带回它拼 URL，否则服务端会退回
-   *  硬编码 test_product/layout（改了不生效，还可能污染仓库里的同名副本） */
-  project: string | null;
   spec: LayoutSpec;
   appearance: LayoutAppearance;
   html: string;
