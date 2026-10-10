@@ -66,6 +66,32 @@ function PencilIcon() {
   );
 }
 
+/**
+ * 文件夹图标（组头）——展开 = 打开的文件夹，收起 = 合上的文件夹。
+ * 用形状而不是三角箭头表达折叠状态，去掉列表里满屏的 ▸/▾。
+ */
+function FolderIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {open ? (
+        <path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
+      ) : (
+        <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+      )}
+    </svg>
+  );
+}
+
 export function SessionListPanel({
   sessions,
   activeSessionId,
@@ -153,7 +179,9 @@ export function SessionListPanel({
                 }}
                 title={uncat ? dirG.raw : `工作目录:${dirG.raw}（一个工作目录就是一个项目）`}
               >
-                <span className="group-mark">▸</span>
+                <span className="group-mark">
+                  <FolderIcon open={!dirCollapsed} />
+                </span>
                 <span className="group-label">{dirG.label}</span>
                 <span className="group-count">{dirG.items.length}</span>
                 {!uncat && (
