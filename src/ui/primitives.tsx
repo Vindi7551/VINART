@@ -189,18 +189,23 @@ export function Button({
   );
 }
 
-/** 列表项（图层清单） */
+/** 列表项（图层清单）。`children` 由调用方组织（如「眼睛 + 名字」横向排布） */
 export function ListItem({
   active,
   onClick,
+  className,
   children,
 }: {
   active?: boolean;
   onClick?: () => void;
+  className?: string;
   children: ReactNode;
 }) {
   return (
-    <div className={`ui-list-item${active ? ' active' : ''}`} onClick={onClick}>
+    <div
+      className={`ui-list-item${active ? ' active' : ''}${className ? ` ${className}` : ''}`}
+      onClick={onClick}
+    >
       {children}
     </div>
   );

@@ -6,6 +6,7 @@ import { ArtifactGallery, artifactDataUrl } from './ArtifactGallery';
 import { SessionListPanel } from './SessionListPanel';
 import { DirectoryBrowser } from './DirectoryBrowser';
 import { EditPanel } from './EditPanel';
+import { toggleHidden } from './layer-visibility';
 import type { Message, DelegationRecord } from './types';
 import type { LayoutData, HostSignal, LayerAppearance, SessionItem } from './types';
 
@@ -416,12 +417,23 @@ export function App() {
   /** 宿主→iframe 的统一信号(面板发起的选中/patch;图上操作不走这里防回环) */
   const [hostSignal, setHostSignal] = useState<HostSignal | null>(null);
   const seqRef = useRef(0);
+  /**
+   * 图层可视性(隐藏集合)—— **编辑器视角态,不进 spec/appearance**。
+   *
+   * 为什么不复用 `handleLayerPatch`:那条路会把字段 merge 进 `spec`,
+   * 而这里有 1.5s **防抖自动保存**,于是"藏一层看看"会在两秒后变成磁盘上的版式数据,
+   * 进而被 `render.ts` 渲染进成品图 —— 正是必须避免的。详见 `layer-visibility.ts`。
+   */
+  const [hiddenLayers, setHiddenLayers] = useState<ReadonlySet<string>>(() => new Set());
 
   /** 权威数据引用 + 防抖自动保存(1.5s 无操作静默写盘,刷新页面不丢) */
   const layoutRef = useRef<LayoutData | null>(null);
   const saveTimer = useRef<number | undefined>(undefined);
 
   function commitLayout(next: LayoutData) {
+    // 换版式 = 换画布:可视性不能跨版式残留(旧 id 在新版式里根本不存在)。
+    // 关掉也一样(next 为 null)——"没有版式"不该带着上一张的隐藏名单。
+    if (next?.name !== layoutRef.current?.name) setHiddenLayers(new Set());
     layoutRef.current = next;
     setLayout(next);
   }
@@ -503,6 +515,33 @@ export function App() {
     setSelectedLayer(id);
     setActiveWord(null); // 点元素其他部分 → 回到基色上下文
   }, []);
+
+  /**
+   * 图层可视性开关（清单里的眼睛）。只改画布显示，**不碰 spec**。
+   * `solo` = Alt 点击 = 只看这一层（再 Alt 点一次还原全显示，见 `toggleHidden`）。
+   */
+  const handleToggleLayerVisible = useCallback((id: string, solo: boolean) => {
+    const cur = layoutRef.current;
+    if (!cur) return;
+    const allIds = cur.spec.layers.map((l) => l.id);
+    setHiddenLayers((prev) => toggleHidden(prev, id, solo, allIds));
+  }, []);
+
+  const handleShowAllLayers = useCallback(() => setHiddenLayers(new Set()), []);
+
+  /**
+   * 不变量：**被选中的图层不可能是隐藏的**。
+   *
+   * 不管隐藏集合怎么变的（点眼睛 / 独奏 / 换版式），只要撞上当前选中就取消选中
+   * —— 用户选的是"自动取消选中"。iframe 侧从同一份集合自行 `deselect()`，
+   * 两边独立推导同一结论，不需要来回通信（也就没有回环风险）。
+   */
+  useEffect(() => {
+    if (selectedLayer && hiddenLayers.has(selectedLayer)) {
+      setSelectedLayer(null);
+      setActiveWord(null);
+    }
+  }, [hiddenLayers, selectedLayer]);
 
   /** 打开产物:fetch data(会话工作目录模式带 session query) */
   const handleOpenArtifact = useCallback(
@@ -1077,6 +1116,7 @@ export function App() {
           selectedElements={selectedElements}
           layoutData={layout}
           sessionId={sessionId}
+          hiddenLayers={hiddenLayers}
           onLayerChange={handleLayerChanged}
           onLayerSelect={handleLayerSelect}
           onLayerWord={(id, word) => {
@@ -1127,6 +1167,9 @@ export function App() {
                 selectedLayer={selectedLayer}
                 activeWord={activeWord}
                 busy={layoutBusy}
+                hiddenLayers={hiddenLayers}
+                onToggleVisible={handleToggleLayerVisible}
+                onShowAll={handleShowAllLayers}
                 onSelectLayer={(id) => {
                   setSelectedLayer(id);
                   seqRef.current += 1;

@@ -1635,7 +1635,11 @@ html, body, #root {
   color: var(--danger);
 }
 
+/* 列表项（图层清单）：横向排布 = 眼睛 + 名字 */
 .ui-list-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 4px 8px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -1646,6 +1650,43 @@ html, body, #root {
 .ui-list-item.active {
   background: var(--accent-light);
   color: var(--accent);
+}
+
+/* 图层名：占满剩余宽度，过长省略（图层 id 可能很长，如 lead_portrait） */
+.ui-list-item .layer-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 隐藏态：**只淡名字，不淡眼睛**——眼睛得保持对比度，不然想点回来都找不到它 */
+.ui-list-item.layer-hidden .layer-name {
+  opacity: 0.45;
+}
+
+/* 眼睛按钮（图层可视性开关） */
+.layer-eye {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.layer-eye:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.layer-eye.off {
+  color: var(--text-secondary);
 }
 
 /* ── 弹窗（Dialog 基元）── 目录浏览器 / 新建项目 共用 */

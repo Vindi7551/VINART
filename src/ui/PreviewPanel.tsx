@@ -31,6 +31,12 @@ interface PreviewPanelProps {
   onLayerWord?: (id: string, word: string) => void;
   /** 宿主信号:参数面板/图层清单发起的选中与 patch,转发给 iframe */
   hostSignal?: HostSignal | null;
+  /**
+   * 图层可视性(隐藏集合)—— **编辑器视角态,不进 spec**。
+   * 整集下发(`ve:set-hidden`),幂等;iframe 重载后由 onLoad 重放。
+   * 见 `layer-visibility.ts` 顶部说明(为什么不能走 onLayerPatch)。
+   */
+  hiddenLayers?: ReadonlySet<string> | null;
 }
 
 /** 默认画布尺寸，在解析不到 HTML 尺寸时使用 */
@@ -49,6 +55,7 @@ export function PreviewPanel({
   onLayerSelect,
   onLayerWord,
   hostSignal,
+  hiddenLayers,
 }: PreviewPanelProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -233,6 +240,23 @@ export function PreviewPanel({
       sendToIframe('ve:patch', { id: hostSignal.id, patch: hostSignal.patch });
   }, [hostSignal, sendToIframe]);
 
+  /**
+   * 图层可视性 → iframe。
+   *
+   * **整集下发**（不是增量开关），两处都要发：
+   * ① 宿主隐藏集合变了；
+   * ② iframe 重载之后（onLoad）——srcdoc 重建 = 新文档，旧的 postMessage 早丢了，
+   *    而 DOM 回来是"全显示"，不重放就会与宿主态不一致。
+   */
+  const sendHidden = useCallback(() => {
+    if (!layoutData) return;
+    sendToIframe('ve:set-hidden', { ids: [...(hiddenLayers ?? [])] });
+  }, [layoutData, hiddenLayers, sendToIframe]);
+
+  useEffect(() => {
+    sendHidden();
+  }, [sendHidden]);
+
   // ── 列表→画布：选中新增元素时通知 iframe 高亮 ──
   const prevSelected = useRef<Set<string>>(new Set());
   useEffect(() => {
@@ -353,6 +377,7 @@ export function PreviewPanel({
               srcDoc={srcdoc}
               sandbox="allow-scripts allow-same-origin"
               title="设计预览"
+              onLoad={sendHidden}
               style={{
                 width: canvasSize.w,
                 height: canvasSize.h,

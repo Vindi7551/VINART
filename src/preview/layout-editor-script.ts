@@ -11,11 +11,18 @@
  *   收  ve:select    { id }              React 侧(图层清单)发起选中
  *   收  ve:patch     { id, patch }       React 参数面板改属性,实时应用
  *   收  ve:set-data  { spec, appearance } 外部数据整体替换(重载/撤销用)
+ *   收  ve:set-hidden{ ids: string[] }   图层可视性(**整集,幂等**)——只改画布显示
  *   发  ve:select    { id }              图上点选 → React 切换面板
  *   发  ve:change    { id, patch }       图上操作产生的数据变更(拖拽结束/就地改字落定)
  *
  * patch 形状:{ rect?, text?, fontScale?, weight?, curve?, color?, fill?, opacity?, rotate? }
  * 数据来源:注入的 __vinart-data(spec + appearance 全量)。
+ *
+ * ⚠️ `ve:set-hidden` 是**唯一不进 spec 的指令**——它只写 `el.style.display`,
+ * 不发 `ve:change`、不进 appearance。理由是图层可视性属"编辑器视角态":
+ * 一旦落进 spec,宿主那 1.5s 防抖自动保存会把它写盘,渲染器就会当版式数据用。
+ * 传**整集而非增量**是因为三个场景都需要幂等重放:iframe 重载后重建、
+ * 独奏(`solo`)一次改多层的状态、以及宿主与 iframe 谁先就绪都无所谓。
  */
 
 export function createLayoutEditorScript(): string {
@@ -52,6 +59,23 @@ export function createLayoutEditorScript(): string {
   function appLayer(id) {
     if (!appearance.layers[id]) appearance.layers[id] = {};
     return appearance.layers[id];
+  }
+
+  // ── 图层可视性(编辑器视角态)──
+  // 整集存放,每次重放都幂等:iframe 重载重建、独奏一次改多层、双方就绪顺序不定,
+  // 这三种情况都靠"给全集 → 重算所有层的 display"。**绝不写进 spec/appearance。**
+  var hiddenIds = [];
+  function isHidden(id) { return hiddenIds.indexOf(id) >= 0; }
+  function applyHidden() {
+    var els = document.querySelectorAll('[data-layer]');
+    for (var i = 0; i < els.length; i++) {
+      var id = els[i].getAttribute('data-layer');
+      els[i].style.display = isHidden(id) ? 'none' : '';
+    }
+    // 正在就地改字的层被藏了 → 先落定,别让人对着看不见的节点继续打字
+    if (editing && isHidden(editing.id)) endInlineEdit(false);
+    // 被藏的是当前选中层 → 取消选中(宿主与 iframe 各自从同一份集合推导,无需来回问)
+    if (selId && isHidden(selId)) deselect();
   }
 
   // ── overlay:选中框 + 四角缩放柄 + 顶中旋转柄 ──
@@ -295,9 +319,19 @@ export function createLayoutEditorScript(): string {
       return;
     }
     if (msg.type === 've:patch') { applyPatch(msg.id, msg.patch); return; }
+    if (msg.type === 've:set-hidden') {
+      hiddenIds = msg.ids || [];
+      applyHidden();
+      return;
+    }
     if (msg.type === 've:set-data') {
       spec = msg.spec; appearance = msg.appearance || {};
       if (!appearance.layers) appearance.layers = {};
+      // 数据整体替换(重载/撤销)→ 可视性按**新** spec 重放,裁掉已不存在的 id
+      var alive = {};
+      for (var k = 0; k < spec.layers.length; k++) alive[spec.layers[k].id] = 1;
+      hiddenIds = hiddenIds.filter(function (x) { return alive[x]; });
+      applyHidden();
       return;
     }
   });
