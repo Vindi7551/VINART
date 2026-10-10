@@ -74,7 +74,7 @@ export function App() {
   // 旧 run/pipeline 的生成中标记。聊天发送暂不互斥（SSE 流由后端会话锁保护）。
   const [isGenerating] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [htmlCode, setHtmlCode] = useState<string | undefined>(undefined);
+  const [htmlCode] = useState<string | undefined>(undefined);
   /** 产物可能有新图时 +1,画廊据此重新拉清单 */
   const [galleryKey, setGalleryKey] = useState(0);
 
@@ -1075,18 +1075,6 @@ export function App() {
     [sessionId, ensureSession, layout, refreshSessions, toChatImageDataURL],
   );
 
-
-
-  const handleNewChat = useCallback(() => {
-    setMessages([]);
-    setPreviewUrl(null);
-    setHtmlCode(undefined);
-    setSelectedElements(new Set());
-    commitLayout(null as unknown as LayoutData);
-    setSelectedLayer(null);
-    void handleNewSession(); // 顶栏「新对话」= 新建会话
-  }, [handleNewSession]);
-
   const handleExport = useCallback(() => {
     if (!htmlCode) return;
     const blob = new Blob([htmlCode], { type: 'text/html' });
@@ -1103,7 +1091,7 @@ export function App() {
 
   return (
     <div className="app">
-      <Header onNewChat={handleNewChat} />
+      <Header />
       <ArtifactGallery
             refreshKey={galleryKey}
             sessionId={sessionId}

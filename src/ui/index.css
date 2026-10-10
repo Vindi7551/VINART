@@ -87,11 +87,6 @@ html, body, #root {
   color: var(--text-primary);
 }
 
-.header-actions {
-  display: flex;
-  gap: 8px;
-}
-
 /* ===== Buttons ===== */
 .btn {
   display: inline-flex;
