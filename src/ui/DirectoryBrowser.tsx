@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Button, Dialog } from './primitives';
 
 /**
  * 应用内目录浏览器(DSH ui-directory-picker-browse 的 V1 精简版)。
@@ -6,6 +7,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  * 后端 API 驱动:POST /api/fs/list(列一级;空 dir=盘符)/ POST /api/fs/mkdir。
  * 返回的是后端确认的真实绝对路径——管线可直接写入。
  * 相比系统对话框:不依赖服务进程桌面环境,必定能弹;相比浏览器句柄:拿得到路径。
+ *
+ * 表现层走 `primitives.tsx` 的 `Dialog`（遮罩 + 卡片 + 头/体/脚）——
+ * 此前遮罩/卡片/圆角/阴影是手写的一份复制品。
  */
 interface DirEntry {
   name: string;
@@ -101,128 +105,88 @@ export function DirectoryBrowser({ open, onPick, onClose }: DirectoryBrowserProp
   };
 
   return (
-    <div
-      style={{
-        position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.45)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}
-      onClick={onClose}
-    >
-      <div
-        style={{
-          width: 560, maxHeight: 480, background: '#fff', borderRadius: 10,
-          boxShadow: '0 20px 60px rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column',
-          overflow: 'hidden', color: '#1f2937',
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* 头部:标题 + 面包屑路径 */}
-        <div style={{ padding: '10px 14px 8px', borderBottom: '1px solid #e5e7eb' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-            <strong style={{ fontSize: 13 }}>选择工作目录</strong>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title="选择工作目录"
+      width={560}
+      maxHeight={480}
+      subtitle={
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, fontSize: 12, color: 'var(--text-secondary)' }}>
+          {!isDriveList && parent !== null && (
             <button
-              style={{ cursor: 'pointer', border: 'none', background: 'none', fontSize: 16, lineHeight: 1 }}
-              onClick={onClose}
+              style={{ cursor: 'pointer', border: 'none', background: 'none', color: 'var(--accent)', padding: '0 4px' }}
+              onClick={() => void list(parent)}
             >
-              ✕
+              ↰ 上级
             </button>
-          </div>
-          {/* 面包屑(点击逐级上跳) */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, fontSize: 12, color: '#374151' }}>
-            {!isDriveList && parent !== null && (
-              <button
-                style={{ cursor: 'pointer', border: 'none', background: 'none', color: '#1b6fd1', padding: '0 4px' }}
-                onClick={() => void list(parent)}
-              >
-                ↰ 上级
-              </button>
-            )}
-            {isDriveList ? (
-              <span>本机磁盘</span>
-            ) : (
-              crumbs.map((c, i) => {
-                const partial = crumbs.slice(0, i + 1).join('\\');
-                const path = /^[A-Za-z]:$/.test(c) ? `${c}\\` : partial;
-                return (
-                  <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                    {i > 0 && <span style={{ color: '#9ca3af' }}>›</span>}
-                    <button
-                      style={{ cursor: 'pointer', border: 'none', background: 'none', color: i === crumbs.length - 1 ? '#111827' : '#1b6fd1', padding: '0 2px' }}
-                      onClick={() => void list(path)}
-                    >
-                      {c}
-                    </button>
-                  </span>
-                );
-              })
-            )}
-          </div>
-        </div>
-
-        {/* 目录列表 */}
-        <div style={{ flex: 1, overflowY: 'auto', minHeight: 220 }}>
-          {loading && <div style={{ padding: 14, color: '#6b7280', fontSize: 13 }}>读取中…</div>}
-          {!loading && error && <div style={{ padding: 14, color: '#b91c1c', fontSize: 13 }}>{error}</div>}
-          {!loading && !error && entries.length === 0 && (
-            <div style={{ padding: 14, color: '#9ca3af', fontSize: 13 }}>空目录</div>
           )}
-          {!loading &&
-            entries.map((e) => (
-              <div
-                key={e.name}
-                style={{ padding: '6px 14px', cursor: 'pointer', fontSize: 13 }}
-                onClick={() => enter(e.name)}
-                onMouseEnter={(ev) => (ev.currentTarget.style.background = '#f3f4f6')}
-                onMouseLeave={(ev) => (ev.currentTarget.style.background = 'transparent')}
-              >
-                📁 {e.name}
-              </div>
-            ))}
-        </div>
-
-        {/* 底部:新建文件夹 + 选择此目录 */}
-        <div style={{ padding: '10px 14px', borderTop: '1px solid #e5e7eb', display: 'flex', gap: 8, alignItems: 'center' }}>
-          {mkdirOpen ? (
-            <>
-              <input
-                ref={inputRef}
-                style={{ flex: 1, fontSize: 12, border: '1px solid #d1d5db', borderRadius: 4, padding: '4px 8px' }}
-                placeholder="新文件夹名称"
-                value={mkdirName}
-                onChange={(e) => setMkdirName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void mkdir();
-                  if (e.key === 'Escape') setMkdirOpen(false);
-                }}
-              />
-              <button style={{ cursor: 'pointer' }} onClick={() => void mkdir()}>创建</button>
-              <button style={{ cursor: 'pointer' }} onClick={() => setMkdirOpen(false)}>取消</button>
-            </>
+          {isDriveList ? (
+            <span>本机磁盘</span>
           ) : (
-            <>
-              <button
-                style={{ cursor: 'pointer', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 4, padding: '4px 10px', background: '#fff' }}
-                disabled={!current || isDriveList}
-                onClick={() => setMkdirOpen(true)}
-              >
-                ＋ 新建文件夹
-              </button>
-              <div style={{ flex: 1 }} />
-              <button
-                style={{
-                  cursor: current && !isDriveList ? 'pointer' : 'not-allowed',
-                  fontSize: 13, border: 'none', borderRadius: 6, padding: '6px 16px',
-                  background: current && !isDriveList ? '#1b6fd1' : '#9ca3af', color: '#fff',
-                }}
-                disabled={!current || isDriveList}
-                onClick={() => current && onPick(current)}
-              >
-                选择此目录
-              </button>
-            </>
+            crumbs.map((c, i) => {
+              const partial = crumbs.slice(0, i + 1).join('\\');
+              const path = /^[A-Za-z]:$/.test(c) ? `${c}\\` : partial;
+              return (
+                <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  {i > 0 && <span style={{ color: 'var(--text-muted)' }}>›</span>}
+                  <button
+                    style={{ cursor: 'pointer', border: 'none', background: 'none', color: i === crumbs.length - 1 ? 'var(--text-primary)' : 'var(--accent)', padding: '0 2px' }}
+                    onClick={() => void list(path)}
+                  >
+                    {c}
+                  </button>
+                </span>
+              );
+            })
           )}
         </div>
+      }
+      footer={
+        mkdirOpen ? (
+          <>
+            <input
+              ref={inputRef}
+              className="ui-input"
+              placeholder="新文件夹名称"
+              value={mkdirName}
+              onChange={(e) => setMkdirName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void mkdir();
+                if (e.key === 'Escape') setMkdirOpen(false);
+              }}
+            />
+            <Button onClick={() => void mkdir()}>创建</Button>
+            <Button variant="ghost" onClick={() => setMkdirOpen(false)}>
+              取消
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button disabled={!current || isDriveList} onClick={() => setMkdirOpen(true)}>
+              ＋ 新建文件夹
+            </Button>
+            <div style={{ flex: 1 }} />
+            <Button variant="primary" disabled={!current || isDriveList} onClick={() => current && onPick(current)}>
+              选择此目录
+            </Button>
+          </>
+        )
+      }
+    >
+      <div style={{ minHeight: 220 }}>
+        {loading && <div style={{ padding: 14, color: 'var(--text-secondary)', fontSize: 13 }}>读取中…</div>}
+        {!loading && error && <div style={{ padding: 14, color: 'var(--danger)', fontSize: 13 }}>{error}</div>}
+        {!loading && !error && entries.length === 0 && (
+          <div style={{ padding: 14, color: 'var(--text-muted)', fontSize: 13 }}>空目录</div>
+        )}
+        {!loading &&
+          entries.map((e) => (
+            <div key={e.name} className="ui-dir-row" onClick={() => enter(e.name)}>
+              📁 {e.name}
+            </div>
+          ))}
       </div>
-    </div>
+    </Dialog>
   );
 }

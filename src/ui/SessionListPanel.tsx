@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Button, Dialog, Field, TextInput } from './primitives';
 import type { SessionItem } from './types';
 
 /**
@@ -274,78 +275,47 @@ export function SessionListPanel({
           );
         })}
       </div>
-      {/* 新建项目弹窗（fixed overlay，风格对齐 DirectoryBrowser） */}
+      {/* 新建项目弹窗（Dialog 基元，与目录浏览器共用遮罩/卡片） */}
       {projModal && (
-        <div
-          style={{
-            position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.45)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-          onClick={closeProjModal}
-        >
-          <div
-            style={{
-              width: 360, background: '#fff', borderRadius: 10,
-              boxShadow: '0 20px 60px rgba(0,0,0,0.3)', color: '#1f2937', padding: '14px 16px',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-              <strong style={{ fontSize: 13 }}>新建项目</strong>
-              <button
-                style={{ cursor: 'pointer', border: 'none', background: 'none', fontSize: 16, lineHeight: 1 }}
-                onClick={closeProjModal}
-              >
-                ✕
-              </button>
-            </div>
-            <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 10 }}>
-              工作目录：{projModal.dirLabel}
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
-              <input
-                autoFocus
-                style={{ fontSize: 13, border: '1px solid #d1d5db', borderRadius: 4, padding: '6px 8px' }}
-                placeholder="目录名（如 tshirt-black）"
-                value={projNameDraft}
-                onChange={(e) => setProjNameDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && projNameDraft.trim()) submitNewProject();
-                  if (e.key === 'Escape') closeProjModal();
-                }}
-              />
-              <input
-                style={{ fontSize: 13, border: '1px solid #d1d5db', borderRadius: 4, padding: '6px 8px' }}
-                placeholder="展示名（可选，如 黑T恤）"
-                value={projDisplayDraft}
-                onChange={(e) => setProjDisplayDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && projNameDraft.trim()) submitNewProject();
-                  if (e.key === 'Escape') closeProjModal();
-                }}
-              />
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <button
-                style={{ cursor: 'pointer', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 4, padding: '5px 14px', background: '#fff' }}
-                onClick={closeProjModal}
-              >
-                取消
-              </button>
-              <button
-                style={{
-                  cursor: projNameDraft.trim() ? 'pointer' : 'not-allowed',
-                  fontSize: 13, border: 'none', borderRadius: 6, padding: '5px 16px',
-                  background: projNameDraft.trim() ? '#1b6fd1' : '#9ca3af', color: '#fff',
-                }}
-                disabled={!projNameDraft.trim()}
-                onClick={submitNewProject}
-              >
+        <Dialog
+          open
+          onClose={closeProjModal}
+          title="新建项目"
+          width={360}
+          subtitle={<span>工作目录：{projModal.dirLabel}</span>}
+          footer={
+            <>
+              <Button onClick={closeProjModal}>取消</Button>
+              <Button variant="primary" disabled={!projNameDraft.trim()} onClick={submitNewProject}>
                 创建项目
-              </button>
-            </div>
-          </div>
-        </div>
+              </Button>
+            </>
+          }
+        >
+          <Field>
+            <TextInput
+              autoFocus
+              placeholder="目录名（如 tshirt-black）"
+              value={projNameDraft}
+              onChange={(e) => setProjNameDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && projNameDraft.trim()) submitNewProject();
+                if (e.key === 'Escape') closeProjModal();
+              }}
+            />
+          </Field>
+          <Field>
+            <TextInput
+              placeholder="展示名（可选，如 黑T恤）"
+              value={projDisplayDraft}
+              onChange={(e) => setProjDisplayDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && projNameDraft.trim()) submitNewProject();
+                if (e.key === 'Escape') closeProjModal();
+              }}
+            />
+          </Field>
+        </Dialog>
       )}
     </aside>
   );

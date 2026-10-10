@@ -91,10 +91,10 @@ export function ConversationPanel({
       {/* 工作目录:📂 设置(该会话的产物落这里;产品图只读引用原位) */}
       <div
         className="workdir-bar"
-        style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '5px 10px', borderBottom: '1px solid #eef0f3', fontSize: 12 }}
+        style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '5px 10px', borderBottom: '1px solid var(--border-light)', fontSize: 12 }}
       >
         <button
-          style={{ cursor: 'pointer', border: '1px solid #d1d5db', borderRadius: 4, padding: '1px 7px' }}
+          style={{ cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '1px 7px' }}
           title={workDir ? `当前:${workDir}\n点击重新选择` : '点击浏览并选择工作目录'}
           onClick={onPickDir}
         >
@@ -104,7 +104,7 @@ export function ConversationPanel({
           <div style={{ flex: 1, display: 'flex', gap: 4 }}>
             <input
               autoFocus
-              style={{ flex: 1, minWidth: 0, fontSize: 12, border: '1px solid #d1d5db', borderRadius: 4, padding: '2px 6px' }}
+              style={{ flex: 1, minWidth: 0, fontSize: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '2px 6px' }}
               placeholder="输入工作目录的完整路径,如 D:\\我的设计\\秋季系列"
               value={dirDraft}
               onChange={(e) => setDirDraft(e.target.value)}
@@ -123,10 +123,10 @@ export function ConversationPanel({
           </div>
         ) : (
           <>
-            <span style={{ color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }} title={workDir ?? ''}>
+            <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }} title={workDir ?? ''}>
               {workDir ?? '未设置工作目录——点击 📂 弹出选择框'}
             </span>
-            <a style={{ color: '#1b6fd1', cursor: 'pointer', fontSize: 11 }} onClick={() => setDirInputOpen(true)}>
+            <a style={{ color: 'var(--accent)', cursor: 'pointer', fontSize: 11 }} onClick={() => setDirInputOpen(true)}>
               手输
             </a>
           </>
@@ -135,13 +135,13 @@ export function ConversationPanel({
       {/* 项目条:产物按项目分组(<工作目录>/<项目>/designs/…);下拉切换,＋ 新建 */}
       <div
         className="project-bar"
-        style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '5px 10px', borderBottom: '1px solid #eef0f3', fontSize: 12 }}
+        style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '5px 10px', borderBottom: '1px solid var(--border-light)', fontSize: 12 }}
       >
         {projInputOpen ? (
           <div style={{ flex: 1, display: 'flex', gap: 4 }}>
             <input
               autoFocus
-              style={{ flex: 1, minWidth: 0, fontSize: 12, border: '1px solid #d1d5db', borderRadius: 4, padding: '2px 6px' }}
+              style={{ flex: 1, minWidth: 0, fontSize: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '2px 6px' }}
               placeholder="项目目录名(英文,如 tshirt-black)"
               value={projNameDraft}
               onChange={(e) => setProjNameDraft(e.target.value)}
@@ -150,7 +150,7 @@ export function ConversationPanel({
               }}
             />
             <input
-              style={{ flex: 1, minWidth: 0, fontSize: 12, border: '1px solid #d1d5db', borderRadius: 4, padding: '2px 6px' }}
+              style={{ flex: 1, minWidth: 0, fontSize: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '2px 6px' }}
               placeholder="展示名(可中文,可选)"
               value={projDisplayDraft}
               onChange={(e) => setProjDisplayDraft(e.target.value)}
@@ -179,13 +179,13 @@ export function ConversationPanel({
           </div>
         ) : (
           <>
-            <span style={{ color: '#6b7280', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ color: 'var(--text-secondary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {currentProject
                 ? `项目:${projects.find((p) => p.name === currentProject)?.displayName ?? currentProject}`
                 : '未设置项目——产物暂落工作目录/designs(旧约定)'}
             </span>
             <select
-              style={{ maxWidth: 130, fontSize: 12, border: '1px solid #d1d5db', borderRadius: 4, padding: '2px 4px', cursor: 'pointer' }}
+              style={{ maxWidth: 130, fontSize: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '2px 4px', cursor: 'pointer' }}
               value={currentProject ?? ''}
               onChange={(e) => {
                 const v = e.target.value;
@@ -206,7 +206,7 @@ export function ConversationPanel({
               ))}
             </select>
             <button
-              style={{ cursor: 'pointer', border: '1px solid #d1d5db', borderRadius: 4, padding: '1px 7px' }}
+              style={{ cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '1px 7px' }}
               onClick={() => setProjInputOpen(true)}
               title="新建项目(目录名英文,展示名可中文)"
             >
