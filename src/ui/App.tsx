@@ -113,6 +113,8 @@ export function App() {
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   /** 当前会话的工作目录(📂 设置;null=未设置,落缺省 test_product) */
   const [workDir, setWorkDir] = useState<string | null>(null);
+  /** 已注册的 chat 模型名（服务端 /api/models）——工具条上显示"当前模型"，不硬编码 */
+  const [chatModels, setChatModels] = useState<string[]>([]);
 
   async function refreshSessions() {
     try {
@@ -292,6 +294,18 @@ export function App() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 取「当前用的模型」——来自服务端注册表（keys.json），UI 只做展示不做选择
+  useEffect(() => {
+    void (async () => {
+      try {
+        const data = (await (await fetch('/api/models')).json()) as { chat?: string[] };
+        setChatModels(Array.isArray(data.chat) ? data.chat : []);
+      } catch {
+        /* API 没跑——工具条不显示模型名 */
+      }
+    })();
   }, []);
 
   /** 切换会话：环境跟会话走（清掉待用缓存——它只属于「还没建」的下一个会话） */
@@ -1155,6 +1169,7 @@ export function App() {
             onSend={handleSend}
             workDir={workDir}
             dirLocked={sessionId !== null}
+            modelName={chatModels[0] ?? null}
             onPickDir={handlePickDir}
             onSetWorkDir={handleSetWorkDir}
           />

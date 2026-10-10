@@ -83,3 +83,16 @@ export function getImageGateway(): ImageGateway {
   }
   return _imageGateway;
 }
+
+/**
+ * 已注册的 **chat** 模型名（按 priority 升序）。
+ *
+ * 用途：UI 工具条上显示「当前在用的模型」。从注册表取而非前端硬编码——
+ * 换 keys.json 时界面自动跟着变，不会留一个会漂的字符串。
+ */
+export function getChatModelNames(): string[] {
+  return buildRegistry()
+    .filter((e) => e.type === 'chat')
+    .sort((a, b) => a.priority - b.priority)
+    .map((e) => e.model);
+}

@@ -37,10 +37,17 @@ try {
   ok(await ta.isDisabled(), '输入框 disabled');
   const ph = (await ta.getAttribute('placeholder')) ?? '';
   ok(/工作目录/.test(ph) && /不允许/.test(ph), `placeholder 明确说明原因 → ${ph}`);
-  const sendBtn = page.locator('.input-row .btn-icon.primary');
+  const sendBtn = page.locator('.input-toolbar .composer-send');
   ok(await sendBtn.isDisabled(), '发送按钮 disabled');
   const emptyText = (await page.locator('.chat-empty').innerText()).trim();
   ok(/工作目录/.test(emptyText), `空态文案引导选目录 → ${emptyText}`);
+
+  console.log('【1b】输入区改版：单卡片 + 工具条（上传/目录/发送），Agent 药丸已删');
+  ok((await page.locator('.composer').count()) === 1, '输入区是单个 .composer 卡片');
+  ok((await page.locator('.agent-select').count()) === 0, 'Agent 药丸已删除（它本来就没绑任何行为）');
+  ok((await page.locator('.input-toolbar .composer-tool').count()) === 1, '工具条有上传按钮');
+  ok((await page.locator('.input-toolbar .workdir-bar').count()) === 1, '工作目录控件已下移进工具条');
+  ok((await page.locator('.input-toolbar .composer-send').count()) === 1, '发送按钮在工具条内');
 
   console.log('【2】📂 未被锁定（无会话时可自由选目录）');
   const folder = page.locator('.workdir-bar button').first();
@@ -74,6 +81,21 @@ try {
   await ta.fill('随便一句话');
   await page.waitForTimeout(200);
   ok(await sendBtn.isEnabled(), '有内容后发送按钮可点');
+
+  console.log('【5b】工具条不溢出：发送键必须留在卡片内（窄右栏也不许被挤出去）');
+  const composerBox = await page.locator('.composer').boundingBox();
+  const sendBox = await page.locator('.composer-send').boundingBox();
+  ok(!!composerBox && !!sendBox, '取到卡片与发送键的 boundingBox');
+  ok(
+    sendBox!.x + sendBox!.width <= composerBox!.x + composerBox!.width + 1,
+    `发送键右缘 ${Math.round(sendBox!.x + sendBox!.width)} ≤ 卡片右缘 ${Math.round(composerBox!.x + composerBox!.width)}`,
+  );
+  const tb = await page.locator('.input-toolbar').evaluate((el) => ({
+    sw: el.scrollWidth,
+    cw: el.clientWidth,
+  }));
+  ok(tb.sw <= tb.cw + 1, `工具条无横向溢出（scrollWidth ${tb.sw} ≤ clientWidth ${tb.cw}）`);
+
   await ta.fill('');
 
   console.log('【6】侧栏按工作目录一级分组（组名 = 目录末段）');

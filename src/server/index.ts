@@ -628,7 +628,7 @@ import type { Attachment } from '../designharness/gateway/type/chat';
 import { uploadImageFile, FILES_API_MAX_BYTES } from '../designharness/gateway/util/files-api';
 // 重渲复用聊天链的成品渲染工具（/api/layout/<name>/render）——见该工具顶部注释
 import { createRenderDesignTool } from '../designharness/tools/render-design';
-import { getOpenAICompatChatConfig } from '../config';
+import { getChatModelNames, getOpenAICompatChatConfig } from '../config';
 
 const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
@@ -637,6 +637,13 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
   if (path === '/api/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true }));
+  }
+
+  // 已注册的模型（来自 keys.json 的注册表，前端工具条显示「当前模型」用）——
+  // 不在前端硬编码模型名：换配置时界面自动跟着变。
+  if (path === '/api/models') {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    return res.end(JSON.stringify({ chat: getChatModelNames() }));
   }
 
   // ── 目录浏览(DSH 式):后端列目录,前端渲染应用内浏览器 ──
