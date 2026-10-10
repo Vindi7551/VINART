@@ -29,6 +29,8 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
+  /* 弹窗遮罩（DirectoryBrowser / 新建项目弹窗共用） */
+  --overlay: rgba(0, 0, 0, 0.45);
 }
 
 html, body, #root {
@@ -730,9 +732,71 @@ html, body, #root {
 
 /* 拖拽调宽期间:宽度/位置过渡全关,不然拖拽发粘 */
 .main.resizing .right-col,
-.main.resizing .right-toggle {
+.main.resizing .right-toggle,
+.main.resizing .inspector-col,
+.main.resizing .inspector-toggle {
   transition: none;
 }
+
+/* ===== 检查器栏（版式编辑器）===== */
+/* 2026-10-10 从 .right-col 里独立出来：编辑器与对话不再同栏。
+   位置在画布与右栏之间，所以边界线画在**左缘**（与 .session-list 的 border-right 呼应）。 */
+.inspector-col {
+  transition: width 0.2s ease;
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--border, #e5e7eb);
+  background: var(--bg-surface, #fff);
+}
+/* 收起时不留残线：宽度 0 但 border 还在会剩 1px（右栏自己有 border-left，
+   所以视觉上不多线，但元素不该占位） */
+.inspector-col.collapsed {
+  border-left: none;
+}
+
+/* 拖拽手柄：贴左缘的透明窄条（镜像 .right-resizer） */
+.inspector-resizer {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 20;
+}
+.inspector-resizer:hover {
+  background: var(--accent, #4f6ef7);
+  opacity: 0.4;
+}
+
+/* 收起/展开开关：贴检查器左缘外；right 由内联 style 驱动 */
+.inspector-toggle {
+  position: absolute;
+  top: 10px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  z-index: 30;
+  transition: right 0.2s ease, background 0.15s, color 0.15s;
+}
+.inspector-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.inspector-toggle line { transition: transform 0.2s ease; }
+.inspector-toggle.collapsed line { transform: translateX(1.75px); }
 
 /* ===== 左侧对话列表（Codex 式）===== */
 .session-list {
@@ -896,7 +960,7 @@ html, body, #root {
 .conversation-panel {
   /* 跟随 .right-col 的宽度（拖拽可调）——不再写死 400px */
   width: 100%;
-  /* 占满右栏剩余高度：EditPanel 收起/不开时对话面板独占整栏 */
+  /* 右栏现在**只有它一个子元素**：编辑器已搬去独立的 .inspector-col（2026-10-10） */
   flex: 1;
   min-height: 0;
   display: flex;
@@ -1287,9 +1351,306 @@ html, body, #root {
   z-index: 20;
 }
 .left-resizer:hover {
-  background: rgba(59, 130, 246, 0.25);
+  background: var(--accent, #6c5ce7);
+  opacity: 0.4;
 }
 .main.resizing .session-list,
 .main.resizing .left-toggle {
   transition: none;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   UI 基元（src/ui/primitives.tsx）—— 面板与控件
+   ⚠️ 全部吃设计 token，**不要在这里写死颜色**：编辑器此前是零类名、
+   100% 内联硬编码（选中态蓝 #eef3ff / 链接 #1b6fd1 / 表头 #1e2430），
+   与全站（紫 --accent、浅色表头）不是一套。这一层就是那个问题的解。
+   ══════════════════════════════════════════════════════════════════ */
+
+.ui-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+/* 表头：与其它面板一致（浅色 + 底边线），不用深色块 */
+.ui-panel-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ui-panel-title {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.ui-panel-sub {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ui-panel-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.ui-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+
+.ui-section {
+  margin-bottom: 10px;
+}
+.ui-section.divider {
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+  margin-top: 8px;
+}
+.ui-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.ui-hint {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.ui-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  margin-bottom: 8px;
+}
+.ui-row > .ui-field {
+  margin-bottom: 0;
+}
+/* 行内直接放的输入（如「染色词」那行：文本 + 色块 + 删除）要能伸缩 */
+.ui-row > .ui-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.ui-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 8px;
+  min-width: 0;
+}
+.ui-field-label {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+/* 输入类：统一边框/圆角/聚焦态 */
+.ui-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  font-family: inherit;
+}
+.ui-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-light);
+}
+.ui-num {
+  width: 100px;
+}
+.ui-row .ui-field {
+  flex: 1;
+}
+.ui-textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.ui-color-swatch {
+  width: 36px;
+  height: 24px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  cursor: pointer;
+}
+
+.ui-slider-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.ui-slider-field .ui-field-label {
+  flex: none;
+  min-width: 66px;
+}
+.ui-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+.ui-slider-value {
+  flex: none;
+  min-width: 38px;
+  text-align: right;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-btn {
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 3px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ui-btn:hover {
+  background: var(--bg-hover);
+}
+.ui-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.ui-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--white);
+}
+.ui-btn.primary:hover {
+  background: var(--accent-hover);
+}
+.ui-btn.ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-secondary);
+}
+.ui-btn.ghost:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.ui-btn.icon {
+  padding: 2px 6px;
+  line-height: 1;
+  color: var(--text-secondary);
+}
+.ui-btn.icon:hover {
+  color: var(--danger);
+}
+
+.ui-list-item {
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.ui-list-item:hover {
+  background: var(--bg-hover);
+}
+.ui-list-item.active {
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+/* ── 弹窗（Dialog 基元）── 目录浏览器 / 新建项目 共用 */
+.ui-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: var(--overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ui-dialog {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+  overflow: hidden;
+  max-height: 80vh;
+}
+.ui-dialog-head {
+  flex: none;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.ui-dialog-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ui-dialog-title {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.ui-dialog-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.ui-dialog-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.ui-dialog-foot {
+  flex: none;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ui-dialog-close {
+  font-size: 14px;
+}
+/* 目录列表的行（目录浏览器专用：全宽、悬停高亮交给 CSS） */
+.ui-dialog .ui-dir-row {
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.ui-dialog .ui-dir-row:hover {
+  background: var(--bg-hover);
 }

@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { LayerInspector } from './LayerInspector';
+import { Button, Hint, ListItem, Panel, PanelBody, PanelHeader } from './primitives';
 import type { LayoutData } from './types';
 
 /**
- * 右侧栏顶部的版式编辑面板(可收起):
- * 图层清单 ↔ 选中元素参数,加保存/重渲。位于「一键生成套图」上方,不替换它。
+ * 版式编辑面板 —— **独立一栏**（`.inspector-col`，贴在画布右侧），不再与对话同栏。
+ *
+ * 职责：图层清单 ↔ 选中元素参数 + 保存/重渲。
+ * 折叠由**整栏**负责（`.inspector-toggle`），面板内不再有第二层折叠。
+ * 表现层全部走 `primitives.tsx` 的基元（样式在 index.css 的 `.ui-*`，token 驱动）。
  */
 interface EditPanelProps {
   layout: LayoutData;
@@ -12,8 +16,6 @@ interface EditPanelProps {
   /** 当前激活的染色词(点图上染色片段切换) */
   activeWord: string | null;
   busy: boolean;
-  open: boolean;
-  onToggle: () => void;
   onSelectLayer: (id: string) => void;
   /** 新增高亮词(宿主设为激活) */
   onActivateWord: (word: string) => void;
@@ -28,8 +30,6 @@ export function EditPanel({
   selectedLayer,
   activeWord,
   busy,
-  open,
-  onToggle,
   onSelectLayer,
   onActivateWord,
   onLayerPatch,
@@ -48,103 +48,48 @@ export function EditPanel({
   const al =
     (selectedLayer ? layout.appearance.layers?.[selectedLayer] : undefined) ?? {};
 
-  if (!open) {
-    return (
-      <div
-        onClick={onToggle}
-        style={{
-          cursor: 'pointer',
-          background: '#1e2430',
-          color: '#fff',
-          font: '12px/34px system-ui',
-          textAlign: 'center',
-          letterSpacing: 1,
-        }}
-        title="展开版式编辑"
-      >
-        ‹ 版式编辑 ›
-      </div>
-    );
-  }
-
   return (
-    <div
-      style={{
-        flex: 'none',
-        maxHeight: '46%',
-        display: 'flex',
-        flexDirection: 'column',
-        background: '#fff',
-        borderBottom: '2px solid #1e2430',
-        overflow: 'hidden',
-      }}
-    >
-      <div
-        style={{
-          flex: 'none',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '0 10px',
-          height: 32,
-          background: '#1e2430',
-          color: '#fff',
-          font: '12px/32px system-ui',
-        }}
-      >
-        <b>版式编辑</b>
-        <span style={{ opacity: 0.7 }}>{layout.name}</span>
-        {layer && (
-          <span style={{ opacity: 0.9 }}>
-            · {layer.id} <small style={{ opacity: 0.7 }}>({layer.type})</small>
-          </span>
-        )}
-        <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-          <button disabled={busy} onClick={onSave} style={{ cursor: busy ? 'wait' : 'pointer' }}>
-            {busy ? '…' : '💾 保存'}
-          </button>
-          <button disabled={busy} onClick={onRender} style={{ cursor: busy ? 'wait' : 'pointer' }}>
-            {busy ? '…' : '⟳ 重渲'}
-          </button>
-          <button onClick={onToggle} style={{ cursor: 'pointer' }} title="收起">
-            »
-          </button>
-        </span>
-      </div>
-
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '8px 12px', fontSize: 12, lineHeight: 1.9 }}>
+    <Panel>
+      <PanelHeader
+        title="版式编辑"
+        subtitle={
+          // 图层信息排在前：窄栏（默认 320px）里会截断，版式名可以让位
+          layer ? (
+            <>
+              <b>{layer.id}</b> <span className="ui-hint">({layer.type})</span>
+              {' · '}
+              {layout.name}
+            </>
+          ) : (
+            layout.name
+          )
+        }
+        actions={
+          <>
+            <Button disabled={busy} onClick={onSave}>
+              {busy ? '…' : '💾 保存'}
+            </Button>
+            <Button disabled={busy} onClick={onRender}>
+              {busy ? '…' : '⟳ 重渲'}
+            </Button>
+          </>
+        }
+      />
+      <PanelBody>
         {mode === 'list' || !layer ? (
           <>
-            <div style={{ marginBottom: 4, color: '#888' }}>
-              图层({layout.spec.layers.length})——点击选中,图上直接拖拽/改字
-            </div>
+            <Hint>图层({layout.spec.layers.length})——点击选中,图上直接拖拽/改字</Hint>
             {layout.spec.layers.map((l) => (
-              <div
-                key={l.id}
-                onClick={() => onSelectLayer(l.id)}
-                style={{
-                  padding: '4px 8px',
-                  cursor: 'pointer',
-                  borderRadius: 4,
-                  background: l.id === selectedLayer ? '#eef3ff' : undefined,
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = '#eef3ff')}
-                onMouseLeave={(e) => (e.currentTarget.style.background = l.id === selectedLayer ? '#eef3ff' : '')}
-              >
-                <b>{l.id}</b> <span style={{ color: '#888' }}>{l.type}</span>
-              </div>
+              <ListItem key={l.id} active={l.id === selectedLayer} onClick={() => onSelectLayer(l.id)}>
+                <b>{l.id}</b> <span className="ui-hint">{l.type}</span>
+              </ListItem>
             ))}
           </>
         ) : (
           <>
-            <div style={{ marginBottom: 4 }}>
-              <span
-                onClick={() => setMode('list')}
-                style={{ cursor: 'pointer', color: '#1b6fd1' }}
-              >
-                « 图层清单
-              </span>
-            </div>
+            <Button variant="ghost" onClick={() => setMode('list')}>
+              « 图层清单
+            </Button>
             <LayerInspector
               layer={layer}
               appearance={al}
@@ -165,7 +110,7 @@ export function EditPanel({
             />
           </>
         )}
-      </div>
-    </div>
+      </PanelBody>
+    </Panel>
   );
 }

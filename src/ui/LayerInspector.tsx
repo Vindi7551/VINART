@@ -1,5 +1,24 @@
 import { useEffect, useState } from 'react';
+import {
+  Button,
+  ColorSwatch,
+  Field,
+  NumberInput,
+  Row,
+  Section,
+  SliderField,
+  TextArea,
+  TextInput,
+} from './primitives';
 import type { LayerAppearance, LayoutLayer } from './types';
+
+/**
+ * 选中图层的参数检查器。
+ *
+ * 表现层走 `primitives.tsx` 的基元（样式在 index.css 的 `.ui-*`，token 驱动）——
+ * 此前这里是**零类名 + 100% 内联硬编码**（`#888` ×8、`#eef3ff`、`#ddd`…），
+ * 与全站不是一套。**逻辑（色值解析 / 染色组 / 本地草稿态）一行未动。**
+ */
 
 // ══════════════════════════════════════════════
 // 色值工具:与 iframe 内编辑脚本同一套语义(#RRGGBBAA 只淡色值不淡整层)
@@ -63,8 +82,6 @@ interface LayerInspectorProps {
   onBack?: () => void;
 }
 
-const inputStyle: React.CSSProperties = { width: 64 };
-
 export function LayerInspector({
   layer,
   appearance,
@@ -112,159 +129,137 @@ export function LayerInspector({
   const num = (v: string) => (v === '' ? undefined : Number(v));
 
   return (
-    <div style={{ fontSize: 12, lineHeight: 1.9 }}>
-      <h4 style={{ margin: '0 0 6px' }}>
-        {layer.id} <small style={{ color: '#888', fontWeight: 400 }}>({layer.type})</small>
-      </h4>
-
+    <>
       {isText && (
-        <>
-          <div>
-            文字(双击图上也可就地改)
-            <br />
-            <textarea
-              rows={2}
-              style={{ width: '96%' }}
-              value={textDraft}
-              onChange={(e) => setTextDraft(e.target.value)}
-              onBlur={() => onPatch({ text: textDraft.includes('\n') ? textDraft.split('\n') : textDraft })}
-            />
-          </div>
-          <div>
-            fontScale{' '}
-            <input
-              type="number"
-              step={0.005}
-              style={inputStyle}
-              value={layer.fontScale ?? 0.03}
-              onChange={(e) => onPatch({ fontScale: num(e.target.value) ?? 0.03 })}
-            />{' '}
-            weight{' '}
-            <input
-              type="number"
-              step={100}
-              min={100}
-              max={900}
-              style={{ width: 60 }}
-              value={layer.weight ?? 400}
-              onChange={(e) => onPatch({ weight: Number(e.target.value) })}
-            />{' '}
-            curve{' '}
-            <input
-              type="number"
-              step={0.1}
-              min={0}
-              max={1}
-              style={{ width: 52 }}
-              value={layer.curve ?? 0}
-              onChange={(e) => onPatch({ curve: Number(e.target.value) })}
-            />
-            <br />
-            <small style={{ color: '#888' }}>curve 改动保存后重渲生效</small>
-          </div>
-        </>
+        <Section title="文字" hint="双击图上也可就地改；curve 改动保存后重渲生效">
+          <TextArea
+            rows={2}
+            value={textDraft}
+            onChange={(e) => setTextDraft(e.target.value)}
+            onBlur={() => onPatch({ text: textDraft.includes('\n') ? textDraft.split('\n') : textDraft })}
+          />
+          <Row>
+            <Field label="fontScale">
+              <NumberInput
+                step={0.005}
+                value={layer.fontScale ?? 0.03}
+                onChange={(e) => onPatch({ fontScale: num(e.target.value) ?? 0.03 })}
+              />
+            </Field>
+            <Field label="weight">
+              <NumberInput
+                step={100}
+                min={100}
+                max={900}
+                value={layer.weight ?? 400}
+                onChange={(e) => onPatch({ weight: Number(e.target.value) })}
+              />
+            </Field>
+            <Field label="curve">
+              <NumberInput
+                step={0.1}
+                min={0}
+                max={1}
+                value={layer.curve ?? 0}
+                onChange={(e) => onPatch({ curve: Number(e.target.value) })}
+              />
+            </Field>
+          </Row>
+        </Section>
       )}
 
-      <div>
-        x{' '}
-        <input
-          type="number"
-          step={0.005}
-          style={inputStyle}
-          value={layer.rect.x}
-          onChange={(e) => onPatch({ rect: { ...layer.rect, x: Number(e.target.value) } })}
-        />{' '}
-        y{' '}
-        <input
-          type="number"
-          step={0.005}
-          style={inputStyle}
-          value={layer.rect.y}
-          onChange={(e) => onPatch({ rect: { ...layer.rect, y: Number(e.target.value) } })}
-        />
-        <br />
-        w{' '}
-        <input
-          type="number"
-          step={0.005}
-          style={inputStyle}
-          value={layer.rect.w}
-          onChange={(e) => onPatch({ rect: { ...layer.rect, w: Number(e.target.value) } })}
-        />{' '}
-        h{' '}
-        <input
-          type="number"
-          step={0.005}
-          style={inputStyle}
-          value={layer.rect.h}
-          onChange={(e) => onPatch({ rect: { ...layer.rect, h: Number(e.target.value) } })}
-        />
-      </div>
+      <Section title="位置与尺寸">
+        <Row>
+          <Field label="x">
+            <NumberInput
+              step={0.005}
+              value={layer.rect.x}
+              onChange={(e) => onPatch({ rect: { ...layer.rect, x: Number(e.target.value) } })}
+            />
+          </Field>
+          <Field label="y">
+            <NumberInput
+              step={0.005}
+              value={layer.rect.y}
+              onChange={(e) => onPatch({ rect: { ...layer.rect, y: Number(e.target.value) } })}
+            />
+          </Field>
+        </Row>
+        <Row>
+          <Field label="w">
+            <NumberInput
+              step={0.005}
+              value={layer.rect.w}
+              onChange={(e) => onPatch({ rect: { ...layer.rect, w: Number(e.target.value) } })}
+            />
+          </Field>
+          <Field label="h">
+            <NumberInput
+              step={0.005}
+              value={layer.rect.h}
+              onChange={(e) => onPatch({ rect: { ...layer.rect, h: Number(e.target.value) } })}
+            />
+          </Field>
+        </Row>
+      </Section>
 
       {/* ── 颜色:单行,上下文感知——点图上哪个词就编辑哪个词的颜色 ── */}
-      <div>
-        {isShape ? 'fill' : 'color'}{' '}
-        <input
-          type="color"
-          style={{ width: 48, height: 24, verticalAlign: 'middle' }}
-          value={toHex(currentColor, palette)}
-          onChange={(e) =>
-            onBase
-              ? onPatch({ [colorKey]: e.target.value })
-              : onPatch({
-                  accents: groups.map((g) =>
-                    g === activeGroup ? { ...g, color: e.target.value } : g,
-                  ),
-                })
-          }
-        />{' '}
-        <input
-          style={{ width: 110 }}
-          placeholder="角色名或#hex"
-          value={String(currentColor ?? '')}
-          onChange={(e) =>
-            onBase
-              ? onPatch({ [colorKey]: e.target.value })
-              : onPatch({
-                  accents: groups.map((g) =>
-                    g === activeGroup ? { ...g, color: e.target.value } : g,
-                  ),
-                })
-          }
-        />
-      </div>
-      <small style={{ color: '#888' }}>
-        {onBase
-          ? '当前:全部文字(基色)——点击图上的染色词可单独改它'
-          : `当前:「${activeWord}」的染色(点图上其他位置切回基色)`}
-      </small>
-
-      <div>
-        颜色透明度{' '}
-        <input
-          type="range"
-          min={0}
-          max={100}
-          style={{ width: 120, verticalAlign: 'middle' }}
+      <Section
+        title="颜色"
+        hint={
+          onBase
+            ? '当前:全部文字(基色)——点击图上的染色词可单独改它'
+            : `当前:「${activeWord}」的染色(点图上其他位置切回基色)`
+        }
+      >
+        <div className="ui-row">
+          <ColorSwatch
+            value={toHex(currentColor, palette)}
+            onChange={(e) =>
+              onBase
+                ? onPatch({ [colorKey]: e.target.value })
+                : onPatch({
+                    accents: groups.map((g) =>
+                      g === activeGroup ? { ...g, color: e.target.value } : g,
+                    ),
+                  })
+            }
+          />
+          <TextInput
+            placeholder="角色名或#hex"
+            value={String(currentColor ?? '')}
+            onChange={(e) =>
+              onBase
+                ? onPatch({ [colorKey]: e.target.value })
+                : onPatch({
+                    accents: groups.map((g) =>
+                      g === activeGroup ? { ...g, color: e.target.value } : g,
+                    ),
+                  })
+            }
+          />
+        </div>
+        <SliderField
+          label="颜色透明度"
           value={alpha}
-          onChange={(e) => {
-            const pct = Number(e.target.value);
+          onChange={(pct) => {
             setAlpha(pct);
             const next = withAlpha(colorVal, pct / 100, palette);
             if (next) onPatch({ [colorKey]: next });
           }}
-        />{' '}
-        <span>{alpha}%</span>
-      </div>
+        />
+      </Section>
 
       {/* 染色组管理:基色之外的颜色构成,可增删(数量不限) */}
       {isText && (
-        <div style={{ borderTop: '1px dashed #ddd', marginTop: 4, paddingTop: 4 }}>
-          <div style={{ marginBottom: 2, color: '#888' }}>染色词({groups.length})</div>
+        <Section
+          title={`染色词(${groups.length})`}
+          divider
+          hint="新组染色保存后重渲生效;点图上的染色词可单独调色"
+        >
           {groups.map((g, gi) => (
-            <div key={gi} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 2 }}>
-              <input
-                style={{ flex: 1, minWidth: 0 }}
+            <div key={gi} className="ui-row">
+              <TextInput
                 value={g.words.join(', ')}
                 onChange={(e) => {
                   const words = e.target.value
@@ -275,9 +270,7 @@ export function LayerInspector({
                   onPatch({ accents: next });
                 }}
               />
-              <input
-                type="color"
-                style={{ width: 36, height: 22 }}
+              <ColorSwatch
                 value={toHex(g.color, palette)}
                 onChange={(e) => {
                   const next = groups.map((x, i) =>
@@ -286,8 +279,8 @@ export function LayerInspector({
                   onPatch({ accents: next });
                 }}
               />
-              <button
-                style={{ cursor: 'pointer' }}
+              <Button
+                variant="icon"
                 title="删除该组"
                 onClick={() => {
                   const next = groups.filter((_, i) => i !== gi);
@@ -295,14 +288,13 @@ export function LayerInspector({
                 }}
               >
                 ×
-              </button>
+              </Button>
             </div>
           ))}
           {addOpen ? (
-            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-              <input
+            <div className="ui-row">
+              <TextInput
                 autoFocus
-                style={{ flex: 1, minWidth: 0 }}
                 placeholder="要染色的词,逗号分隔"
                 value={addDraft}
                 onChange={(e) => setAddDraft(e.target.value)}
@@ -324,31 +316,18 @@ export function LayerInspector({
               />
             </div>
           ) : (
-            <button style={{ cursor: 'pointer' }} onClick={() => setAddOpen(true)}>
-              + 高亮词
-            </button>
+            <Button onClick={() => setAddOpen(true)}>+ 高亮词</Button>
           )}
-          <small style={{ color: '#888', display: 'block' }}>
-            新组染色保存后重渲生效;点图上的染色词可单独调色
-          </small>
-        </div>
+        </Section>
       )}
 
-      <div>
-        图层透明度{' '}
-        <input
-          type="range"
-          min={0}
-          max={100}
-          style={{ width: 120, verticalAlign: 'middle' }}
+      <Section hint="颜色透明度只淡色值;图层透明度整层淡出(含描边)。">
+        <SliderField
+          label="图层透明度"
           value={Math.round((appearance.opacity ?? 1) * 100)}
-          onChange={(e) => onPatch({ opacity: Number(e.target.value) / 100 })}
-        />{' '}
-        <span>{Math.round((appearance.opacity ?? 1) * 100)}%</span>
-      </div>
-      <small style={{ color: '#888' }}>
-        颜色透明度只淡色值;图层透明度整层淡出(含描边)。
-      </small>
-    </div>
+          onChange={(pct) => onPatch({ opacity: pct / 100 })}
+        />
+      </Section>
+    </>
   );
 }

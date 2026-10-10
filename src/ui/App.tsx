@@ -400,8 +400,7 @@ export function App() {
   // ── 版式编辑状态(产物点击 → 加载 → 逐元素修改 → 保存/重渲)──
   const [layout, setLayout] = useState<LayoutData | null>(null);
   const [layoutBusy, setLayoutBusy] = useState(false);
-  const [editPanelOpen, setEditPanelOpen] = useState(true);
-  /** 选中的图层(右栏面板与 iframe 双向同步) */
+  /** 选中的图层(检查器与 iframe 双向同步) */
   const [selectedLayer, setSelectedLayer] = useState<string | null>(null);
   /** 当前激活的染色词(点图上染色片段切换;面板单行颜色跟随它) */
   const [activeWord, setActiveWord] = useState<string | null>(null);
@@ -707,6 +706,24 @@ export function App() {
       return !c;
     });
   }, []);
+  // ── 检查器栏（版式编辑器）:独立一栏,贴画布右侧;镜像右栏那套 ──
+  // 2026-10-10 从 .right-col 搬出来——编辑器与对话不再同栏。
+  // 折叠只有这一层：EditPanel 内部那层「‹ 版式编辑 ›」已随之删除。
+  const INSPECTOR_MIN = 240;
+  const INSPECTOR_MAX = 560;
+  const [inspectorColWidth, setInspectorColWidth] = useState<number>(() => {
+    const v = Number(localStorage.getItem('vinart.inspectorColWidth'));
+    return Number.isFinite(v) && v >= INSPECTOR_MIN && v <= INSPECTOR_MAX ? v : 320;
+  });
+  const [inspectorColCollapsed, setInspectorColCollapsed] = useState<boolean>(() =>
+    localStorage.getItem('vinart.inspectorColCollapsed') === '1',
+  );
+  const toggleInspectorCol = useCallback(() => {
+    setInspectorColCollapsed((c) => {
+      localStorage.setItem('vinart.inspectorColCollapsed', c ? '0' : '1');
+      return !c;
+    });
+  }, []);
   // 拖拽调宽期间关掉宽度/位置过渡(否则拖拽发粘)——state 驱动 .main.resizing
   const [isResizingCol, setIsResizingCol] = useState(false);
   const resizeRef = useRef<{ startX: number; startW: number } | null>(null);
@@ -769,6 +786,38 @@ export function App() {
       window.addEventListener('mouseup', onUp);
     },
     [leftColWidth],
+  );
+
+  /** 检查器栏拖拽(镜像右栏):手柄贴它左缘,向左拖(clientX 变小)= 变宽 */
+  const handleResizeStartInspector = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      setIsResizingCol(true);
+      resizeRef.current = { startX: e.clientX, startW: inspectorColWidth };
+      document.body.style.userSelect = 'none';
+      const onMove = (ev: MouseEvent) => {
+        const s = resizeRef.current;
+        if (!s) return;
+        setInspectorColWidth(
+          Math.min(INSPECTOR_MAX, Math.max(INSPECTOR_MIN, s.startW + (s.startX - ev.clientX))),
+        );
+      };
+      const onUp = (ev: MouseEvent) => {
+        const s = resizeRef.current;
+        if (s) {
+          const w = Math.min(INSPECTOR_MAX, Math.max(INSPECTOR_MIN, s.startW + (s.startX - ev.clientX)));
+          localStorage.setItem('vinart.inspectorColWidth', String(w));
+        }
+        resizeRef.current = null;
+        setIsResizingCol(false);
+        document.body.style.userSelect = '';
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    },
+    [inspectorColWidth],
   );
 
   const handlePickDir = useCallback(() => {
@@ -1109,6 +1158,53 @@ export function App() {
           }}
           onExport={htmlCode ? handleExport : undefined}
         />
+        {/* 检查器栏（版式编辑器）—— **独立一栏**，贴画布右侧；无版式时不占位。
+            2026-10-10 从 .right-col 里搬出来：编辑器与对话不再同栏。
+            开关贴在检查器左缘外（+36 是收起时躲开右栏开关的偏移）。 */}
+        {layout && (
+          <>
+            <button
+              type="button"
+              className={`inspector-toggle${inspectorColCollapsed ? ' collapsed' : ''}`}
+              style={{
+                right:
+                  (rightColCollapsed ? 10 : rightColWidth + 10) +
+                  (inspectorColCollapsed ? 36 : inspectorColWidth + 10),
+              }}
+              onClick={toggleInspectorCol}
+              title={inspectorColCollapsed ? '展开版式编辑' : '收起版式编辑'}
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <rect x="1.5" y="2.5" width="13" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
+                <line x1="10.5" y1="4" x2="10.5" y2="12" stroke="currentColor" strokeWidth="1.5" />
+              </svg>
+            </button>
+            <div
+              className={`inspector-col${inspectorColCollapsed ? ' collapsed' : ''}`}
+              style={{ width: inspectorColCollapsed ? 0 : inspectorColWidth }}
+            >
+              {/* 拖拽手柄:贴左缘的窄条,按住左右拖调检查器宽度 */}
+              {!inspectorColCollapsed && (
+                <div className="inspector-resizer" onMouseDown={handleResizeStartInspector} title="拖拽调整检查器宽度" />
+              )}
+              <EditPanel
+                layout={layout}
+                selectedLayer={selectedLayer}
+                activeWord={activeWord}
+                busy={layoutBusy}
+                onSelectLayer={(id) => {
+                  setSelectedLayer(id);
+                  seqRef.current += 1;
+                  setHostSignal({ seq: seqRef.current, type: 'select', id });
+                }}
+                onActivateWord={(word) => setActiveWord(word)}
+                onLayerPatch={handleLayerPatch}
+                onSave={handleSaveLayoutLive}
+                onRender={handleRenderLayoutLive}
+              />
+            </div>
+          </>
+        )}
         {/* 右栏开关:贴右栏左缘外悬浮,收起时滑到屏幕右缘;图标竖线靠右=侧栏在右,收起时镜像 */}
         <button
           type="button"
@@ -1126,25 +1222,6 @@ export function App() {
           {/* 拖拽手柄:贴左缘的窄条,hover 高亮;按住左右拖调右栏宽度 */}
           {!rightColCollapsed && (
           <div className="right-resizer" onMouseDown={handleResizeStart} title="拖拽调整右栏宽度" />
-          )}
-          {layout && (
-            <EditPanel
-              layout={layout}
-              selectedLayer={selectedLayer}
-              activeWord={activeWord}
-              busy={layoutBusy}
-              open={editPanelOpen}
-              onToggle={() => setEditPanelOpen((o) => !o)}
-              onSelectLayer={(id) => {
-                setSelectedLayer(id);
-                seqRef.current += 1;
-                setHostSignal({ seq: seqRef.current, type: 'select', id });
-              }}
-              onActivateWord={(word) => setActiveWord(word)}
-              onLayerPatch={handleLayerPatch}
-              onSave={handleSaveLayoutLive}
-              onRender={handleRenderLayoutLive}
-            />
           )}
           <DirectoryBrowser
             open={dirBrowserOpen}
