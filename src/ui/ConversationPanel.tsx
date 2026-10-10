@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { Markdown } from './Markdown';
 import type { Message } from './types';
 
 /**
@@ -154,7 +155,15 @@ export function ConversationPanel({
             )}
             {/* 纯委派卡片消息（text 空）：不渲染气泡，只渲染 delegation-list */}
             {(msg.text || !msg.delegations || msg.delegations.length === 0) && (
-              <div className="chat-bubble">{msg.text}</div>
+              <div className="chat-bubble">
+                {/* 助手的普通消息按 Markdown 渲染；用户输入与管线日志保持原样
+                    （理由见 Markdown.tsx 头注释） */}
+                {msg.role === 'assistant' && msg.kind !== 'log' ? (
+                  <Markdown text={msg.text} />
+                ) : (
+                  msg.text
+                )}
+              </div>
             )}
             {msg.delegations && msg.delegations.length > 0 && (
               <div className="delegation-list" style={{ marginTop: msg.text ? 6 : 0 }}>
