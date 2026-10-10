@@ -23,7 +23,7 @@
  * 每个节点必须能被单独截出来而不变样——拆层时要中性化所有祖先背景。
  */
 
-import type { Canvas, DesignSketch, ImageNode, Node, Rect, TextNode } from './design-sketch';
+import type { Canvas, DesignSketch, ImageNode, Node, TextNode } from './design-sketch';
 import { DEFAULT_TYPOGRAPHY, PALETTE, type Palette, type Typography } from './render-style';
 import { assetKey, escapeAttr, escapeHtml, layerBox, wrap, type Box, type Painted } from './shared';
 import { renderSketchBody, SKETCH_CSS } from './sketch';
@@ -73,63 +73,6 @@ function resolveColor(app: Painted, pal: Palette, fallback: string): string {
   if (c.startsWith('#') || c.startsWith('rgb')) return c;
   const role = (pal as unknown as Record<string, string>)[c];
   return role ?? fallback;
-}
-
-// ══════════════════════════════════════════════════════════════════════
-// 压图文字的可读性兜底
-// ══════════════════════════════════════════════════════════════════════
-//
-// 实测教训（goose-PT06/PT07）：compile 不写颜色（颜色属外观文件），没有
-// 外观时文字全部走 palette.ink（近黑），直接压在深色场景照片上就"消失"。
-// 外观文件是设计决策（正道），但总有漏配的版式——渲染器按「文字是否
-// 直接叠在照片上且中间没有不透明底板」自动加一层反相半透明底衬。
-// 显式设计永远优先：appearance 给 shape 配了 fill，底板就不透明，
-// 这条兜底自动让位——「显式优先、兜底兜漏」。
-
-function rectsOverlap(a: Rect, b: Rect): boolean {
-  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-}
-
-/**
- * 找出所有「直接压在照片上」的文字节点 id。
- * 从文字节点沿 DOM 顺序**往回**找第一个与它矩形相交的节点：
- * 是 image → 压图；是不透明底板 shape（有 fill）→ 有板，安全；否则继续往回。
- */
-function overlayTextIds(spec: DesignSketch): Set<string> {
-  const out = new Set<string>();
-  const L = spec.layers;
-  for (let i = 0; i < L.length; i++) {
-    const t = L[i];
-    if (t.type !== 'text') continue;
-    for (let j = i - 1; j >= 0; j--) {
-      const b = L[j];
-      if (!rectsOverlap(t.rect, b.rect)) continue;
-      if (b.type === 'image') {
-        out.add(t.id);
-        break;
-      }
-      if (b.type === 'shape') {
-        const f = (b as Painted).fill;
-        if (f && f !== 'transparent') break; // 有不透明底板
-      }
-    }
-  }
-  return out;
-}
-
-/** 简化相对亮度（0=黑 1=白）；非 hex 色值按深色处理 */
-function colorLuminance(hex: string): number {
-  const m = hex.replace('#', '');
-  if (!/^[0-9a-fA-F]{6}$/.test(m)) return 0;
-  const ch = (i: number) => parseInt(m.slice(i, i + 2), 16) / 255;
-  return 0.2126 * ch(0) + 0.7152 * ch(2) + 0.0722 * ch(4);
-}
-
-/** 按文字色亮度配反相底衬：深字 → 白衬，浅字 → 深衬 */
-function plateFor(color: string): string {
-  return colorLuminance(color) >= 0.55
-    ? 'rgba(20,15,10,.78)'
-    : 'rgba(255,252,246,.9)';
 }
 
 /**
@@ -245,11 +188,10 @@ function renderText(
   l: TextNode,
   C: Canvas,
   p: Print,
-  overlay: boolean,
   box: Box,
 ): string {
   // 弧形排布：合并单行沿 SVG textPath 排——CSS 无沿路径排字能力
-  if (l.curve && l.curve > 0) return renderArcText(l, C, p, overlay, box);
+  if (l.curve && l.curve > 0) return renderArcText(l, C, p, box);
 
   const app = l as Painted;
   const lines = Array.isArray(l.text) ? l.text : [l.text];
@@ -265,13 +207,6 @@ function renderText(
   const family = escapeAttr(app.fontFamily ?? p.typ.headingFamily);
   const html = lines.map((t) => renderLine(t, app.accent, app.accents, p.pal)).join('<br>');
 
-  // 压图兜底：底衬加在 data-fit 外层（宽度=设计区宽的横条）。
-  // ⚠️ 不能包进 .btfit——测量逻辑量的是它的 scrollWidth/clientWidth，
-  // 改成 inline-block 后 avail 恒等于 need，fits 缩放会静默失效。
-  const plate = overlay
-    ? `background:${plateFor(color)};border-radius:0.4em;padding:0.25em 0.55em;`
-    : '';
-
   // 外层 data-fit 供文字自适应测量（final 阶段量 `[data-fit=id]` 内
   // `.btfit` 的 scrollWidth/clientWidth）；内层 .btfit 是 nowrap 的文字本体——
   // 宁可缩字号也不折行。
@@ -282,7 +217,7 @@ function renderText(
   // 视觉位移，不参与布局计算（对齐、间距仍按 rect 算）；left/right:0 + 
   // text-align 保留水平对齐语义；.btfit 宽度=容器宽，fits 测量逻辑不变。
   return (
-    `<div data-fit="${l.id}" style="${plate}position:relative;width:100%;height:100%">` +
+    `<div data-fit="${l.id}" style="position:relative;width:100%;height:100%">` +
     `<div class="sub btfit" style="position:absolute;top:50%;left:0;right:0;transform:translateY(-50%);white-space:nowrap;text-align:${align};` +
     `color:${color};font-family:${family};font-size:${fs}px;font-weight:${weight};line-height:1.15">${html}</div>` +
     `</div>`
@@ -303,7 +238,6 @@ function renderArcText(
   l: TextNode,
   C: Canvas,
   p: Print,
-  overlay: boolean,
   box: Box,
 ): string {
   const app = l as Painted;
@@ -323,11 +257,6 @@ function renderArcText(
   const path = `M 0 ${y0.toFixed(1)} Q ${(w / 2).toFixed(1)} ${(y0 - lift).toFixed(1)} ${w.toFixed(1)} ${y0.toFixed(1)}`;
   const pathId = `arc-${escapeAttr(l.id)}`;
 
-  // 底衬（压图兜底）照常加在外层——弧形文字压照片时同样需要
-  const plate = overlay
-    ? `background:${plateFor(color)};border-radius:0.4em;padding:0.15em 0.55em;`
-    : '';
-
   const tspans = lines
     .join(' ')
     .split(/(\s+)/)
@@ -344,7 +273,7 @@ function renderArcText(
     .join('');
 
   return (
-    `<div data-fit="${l.id}" style="${plate}position:relative;width:100%;height:100%">` +
+    `<div data-fit="${l.id}" style="position:relative;width:100%;height:100%">` +
     `<svg viewBox="0 0 ${w} ${h}" width="100%" height="100%" style="display:block;overflow:visible">` +
     `<defs><path id="${pathId}" d="${path}" fill="none"/></defs>` +
     `<text font-family="${family}" font-size="${fs}" font-weight="${weight}" fill="${color}"` +
@@ -358,7 +287,6 @@ function renderNodeFinal(
   l: Node,
   C: Canvas,
   p: Print,
-  overlay: Set<string>,
 ): string {
   const box = layerBox(l, C);
   let inner = '';
@@ -372,7 +300,7 @@ function renderNodeFinal(
       inner = renderImage(l);
       break;
     case 'text':
-      inner = renderText(l, C, p, overlay.has(l.id), box);
+      inner = renderText(l, C, p, box);
       break;
     case 'shape':
       // 形状**没有内容**——它就是一块色。轮廓与填充都由容器负责。
@@ -434,12 +362,10 @@ export function renderDesign(
   // 完成顺序不保证 → DOM 顺序会随机错乱，且只在并发时偶现。下面的顺序守卫会报错。
   const finalLayers = mode === 'final' ? resolveLayerColors(spec.layers, pal) : spec.layers;
   const sketchCss = mode === 'sketch' ? SKETCH_CSS : '';
-  // 压图分析只在成品模式做——草图本来就是灰阶示意
-  const overlay = mode === 'final' ? overlayTextIds({ ...spec, layers: finalLayers }) : new Set<string>();
   const body =
     mode === 'sketch'
       ? renderSketchBody(spec.layers, C, opts.grid ?? true)
-      : finalLayers.map((l) => renderNodeFinal(l, C, p, overlay)).join('\n');
+      : finalLayers.map((l) => renderNodeFinal(l, C, p)).join('\n');
 
   // 收集素材占位符 → 文件名（供 emit-html 替换）。
   //
