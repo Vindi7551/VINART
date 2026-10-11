@@ -57,10 +57,17 @@ export interface AppearanceCompileResult {
 
 // ── 提示词 ──
 
+/**
+ * 配色编译器的 system prompt——**单一真源是 appearance-system.md**（同目录）。
+ * 改提示词改 .md 即可（不必改代码、不必重启）。进程内读一次缓存。
+ */
+const APPEARANCE_SYSTEM_PATH = resolve('src/workflow/appearance/appearance-system.md');
+let appearanceSystemCache: string | null = null;
 function systemPrompt(): string {
-  return `你是 listing 套图的配色设计师。输入：版式规格的**图层清单**、创意方案、产品照。
-任务：产出一套**本产品专属**的配色（内嵌 palette 角色表）+ 每个图层的颜色分配，
-落成外观文件。只输出一个 JSON 对象，不要解释文字。`;
+  if (appearanceSystemCache === null) {
+    appearanceSystemCache = readFileSync(APPEARANCE_SYSTEM_PATH, 'utf8').replace(/\n+$/, '');
+  }
+  return appearanceSystemCache;
 }
 
 function userPrompt(
