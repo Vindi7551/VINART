@@ -6,10 +6,13 @@ JSON 数组，每条：
   "file": "<必须与版式节点 asset 字段完全一致的文件名>",
   "size": "<{{SIZE_OPTIONS}} 之一>",
   "prompt": "<生图提示词>",
-  "references": [],
-  "useSketchRef": true
+  "references": []
 }
 只输出 JSON 数组本身，不要任何解释文字。
+
+**不要**输出 `useSketchRef` 字段——**默认不带草图**。带草图会把草图上的
+**图层名文字 / 虚线框 / 网格线**一起画进素材里（实测踩过），只在极少数
+「必须严格照草图构图」的订单才由人工显式加 `useSketchRef: true`。
 
 ## 提示词语言
 用{{PROMPT_LANG}}写——提示词的读者是**生图模型**（中英双语原生），不是终端消费者，

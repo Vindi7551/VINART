@@ -299,8 +299,18 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<Asset
     // 现在由角色统一生成说明，且参考图顺序与说明顺序严格一致。
     const refs: string[] = [];
     const declared: AssetReference[] = [...(job.references ?? [])];
+    // ⚠️ **默认不带草图**（2026-10-11 改）。
+    //
+    // 旧行为是「没写 useSketchRef 就带草图」，本意是给模型构图参考；
+    // 但实测（gogokids-swim-vest 场景图）**草图上的辅助标记会被当设计画进素材**：
+    //   - 图位里的**中文图层名**（`label()` 画的，如「场景图：湖畔浅水（…）」）
+    //   - 虚线框（`sbox`）、12 等分网格（`sgrid`）
+    // 按 rect 裁切**救不了**——这些标记就画在图位**内部**，裁完照旧在。
+    //
+    // 场景图/环境图本来就该填满图位，构图由 brief 的文字意图描述即可，
+    // 不需要草图。要构图参考的订单**显式**写 `useSketchRef: true` 才带。
     const hasSketch = declared.some((r) => r.ref === '@sketch');
-    if (!hasSketch && job.useSketchRef !== false) {
+    if (!hasSketch && job.useSketchRef === true) {
       declared.push({ ref: '@sketch', role: 'compose' });
     }
 
