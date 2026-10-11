@@ -4,7 +4,7 @@
  * ═══════════════════════════════════════════════════════════════════════
  *
  * 链路里最后一个手工环节的自动化：此前 assets.json 全靠手写——
- * 模型产完版式（compile）之后，要人按七要素/电商六段给每个图位写生图提示词。
+ * 模型产完版式（compile）之后，要人按七要素给每个图位写生图提示词。
  *
  * ## 输入与输出
  *
@@ -21,105 +21,71 @@
  *
  * ## 写法规范
  *
- * 全部硬约束（七要素 / 电商六段 / 保真声明 / 指令型禁则 / 一致性）编在
+ * 全部通用硬约束（七要素 / 保真声明 / 指令型禁则 / 一致性）编在
  * `systemPrompt()` 里喂给编写模型；产出的订单再过 `validateOrders()` 静态校验。
  * 两道关的规则与 `image.ts` 的运行时检查同源——生成前置拦截，省生图费。
+ *
+ * **行业细化不在内核**：特定行业/品类的写法规则由创意方案（brief）承载，
+ * 内核只提供机制（见 order-system.md「行业细化交给 brief」）。
  */
 
 import type { ChatMessage, TokenUsage } from '../../designharness/gateway/type/chat';
 import type { DesignSketch, ImageNode } from '../design-sketch/design-sketch';
 import { BANNED_WORDS, type AssetOrders } from './asset-order';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-/** 生图尺寸档位：像素 ≥ 3,686,400 下限（详见 assetsgen/README.md 硬约束） */
+/**
+ * 生图尺寸档位：像素 ≥ 3,686,400 下限（详见 assetsgen/README.md 硬约束） */
 const SIZE_OPTIONS = ['2560x1440', '1440x2560', '2048x2048'] as const;
 
 /**
- * 订单编写模型的系统提示——把 assetsgen/README.md 里的写法规范编进来。
+ * 生图订单编写模型的系统提示模板——**单一真源是 order-system.md**（同目录）。
  *
- * ⚠️ 这段文本就是「订单生成的规范」本身：七要素 / 电商六段 / 保真声明 /
- * 一致性 / 指令型禁则。改规范时**两处一起改**（README 与这里）。
+ * ⚠️ 这段文本就是「订单生成的规范」本身：七要素 / 保真声明 / 一致性 / 指令型禁则。
+ * 改规范时改 .md 即可（不必改代码、不必重启）。
+ * 旧的「README 与这里两处一起改」的双写负担由此消除。
+ *
+ * md 里的占位符由 systemPrompt() 按运行时参数注入。
  */
+const ORDER_SYSTEM_PATH = resolve('src/workflow/assetsgen/order-system.md');
+let orderSystemTemplateCache: string | null = null;
+function orderSystemTemplate(): string {
+  if (orderSystemTemplateCache === null) {
+    // rstrip 末尾换行：md 文件天然以 \n 结尾，但原 prompt 不以 \n 收尾——
+    // 去掉它才能与抽取前的字面量逐字节一致（见 _probe-order-system-extract）。
+    orderSystemTemplateCache = readFileSync(ORDER_SYSTEM_PATH, 'utf8').replace(/\n+$/, '');
+  }
+  return orderSystemTemplateCache;
+}
+
 function systemPrompt(
   promptLangName: string,
   safeSentence: string,
   productAvailable: boolean,
   withProductPhoto: boolean,
 ): string {
-  return `你是生图素材订单的编写者。输入一份版式规格和一份创意方案，为版式里的**每个 image 节点**写一条生图订单。
-
-## 输出格式
-JSON 数组，每条：
-{
-  "file": "<必须与版式节点 asset 字段完全一致的文件名>",
-  "size": "<${SIZE_OPTIONS.join(' / ')} 之一>",
-  "prompt": "<生图提示词>",
-  "references": [],
-  "useSketchRef": true
-}
-只输出 JSON 数组本身，不要任何解释文字。
-
-## 提示词语言
-用${promptLangName}写——提示词的读者是**生图模型**（中英双语原生），不是终端消费者，
-与 listing 的市场语言无关。画面里不要出现任何文字——文字由后续的 HTML 层渲染，生图模型画字必然出错。
-
-## 审核红线
-不要出现 "logo" / "watermark" / "brand" 或任何语言的等价词——
-即使语义是「不要 logo」也会触发内容审核。需要表达该约束时，
-统一改写成「${safeSentence}」这类不含上述词的描述。
-
-## 结构——按七要素组织，完整自然语言句子
-1. 主体——是什么（可带需要模型注意的细节）
-2. 动作与状态
-3. 场景——发生在哪里（要具体：室内/室外、什么地面、背景有什么）
-4. 风格与媒介——什么质感的照片（如：商业产品摄影 / 胶片）
-5. 光线与色调——光源方向与色温（如：左侧柔光箱 / 暖钨丝灯＋冷蓝阴影）
-6. 构图·镜头——机位、焦段、景深（如：45° 俯视 / 85mm f/1.8 / 浅景深 / 留白）——**必填**
-7. 技术参数不写进 prompt（size 是独立字段）
-
-## 电商商品图的收敛（若节点画的是产品/商品，用这六段取代泛用七要素）
-产品事实（材质＋颜色＋造型）/ 镜头角度 / 光线 / 背景 / 约束（见审核红线）/ **保真声明**
-保真声明的语义必须完整：保持形状、盒盖、标签与颜色与参考图完全一致，不添加任何额外文字或图形（用提示词语言表达）。
-
-## 背景类节点（asset 名以 bg- 开头，画的是**纯装饰底纹**）
-这种节点画的是**整版的设计背景**，不是产品照：
-- 只描述背景本身：纹理、材质、装饰元素与色调（如：羊皮纸质感、四角秋叶藤蔓装饰、暖奶油色）
-- **禁止**出现产品、人物、文字、logo——前景内容由版式层叠在上面
-- 上面那套「电商六段 / 保真声明」**不适用**；构图写「满幅平铺、无居中主体」
-- 通常不需要 @product；@sketch 可用于锁定装饰元素的分布
-
-## 产品在场景中（asset 名如 scene-*.png / product-in-*.png）——⚠️ **别与上一类混淆**
-图位要展示「**产品摆放在某个真实环境里**」时，**就在提示词里把产品一起画出来**——让生图模型直接产出
-一张「产品在场景中」的完整照片。**这不是背景类节点，禁止产出空场景。**
-
-- **必须**用 { "ref": "@product", "role": "subject" } 引用商品实物照；
-- 按**电商六段**写，其中「背景」一节写成**具体场景**（室内/室外、什么桌面、背景有什么）；
-- 产品要**真实落在环境中**：与桌面接触、有自然的投射阴影、透视与镜头一致；
-- **严禁**出现「empty / bare / vacant / reserved for compositing（预留位置、稍后合成）」这类**留位表述**——
-  写了就会得到一张**空桌子**，产品只能事后硬贴上去，必然穿帮（白底矩形浮在空桌上）；
-- 场景内容可以不同，但**光照 / 色温基调**仍要与全套统一。
-
-## 模型类型：指令型（当前接入的是 seedream）
-- 完整自然语言句子
-- **禁止**权重语法 (词:1.4) / ::2——用「以…为主」的表述
-- **禁止**质量词堆砌（masterpiece / best quality / 8k）
-- 不用负向词
-
-## 整套图一致性
-同一产品的多张订单：**只换场景或角度，锁定光照 / 色温 / 背景基调**——
-描述光照与背景时用相同或高度相近的词句，成品才像「同一次拍摄」。
-（例外：图位本身要**对比不同场景**时，场景内容就该明显不同——要锁定的只是光照/色温基调，不是场景本身。）
-
-## 参考图
-- "@sketch"（role: "compose"）会由内核自动补上，**不需要**你写进 references
-- ${productAvailable
+  const sizeOptions = SIZE_OPTIONS.join(' / ');
+  const productRef = productAvailable
     ? '可以使用 { "ref": "@product", "role": "subject" } 引用商品实物照（商品保真场景）。'
-    : '**不要**引用 "@product"（本次没有商品照）。'}
-${withProductPhoto
-    ? `\n## 颜色纪律（实测教训，必须遵守）\n商品实物照**附在本消息里**。引用 @product 的订单：\n- **颜色词必须与照片一致**——照片是什么色就写什么色\n- **禁止**凭 brief 措辞或品类常识推断颜色（实测：brief 说「拼色」、你按"抓绒常是灰"写了 light grey，实物下半是亮蓝 → 成品错色 = 平台「与实物不符」违规）\n- 拿不准的颜色就不写具体色名，用「the exact colors shown in Reference 1」让参考图定色\n`
-    : ''}
+    : '**不要**引用 "@product"（本次没有商品照）。';
+  const colorRule = withProductPhoto
+    ? `\n## 颜色纪律（实测教训，必须遵守）\n参考图**附在本消息里**。引用参考图的订单：\n- **颜色词必须以参考图为准**——图里是什么色就写什么色\n- **禁止**凭 brief 措辞或品类常识推断颜色（实测：brief 说「拼色」、按常识写了 light grey，实物下半是亮蓝 → 成品错色）\n- 拿不准的颜色就不写具体色名，用「the exact colors shown in Reference 1」让参考图定色\n`
+    : '';
 
-## 尺寸
-按节点图位的宽高比（rect.w/rect.h）从 ${SIZE_OPTIONS.join(' / ')} 里选最接近的一档（下限已内置）。`;
+  // 用 split/join 而非 replaceAll（项目 TS target 的 lib 低于 es2021，无 replaceAll）。
+  // split/join 语义就是「全部替换」，与原模板里同名占位符出现多次的需求一致。
+  return orderSystemTemplate()
+    .split('{{SIZE_OPTIONS}}')
+    .join(sizeOptions)
+    .split('{{PROMPT_LANG}}')
+    .join(promptLangName)
+    .split('{{SAFE_SENTENCE}}')
+    .join(safeSentence)
+    .split('{{PRODUCT_REF}}')
+    .join(productRef)
+    .split('{{COLOR_RULE}}')
+    .join(colorRule);
 }
 
 export interface GenerateOrdersOptions {

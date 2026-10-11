@@ -53,19 +53,19 @@ export interface CanvasHost {
  */
 const ROLE_LABELS: Record<string, Record<string, string>> = {
   en: {
-    subject: 'the product (appearance must match exactly)',
+    subject: 'the subject appearance reference (match its look exactly, then re-shoot it in the scene — do not paste this photo into the frame)',
     compose: 'the layout draft (take only the arrangement, not the contents)',
     style: 'a style reference (light mood and material feel)',
     detail: 'a close-up detail',
   },
   de: {
-    subject: 'das Produkt (Aussehen muss exakt übereinstimmen)',
+    subject: 'die Referenz für das Aussehen des Motivs (Aussehen exakt übernehmen, dann im Szene neu fotografieren – dieses Foto nicht einfügen)',
     compose: 'der Layout-Entwurf (nur die Anordnung übernehmen, keine Inhalte daraus)',
     style: 'eine Stilreferenz (Lichtstimmung und Materialwirkung)',
     detail: 'eine Detailaufnahme',
   },
   zh: {
-    subject: '商品实物（外观必须完全一致）',
+    subject: '主体外观参考（外观必须完全一致，然后**在场景里重拍一遍**——不要把这张照片贴进画面）',
     compose: '版式草图（只取构图排布，不取内容）',
     style: '风格参考（光线氛围与材质质感）',
     detail: '局部细节特写',
