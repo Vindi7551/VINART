@@ -371,6 +371,18 @@ async function handleSessions(
     // 贴图=产品照，落会话工作目录的 uploads/（<workDir>/uploads/）——
     // 一个工作目录就是一个项目，rel 相对 workDir，重放零改动。
     const workDir = await transcript.getWorkDir(sessionId);
+    // Fix C · 落点合理性校验：workDir 必须是**已登记的项目目录**之一。
+    // 若解析出了别的路径（代码走错分支、注册表被外部改动），宁可显式 500，
+    // 也不把用户贴图静默写进一个没人认领的目录——那正是"首图丢失"事故的形态。
+    // （登记由 createSession/registerRoot 保证，正常路径恒过。）
+    const knownRoots = await transcript.listRoots();
+    if (!knownRoots.some((r) => resolve(r) === resolve(workDir))) {
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end(
+        `贴图落点异常：会话 ${sessionId} 解析出的工作目录 ${workDir} 不在已登记目录中` +
+          `（已登记：${knownRoots.join('、') || '（空）'}）——拒绝写入，避免图落到无人认领的位置。`,
+      );
+    }
     const uploadsBase = resolve(workDir, 'uploads');
     const savedImages: string[] = [];
     const fileIds: string[] = [];
@@ -388,9 +400,19 @@ async function handleSessions(
         return res.end(`第 ${i + 1} 张超过 64 MiB（DeepSeek Files API 单文件上限，解码后 ${Math.round(buf.length / 1048576)}MB）`);
       }
       const ext = m[1] === 'png' ? 'png' : m[1] === 'webp' ? 'webp' : m[1] === 'gif' ? 'gif' : 'jpg';
-      const rel = `uploads/chat-${Date.now()}-${i}.${ext}`;
-      mkdirSync(uploadsBase, { recursive: true });
-      writeFileSync(resolve(workDir, rel), buf);
+      // 文件名带随机段：`Date.now()` 在循环内逐张取，同毫秒 + 同扩展名的两张图
+      // 会拼出同一个名字 → 后者覆盖前者（数据丢失）。时间戳只作可读性前缀。
+      const rel = `uploads/chat-${Date.now()}-${i}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+      const abs = resolve(workDir, rel);
+      try {
+        mkdirSync(uploadsBase, { recursive: true });
+        writeFileSync(abs, buf);
+      } catch (e) {
+        // 写盘失败必须**显式失败**，不能静默——否则事件里留下一个指向不存在文件的
+        // 路径引用，前端/渲染层会一路"图丢失"却查不到原因（实测踩过）。
+        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+        return res.end(`第 ${i + 1} 张贴图落盘失败（${abs}）：${(e as Error).message}`);
+      }
       savedImages.push(rel);
 
       // 上传 Files API 拿 file_id——之后每轮对话（含历史重放）引用它，

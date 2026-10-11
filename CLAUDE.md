@@ -33,9 +33,11 @@ Vinart 是一个 **AI 驱动的设计出图 agent**，TypeScript 实现。
 ```
 产品照 + 卖点
   │
-  ▼ ① briefgen —— 创意方案生成（src/workflow/briefgen/，四步纯逻辑）
-  │     perceive 图像识别 → claims 卖点审计 → plan 套图规划 → draft brief 编写
-  │     产物 test_product/briefs/<产品名>-<slot>.md
+  ▼ ① 内容创作 —— 对话技能 `amazon-listing`（主 AI 加载手册后自己完成四步）
+  │     事实锁定 → 卖点审计 → 套图规划 → 逐槽 brief
+  │     ⚠️ 原 `src/workflow/briefgen/`（perceive/claims/plan/draft 四步纯逻辑）已于
+  │        2026-10-11 删除——它由 CLI 驱动，CLI 于 10-09 删除后成了零引用死代码；
+  │        其规则精华已并入 skill
   │
   ▼ ② 方案生成（对话链路 · 调模型）—— 主 AI + 子 agent
   │     工具 spawn_design_agents → save_spec → validate_sketch → render_sketch
@@ -83,14 +85,14 @@ src/
 │   ├── gateway/           模型接入（client · provider · registry · fallback · resilience · type · util）
 │   ├── memory/            ⚠️ 空
 │   ├── session/           会话（chat-session · chat-store · manager · transcript）
-│   ├── skills/            技能（bundled/amazon-listing.ts · registry · skill-tool）
+│   ├── skills/            技能（registry 三层来源 · skill-tool · types）
 │   ├── subagent/          子 agent（agent-loop · runner · spawn-tool · design-system）
 │   ├── tools/             工具集（见下表）
-│   └── SESSIONS.md        会话层设计文档
+│   ├── SESSIONS.md        会话层设计文档
+│   └── SKILLS.md          技能层设计文档（三层来源 + 优先级 bundled>project>user）
 ├── render/                Blink 渲染（blink-renderer · embed-images · index）
 ├── schema/                ⚠️ 空（`asset-order.ts` 已移至 workflow/assetsgen/）
 └── workflow/              一条工作流一个目录
-    ├── briefgen/          创意方案（链 A）
     ├── design-sketch/     版式规格 + **渲染真源 render.ts** ← 改这里之前先读它的 README
     ├── appearance/        外观编译（compile.ts）
     ├── assetsgen/         素材生成（asset-order · order · image · cutout）
@@ -103,7 +105,6 @@ src/
 |---|---|
 | 出图阶段 | `design-sketch/runtime.ts` + `assetsgen/{order,image}.ts` + `compose/assemble.ts` |
 | 校验 | `design-sketch/validate.ts` |
-| 链 A 四步 | `briefgen/{perceive,claims,plan,draft}.ts` |
 
 ### 工具集（`src/designharness/tools/`）
 
@@ -259,7 +260,6 @@ src/
 |---|---|
 | **`docs/EDITOR-EVOLUTION.md`** | **项目级**：编辑器现状 + 类 PS 演进方案 + 分阶段验收 + 未决问题。**动编辑器前先读。** |
 | `src/workflow/design-sketch/README.md` | 版式阶段完整规范（契约 / 校验 / 渲染）。**改这里之前先读。** |
-| `src/workflow/briefgen/README.md` | 创意方案生成四步 |
 | `src/workflow/compose/README.md` | 组装出图 + 文字自适应 |
 | `src/workflow/assetsgen/README.md` | 素材订单与生成 |
 | `src/designharness/SESSIONS.md` | 会话层设计 |

@@ -34,6 +34,8 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
       '用户明确同意后再带 confirm:true 执行。用户没确认就调 confirm 属于违规。' +
       '订单写法按七要素规范：主体/动作/场景/风格/光线/构图；引用 @product 必须带保真声明' +
       '（keep the shape, lid, label and color exactly the same…）；权重语法和质量词堆砌无效。' +
+      '要「产品摆在场景里」时，用 @product 让模型**直接画出产品在场景中的整图**，' +
+      '不要只生成空场景再叠产品图层（那样只会得到白底矩形硬贴）。' +
       '生成完素材后，用 render_design 重渲该版式出成品。',
     parameters: {
       type: 'object',

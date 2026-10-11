@@ -1,15 +1,24 @@
 /**
- * Skill registry —— 两层来源合并：
- * - bundled：代码内置（registerBundledSkill，如 amazon-listing 流程手册）
- * - project：<workDir>/skills/<name>/SKILL.md（用户/项目自建，重名覆盖 bundled）
+ * Skill registry —— 三层来源合并：
+ * - bundled：代码内置（registerBundledSkill，随产品发；V1 空壳，将来放产品能力说明书）
+ * - project：<workDir>/skills/<name>/SKILL.md（项目级定制，按工作目录隔离）
+ * - user   ：~/.vinart/skills/<name>/SKILL.md（用户全局，跨所有工作目录可用）
+ *
+ * **同名优先级：bundled > project > user**（决策 2026-10-11）：
+ * - bundled 最高 = 只读锁定层。产品能力说明书是「产品事实」，不该被用户/项目用一份
+ *   写错的版本覆盖 → 防止误导模型。代价：内置技能永远不可被覆盖（想定制只能换名）。
+ * - project > user = 就近优先。越靠近当前任务（具体项目）越优先，符合「我专门为这个项目
+ *   写的就该生效」；user 是全局兜底，同名时让位给更具体的 project。
+ * - 不同名时三层**全部生效**，互不干扰；「覆盖」仅在同名时发生。
  *
  * 消费方：
  * - chat-store 的 systemNote：renderSkillCatalog() 渲染 <available_skills> 目录
  *   （内容稳定 → prompt cache 前缀命中，skill 集合变化才变字节）
  * - skill 工具（同目录 skill-tool.ts）：getSkill() 按名加载全文
  */
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join, resolve, sep } from 'node:path';
 import type { SkillDefinition, SkillFrontmatter, SkillSummary } from './types';
 
 // ── bundled（代码内置）──
@@ -21,7 +30,7 @@ export function registerBundledSkill(skill: Omit<SkillDefinition, 'source'>): vo
   bundled.push({ ...skill, source: 'bundled' });
 }
 
-// ── project（<workDir>/skills/ 文件系统）──
+// ── 文件系统来源（project / user 共用扫描）──
 
 const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -41,9 +50,12 @@ function parseFrontmatter(raw: string): { data: SkillFrontmatter; content: strin
   return { data, content: m[2] ?? '' };
 }
 
-/** 列出某工作目录下的项目级 skill（<workDir>/skills/<name>/SKILL.md） */
-function listProjectSkills(workDir: string): SkillDefinition[] {
-  const root = join(resolve(workDir), 'skills');
+/**
+ * 扫描一个 skills 根目录（<root>/<name>/SKILL.md），返回其中的 skill。
+ * project（<workDir>/skills/）与 user（~/.vinart/skills/）共用本函数，
+ * 两者只有根目录与 source 标记不同。
+ */
+function scanSkillsRoot(root: string, source: 'project' | 'user'): SkillDefinition[] {
   if (!existsSync(root)) return [];
   const out: SkillDefinition[] = [];
   try {
@@ -66,7 +78,7 @@ function listProjectSkills(workDir: string): SkillDefinition[] {
         name,
         description: data.description,
         whenToUse: data.whenToUse,
-        source: 'project',
+        source,
         path: mdPath,
         content,
       });
@@ -77,22 +89,84 @@ function listProjectSkills(workDir: string): SkillDefinition[] {
   return out;
 }
 
+/** 项目级：<workDir>/skills/<name>/SKILL.md（按工作目录隔离） */
+function listProjectSkills(workDir: string): SkillDefinition[] {
+  return scanSkillsRoot(join(resolve(workDir), 'skills'), 'project');
+}
+
+/** 用户全局级：~/.vinart/skills/<name>/SKILL.md（跨所有工作目录可用） */
+function listUserSkills(): SkillDefinition[] {
+  return scanSkillsRoot(join(homedir(), '.vinart', 'skills'), 'user');
+}
+
 // ── 合并读取 ──
 
-/** 全部可用 skill（project 重名覆盖 bundled——项目级定制优先） */
+/**
+ * 全部可用 skill。同名时按 **bundled > project > user** 取高优先级者
+ * （按优先级从高到低依次占位，低优先级遇重名直接跳过）。
+ */
 export function listSkills(workDir: string): SkillSummary[] {
-  const project = listProjectSkills(workDir);
-  const projectNames = new Set(project.map((p) => p.name));
-  const merged: SkillSummary[] = [...project];
-  for (const b of bundled) {
-    if (!projectNames.has(b.name)) merged.push(b);
+  const merged: SkillSummary[] = [];
+  const seen = new Set<string>();
+  for (const s of [...bundled, ...listProjectSkills(workDir), ...listUserSkills()]) {
+    if (seen.has(s.name)) continue;
+    seen.add(s.name);
+    merged.push(s);
   }
   return merged;
 }
 
-/** 按名加载完整定义；不存在返回 null */
+/** 按名加载完整定义；优先级同 listSkills（bundled > project > user）；不存在返回 null */
 export function getSkill(workDir: string, name: string): SkillDefinition | null {
-  return listProjectSkills(workDir).find((s) => s.name === name) ?? bundled.find((s) => s.name === name) ?? null;
+  return (
+    bundled.find((s) => s.name === name) ??
+    listProjectSkills(workDir).find((s) => s.name === name) ??
+    listUserSkills().find((s) => s.name === name) ??
+    null
+  );
+}
+
+// ── 目录内文件读取（file 参数；仅 project / user 层有目录，bundled 无目录）──
+
+/**
+ * 单个文件读取上限（超出报错，避免撑爆上下文）。
+ * 注意：**不预设 skill 目录的结构、也不自动枚举文件**——目录里怎么组织、有哪些文件，
+ * 由 SKILL.md 正文自行说明（用相对路径指向），模型按需来取。
+ */
+const FILE_MAX_BYTES = 64 * 1024;
+
+/** skill 目录（SKILL.md 所在目录）；bundled 无 path → null */
+function skillDirOf(skill: SkillDefinition): string | null {
+  return skill.path ? dirname(skill.path) : null;
+}
+
+/**
+ * 读取 skill 目录内的某个文件。`rel` 是**相对 SKILL.md 所在目录**的路径，
+ * 可含子目录（如 `contracts/production-contract.md`）——目录结构完全自由，不做枚举/分类。
+ * **路径必须落在该 skill 目录内**（防 `../` 穿越）；不存在 / 非普通文件 / 超上限均报错。
+ */
+export function readSkillFile(
+  skill: SkillDefinition,
+  rel: string,
+): { ok: true; content: string } | { ok: false; error: string } {
+  const dir = skillDirOf(skill);
+  if (!dir) return { ok: false, error: '该 skill 无目录（内置 skill 不支持读取目录内文件）' };
+  const base = resolve(dir);
+  const abs = resolve(base, rel);
+  if (abs !== base && !abs.startsWith(base + sep)) {
+    return { ok: false, error: `路径越界（只允许读取本 skill 目录内的文件）：${rel}` };
+  }
+  let st;
+  try {
+    st = statSync(abs);
+  } catch {
+    return { ok: false, error: `文件不存在：${rel}` };
+  }
+  if (!st.isFile()) return { ok: false, error: `不是文件：${rel}` };
+  if (st.size > FILE_MAX_BYTES) {
+    return { ok: false, error: `文件过大（${st.size} 字节，上限 ${FILE_MAX_BYTES}）：${rel}` };
+  }
+  return { ok: true, content: readFileSync(abs, 'utf8') };
 }
 
 // ── 目录渲染（systemNote 注入）──

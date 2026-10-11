@@ -555,8 +555,18 @@ export const DEFAULT_WORK_DIR = resolve('test_product');
 /**
  * 会话的工作目录：**先看它实际落在哪个项目目录里**（这才是绑定的事实来源），
  * 老数据（文件还在旧落点）才退到"最后一条 workDir meta"→ 缺省 test_product。
+ *
+ * ⚠️ **必须先查 `pending`**（惰性会话的预订落点）——它才是「文件还没建时」的唯一真源。
+ * 反例（实测事故）：`chat` 端点在**首条消息**里先落盘图片再 appendEvent；此刻会话尚未
+ * 落盘、只在 `pending` 里，若只走 `resolveSessionLocation`（仅扫磁盘）会解析失败 →
+ * 退回 `DEFAULT_WORK_DIR` → 首图被写进 `test_product/uploads/`，而事件里存的是相对
+ * **真实** workDir 的 `uploads/xxx.jpg` → 之后按真 workDir 解析必 404（表现为"首图丢失"）。
+ * 同一个坑会同时砸中 `/file/` 服务与 `/artifacts` 清单（都不经 appendEvent）。
  */
 export async function getWorkDir(sessionId: string): Promise<string> {
+  // 预订中（未落盘）的会话：root 只在内存里——这是首条消息时的必经分支
+  const pend = pending.get(sessionId);
+  if (pend) return pend.root;
   const loc = await resolveSessionLocation(sessionId);
   return loc?.root ?? DEFAULT_WORK_DIR;
 }
@@ -573,6 +583,15 @@ export async function setWorkDir(sessionId: string, dir: string): Promise<string
   const abs = await registerRoot(dir);
   pending.set(sessionId, { root: abs });
   return abs;
+}
+
+/**
+ * ⚠️ 仅供探针使用：清掉某会话的 pending 预订，模拟「旧数据」（只有磁盘落点、
+ * 内存里没有预订）——用来验证 `getWorkDir` 的磁盘回退分支仍然工作。
+ * 生产代码**不要**调用它：清了预订会让未落盘的会话彻底失去落点。
+ */
+export function __debugClearPendingForProbe(sessionId: string): void {
+  pending.delete(sessionId);
 }
 
 // ── 索引 ────────────────────────────────────────────────────────────────

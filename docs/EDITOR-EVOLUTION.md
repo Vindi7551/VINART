@@ -30,15 +30,15 @@ src/
 │   ├── gateway/           模型接入（client / provider / registry / fallback / resilience / type）
 │   ├── memory/            ⚠️ 空
 │   ├── session/           会话（chat-session / chat-store / manager / transcript）
-│   ├── skills/            技能（bundled / registry / skill-tool）
+│   ├── skills/            技能（registry 三层来源 / skill-tool / types）
 │   ├── subagent/          子 agent（agent-loop / runner / spawn-tool / design-system）
 │   ├── tools/             工具（design-sketch / generate-assets / render-design /
 │   │                              compile-appearance / **edit-spec** / project-paths）
-│   └── SESSIONS.md        会话层设计文档
+│   ├── SESSIONS.md        会话层设计文档
+│   └── SKILLS.md          技能层设计文档（三层来源 + 优先级）
 ├── render/                Blink 渲染（blink-renderer / embed-images / index）
 ├── schema/                ⚠️ **空**（`asset-order.ts` 已移至 `workflow/assetsgen/`）
 └── workflow/              一条工作流一个目录
-    ├── briefgen/          创意方案
     ├── design-sketch/     版式规格 + **渲染真源 `render.ts`**
     ├── appearance/        外观编译（compile.ts）
     ├── assetsgen/         素材生成（asset-order / order / image / cutout）
@@ -706,7 +706,7 @@ src/editor/                        ← M1 已实现（✅）+ 后续（⏳）
 | ----------------------------------------------------- | -------------------------------------- |
 | `CLAUDE.md`                                           | 项目总览（✅ 已于 2026-10-10 全量重写，与本文一致）       |
 | `src/workflow/design-sketch/README.md`                | 渲染真源所在阶段（spec → HTML，纯函数）。**改那里之前先读它** |
-| `src/workflow/{briefgen,compose,assetsgen}/README.md` | 链路上的其它阶段                               |
+| `src/workflow/{compose,assetsgen}/README.md`          | 链路上的其它阶段                               |
 | `src/designharness/SESSIONS.md`                       | 会话层设计（同类"带状态横幅的设计文档"，格式参照）             |
 | `scripts/_probe-*.ts`                                 | 项目探针惯例；本文实验探针**尚未移植进来**（见 §7 ⚠️）       |
 

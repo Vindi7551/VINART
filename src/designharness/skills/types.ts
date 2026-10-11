@@ -16,8 +16,14 @@ export interface SkillSummary {
   description: string;
   /** 何时使用的补充路由提示（可选） */
   whenToUse?: string;
-  /** 来源：bundled = 代码内置；project = <workDir>/skills/ 下用户/项目自建 */
-  source: 'bundled' | 'project';
+  /**
+   * 来源（三选一）：
+   * - bundled：代码内置（随产品发；V1 空壳，将来放产品能力说明书）
+   * - project：<workDir>/skills/ 下项目级自建（按工作目录隔离）
+   * - user   ：~/.vinart/skills/ 下用户全局自建（跨所有工作目录可用）
+   * 同名优先级：**bundled > project > user**（决策 2026-10-11，见 registry.ts 头注）。
+   */
+  source: 'bundled' | 'project' | 'user';
   /** project 来源的 SKILL.md 绝对路径 */
   path?: string;
 }
