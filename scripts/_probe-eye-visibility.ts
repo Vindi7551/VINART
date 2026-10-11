@@ -73,14 +73,20 @@ await page.addInitScript((sid) => {
   localStorage.setItem('vinart.sessionId', sid);
 }, SID);
 
-/** 画布所在的 iframe（以 `data-ve-ready` 就绪标记为准，不靠下标猜） */
+/**
+ * 画布所在的 iframe。
+ *
+ * ⚠️ 2026-10-11 起**不能再靠 `data-ve-ready` 认**：那个标记是旧"注入脚本"留下的，
+ * 编辑器搬去父文档（`src/editor/`）后子文档里已无脚本，标记随之消失。
+ * 改为直接认父页面的 `.preview-frame`。
+ */
 async function canvasFrame(): Promise<Frame> {
-  for (const f of page.frames()) {
-    if (f === page.mainFrame()) continue;
-    const ready = await f.evaluate(() => document.documentElement.hasAttribute('data-ve-ready')).catch(() => false);
-    if (ready) return f;
-  }
-  throw new Error('画布 iframe 未就绪（data-ve-ready 缺失）');
+  const el = page.locator('iframe.preview-frame').first();
+  await el.waitFor({ state: 'attached', timeout: 15000 });
+  const handle = await el.elementHandle();
+  const f = handle ? await handle.contentFrame() : null;
+  if (f) return f;
+  throw new Error('画布 iframe 未就绪（.preview-frame 拿不到 contentFrame）');
 }
 
 /** iframe 里当前「看得见」的图层 id */
@@ -208,10 +214,9 @@ ok((await page.locator('.ui-list-item.active').count()) === 0, '选中被自动�
     () => (document.querySelector('[data-layer="title_cn"]') as HTMLElement).style.outline,
   );
   ok(outline === '', `iframe 里选中虚线框已收掉（style.outline="${outline}"）`);
-  const ovDisplay = await frame.evaluate(() => {
-    const ov = [...document.querySelectorAll('body > div')].find((d) =>
-      (d as HTMLElement).style.zIndex === '2147483645',
-    ) as HTMLElement | undefined;
+  // ⚠️ 2026-10-11 起覆盖层在**父文档**（`src/editor/overlay.ts`），不再住子文档
+  const ovDisplay = await page.evaluate(() => {
+    const ov = document.querySelector('[data-ve-overlay]') as HTMLElement | null;
     return ov ? ov.style.display : '(未找到 overlay)';
   });
   ok(ovDisplay === 'none', `选中框 overlay 已隐藏（display=${ovDisplay}）`);
@@ -270,7 +275,7 @@ ok((await visibleIds(frame2)).length === 10, '回到全显示（不把隐藏态�
 await page.screenshot({ path: `${OUT}/eye-1-all-visible.png` });
 
 // ══════════════════════════════════════════════
-console.log('\n【9】重载后宿主→画布通道仍通（新文档还认 ve:select / ve:patch）');
+console.log('\n【9】重载后宿主→画布通道仍通（新文档已被重新绑定）');
 const regAfter = sha(REG);
 await row('slogan').click();
 await page.waitForTimeout(250);
@@ -278,7 +283,7 @@ await page.waitForTimeout(250);
   const outline = await frame2.evaluate(
     () => (document.querySelector('[data-layer="slogan"]') as HTMLElement).style.outline,
   );
-  ok(outline.includes('solid'), `重载后的文档仍收到 ve:select（outline="${outline}"）`);
+  ok(outline.includes('solid'), `重载后的文档仍被选中描边（outline="${outline}"）`);
   ok(await page.locator('.ui-section-title', { hasText: '文字' }).count() > 0, '面板切到 slogan 的检查器');
 }
 

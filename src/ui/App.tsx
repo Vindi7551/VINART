@@ -99,11 +99,9 @@ function layoutApiUrl(
 
 export function App() {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [selectedElements, setSelectedElements] = useState<Set<string>>(new Set());
   // 旧 run/pipeline 的生成中标记。聊天发送暂不互斥（SSE 流由后端会话锁保护）。
   const [isGenerating] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [htmlCode] = useState<string | undefined>(undefined);
   /** 产物可能有新图时 +1,画廊据此重新拉清单 */
   const [galleryKey, setGalleryKey] = useState(0);
 
@@ -1063,17 +1061,6 @@ export function App() {
     [sessionId, ensureSession, layout, refreshSessions, toChatImageDataURL],
   );
 
-  const handleExport = useCallback(() => {
-    if (!htmlCode) return;
-    const blob = new Blob([htmlCode], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `vinart-${Date.now()}.html`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [htmlCode]);
-
   // 供 UI 判断：agent 层(对话式生成)是否可用
   void AGENT_LAYER_EMPTY;
 
@@ -1111,9 +1098,7 @@ export function App() {
           onResizeStart={handleResizeStartLeft}
         />
         <PreviewPanel
-          htmlCode={layout ? undefined : htmlCode}
           previewUrl={previewUrl}
-          selectedElements={selectedElements}
           layoutData={layout}
           sessionId={sessionId}
           hiddenLayers={hiddenLayers}
@@ -1124,14 +1109,6 @@ export function App() {
             setActiveWord(word);
           }}
           hostSignal={hostSignal}
-          onToggleElement={(id) => {
-            setSelectedElements((prev) => {
-              const next = new Set(prev);
-              next.has(id) ? next.delete(id) : next.add(id);
-              return next;
-            });
-          }}
-          onExport={htmlCode ? handleExport : undefined}
         />
         {/* 检查器栏（版式编辑器）—— **独立一栏**，贴画布右侧；无版式时不占位。
             2026-10-10 从 .right-col 里搬出来：编辑器与对话不再同栏。

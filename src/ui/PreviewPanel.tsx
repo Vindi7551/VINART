@@ -1,40 +1,26 @@
-import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
-import { extractElements, type ExtractedElement } from '../preview/extract-elements';
-import { createInteractionScript } from '../preview/interaction-script';
-import { createLayoutEditorScript } from '../preview/layout-editor-script';
+import { useEffect, useRef, useCallback, useState } from 'react';
+import { createEditor, type EditorHandle } from '../editor';
+import type { LayerPatch } from '../editor/types';
 import type { LayoutData, HostSignal } from './types';
 
-export interface ElementSelectEvent {
-  tag: string;
-  id: string;
-  className: string;
-  text: string;
-  slotId: string;
-  rect: DOMRectReadOnly;
-}
-
 interface PreviewPanelProps {
-  htmlCode?: string;
+  /** 数据还没到时的兜底图（PNG） */
   previewUrl?: string | null;
-  selectedElements: Set<string>;
-  onToggleElement: (id: string) => void;
-  onExport?: () => void;
-  /** 版式编辑模式:有值 = 用服务端现场渲染的 HTML + 受控编辑器(逐元素修改) */
+  /** 版式编辑模式：有值 = 用服务端现场渲染的 HTML + 父侧编辑器 */
   layoutData?: LayoutData | null;
-  /** 会话 id:有值 = 素材 base 走 file API(工作目录模式);无 = 旧约定 /files/ */
+  /** 会话 id：有值 = 素材 base 走 file API（工作目录模式）；无 = 旧约定 /files/ */
   sessionId?: string | null;
   /** 图上操作(拖拽/缩放/旋转/就地改字)→ App 合并进持久数据 */
-  onLayerChange?: (id: string, patch: Record<string, unknown>) => void;
-  /** 图上点选 → App 侧同步选中(右栏面板跟着切) */
+  onLayerChange?: (id: string, patch: LayerPatch) => void;
+  /** 图上点选 → App 侧同步选中（右栏面板跟着切） */
   onLayerSelect?: (id: string) => void;
   /** 点在染色词上 → 面板单行颜色切换为该词的颜色 */
   onLayerWord?: (id: string, word: string) => void;
-  /** 宿主信号:参数面板/图层清单发起的选中与 patch,转发给 iframe */
+  /** 宿主信号：参数面板/图层清单发起的选中与 patch */
   hostSignal?: HostSignal | null;
   /**
-   * 图层可视性(隐藏集合)—— **编辑器视角态,不进 spec**。
-   * 整集下发(`ve:set-hidden`),幂等;iframe 重载后由 onLoad 重放。
-   * 见 `layer-visibility.ts` 顶部说明(为什么不能走 onLayerPatch)。
+   * 图层可视性（隐藏集合）—— **编辑器视角态，不进 spec**。
+   * 整集下发（`setHidden`），幂等；iframe 重载后由 `onLoad` 重放。
    */
   hiddenLayers?: ReadonlySet<string> | null;
 }
@@ -44,11 +30,7 @@ const DEFAULT_WIDTH = 800;
 const DEFAULT_HEIGHT = 1200;
 
 export function PreviewPanel({
-  htmlCode,
   previewUrl,
-  selectedElements,
-  onToggleElement,
-  onExport,
   layoutData,
   sessionId,
   onLayerChange,
@@ -60,71 +42,61 @@ export function PreviewPanel({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<EditorHandle | null>(null);
 
   // ── 画布状态：缩放 & 平移 ──
   const [zoom, setZoom] = useState(1);
   const [panX, setPanX] = useState(0);
   const [panY, setPanY] = useState(0);
   const [dragging, setDragging] = useState(false);
+  /** 就地改字中：此时把指针**还给 iframe**，好让鼠标能点光标位置 */
+  const [editingText, setEditingText] = useState(false);
   const dragStart = useRef({ x: 0, y: 0, px: 0, py: 0 });
   const [canvasSize, setCanvasSize] = useState({ w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT });
 
-  // ── 动态提取元素 ──
-  const elements: ExtractedElement[] = useMemo(
-    () => (htmlCode ? extractElements(htmlCode) : []),
-    [htmlCode],
-  );
+  // ── 编辑器读取的一切都走 ref ──
+  // 目的：`bind()` 保持**稳定**，只在 srcdoc 变化时重挂；否则每次 props 变
+  // 都会 dispose + create（覆盖层会闪、编辑态会丢）。
+  const cbRef = useRef({ onLayerChange, onLayerSelect, onLayerWord });
+  cbRef.current = { onLayerChange, onLayerSelect, onLayerWord };
+  const specRef = useRef(layoutData?.spec ?? null);
+  specRef.current = layoutData?.spec ?? null;
+  const appearanceRef = useRef(layoutData?.appearance ?? null);
+  appearanceRef.current = layoutData?.appearance ?? null;
+  const hiddenRef = useRef<ReadonlySet<string>>(hiddenLayers ?? new Set());
+  hiddenRef.current = hiddenLayers ?? new Set();
 
-  // ── 版式编辑模式:srcdoc 只在换版式时构建一次 ──
-  // base 快照与实时数据解耦:patch 走 postMessage + App 数据合并,
-  // 若让 srcdoc 跟随数据重建,iframe 整页重载会刷新掉实时编辑态(实测踩过)
-  const [base, setBase] = useState<{
-    name: string;
-    html: string;
-    spec: string;
-    appearance: string;
-  } | null>(null);
+  // ── 版式编辑模式：srcdoc 只在换版式时构建一次 ──
+  // base 快照与实时数据解耦：patch 走宿主 state 合并，若让 srcdoc 跟着数据重建，
+  // iframe 整页重载会刷新掉实时编辑态（实测踩过）。
+  const [base, setBase] = useState<{ name: string; html: string } | null>(null);
   useEffect(() => {
     if (layoutData && (!base || base.name !== layoutData.name)) {
-      setBase({
-        name: layoutData.name,
-        html: layoutData.html,
-        spec: JSON.stringify(layoutData.spec),
-        appearance: JSON.stringify(layoutData.appearance),
-      });
+      setBase({ name: layoutData.name, html: layoutData.html });
     }
   }, [layoutData, base]);
-  const layoutSrcdoc = useMemo(() => {
-    if (!base) return '';
-    // 服务端现场渲染的成品 HTML（data 端点）——不再有"独立编辑器注入残留"要剥：
-    // 那份注入（scripts/editor.inject.js + injectEditor）已于 2026-10-09 随
-    // final.html / final.linked.html 一起删除（见 emit-html.ts 头注释）。
-    const html = base.html;
-    // 相对素材的基准(必须进 head):
-    // - 会话工作目录模式:file API 作 base——query 型 base 下,相对文件名会追加到
-    //   rel 参数后(base 带 ?rel=designs/<name>/ + img src="hero.png"
-    //   → ?rel=designs/<name>/hero.png),后端从工作目录流式返回
-    // - legacy:dev-server 的 /files 静态映射(test_product)
-    const baseTag = sessionId
-      ? `<base href="/api/sessions/${sessionId}/file/designs/${base.name}/">`
-      : `<base href="/files/test_product/layout/${base.name}/">`;
-    // 数据块 + 编辑脚本必须注入 **body 末尾**——放 head 里执行时 body/canvas
-    // 还不存在,脚本会静默退出,交互全无(实测踩过)
-    const inject =
-      `<script type="application/json" id="__vinart-data">${base.spec}</script>` +
-      `<script type="application/json" id="__vinart-appearance">${base.appearance}</script>` +
-      createLayoutEditorScript();
-    return html
-      .replace('</head>', baseTag + '</head>')
-      .replace('</body>', inject + '</body>');
-  }, [base, sessionId]);
 
-  // ── iframe srcdoc ──
-  const srcdoc = useMemo(() => {
-    if (layoutData) return layoutSrcdoc;
-    if (!htmlCode) return '';
-    return htmlCode.replace('</body>', `${createInteractionScript()}</body>`);
-  }, [layoutData, layoutSrcdoc, htmlCode, sessionId]);
+  /**
+   * ⚠️ 这里**只**插一个 `<base>` 标签，不再注入任何 `<script>`。
+   *
+   * 编辑器已搬去**父文档**（`src/editor/`）：iframe 退化为纯渲染器，
+   * 交互（点选 / 拖拽 / 缩放 / 旋转 / 就地改字）全由父侧覆盖层接管。
+   * 因此子文档里的 `<script>` 数恒为 0 —— 这是 M1 的不变量之一。
+   *
+   * 相对素材的基准（必须进 head）：
+   * - 会话工作目录模式：file API 作 base
+   * - legacy：dev-server 的 /files 静态映射（test_product）
+   */
+  const layoutSrcdoc = !base
+    ? ''
+    : base.html.replace(
+        '</head>',
+        (sessionId
+          ? `<base href="/api/sessions/${sessionId}/file/designs/${base.name}/">`
+          : `<base href="/files/test_product/layout/${base.name}/">`) + '</head>',
+      );
+
+  const srcdoc = layoutData ? layoutSrcdoc : '';
 
   // ── 自动适应画布 ──
   const fitToCanvas = useCallback(() => {
@@ -148,25 +120,100 @@ export function PreviewPanel({
     return () => window.removeEventListener('resize', onResize);
   }, [fitToCanvas]);
 
-  // 每次 htmlCode 变更时自适应
+  // 版式编辑模式：画布尺寸直接来自 spec
+  // ⚠️ 尺寸没变就**必须原样返回 prev**：`layoutData` 每次提交（图上拖一下）
+  // 都会换一个新对象，若这里无脑 `setCanvasSize({...})`，`canvasSize` 身份一变
+  // → `fitToCanvas` 身份一变 → 下面那个"自适应"effect 重跑 → **zoom/pan 每次
+  // 编辑都被打回 fit**。实测：改之前连点两次缩小都停在同一个值，改后是 0.3005 /
+  // 0.2504 / 0.2087 三个不同档位。
   useEffect(() => {
-    if (htmlCode) fitToCanvas();
-  }, [htmlCode, fitToCanvas]);
-
-  // htmlCode 变更时重置画布尺寸，等 iframe 上报真实尺寸
-  useEffect(() => {
-    if (htmlCode) setCanvasSize({ w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT });
-  }, [htmlCode]);
-
-  // 版式编辑模式:画布尺寸直接来自 spec
-  useEffect(() => {
-    if (layoutData) setCanvasSize({ w: layoutData.spec.canvas.width, h: layoutData.spec.canvas.height });
+    if (!layoutData) return;
+    const { width, height } = layoutData.spec.canvas;
+    setCanvasSize((prev) => (prev.w === width && prev.h === height ? prev : { w: width, h: height }));
   }, [layoutData]);
 
+  // ══════════════════════════════════════════════════════════════════
+  // 编辑器：挂在父文档的覆盖层，target = iframe 的 contentDocument
+  // ══════════════════════════════════════════════════════════════════
+
+  /**
+   * 重挂编辑器。必须在 **iframe load 之后**调：`srcdoc` 变了要等新文档建好，
+   * 早调拿到的是上一份 `contentDocument`（或空壳）。
+   */
+  const bind = useCallback(() => {
+    const wrap = wrapperRef.current;
+    const iframe = iframeRef.current;
+    const root = iframe?.contentDocument;
+    const spec = specRef.current;
+    if (!wrap || !root || !spec) return;
+
+    editorRef.current?.dispose();
+    // `document` = 宿主（父）文档；`root` = 子文档。两者都从参数流入，
+    // 编辑器自己不认识任何"当前页面"（见 src/editor/README.md 不变量①）。
+    const ed = createEditor(document, wrap, root, {
+      spec,
+      appearance: appearanceRef.current ?? undefined,
+      onSelect: (id) => {
+        if (id) cbRef.current.onLayerSelect?.(id);
+      },
+      onChange: (id, patch) => cbRef.current.onLayerChange?.(id, patch),
+      onWord: (id, word) => cbRef.current.onLayerWord?.(id, word),
+      onEditingChange: setEditingText,
+    });
+    ed.setHidden(hiddenRef.current);
+    editorRef.current = ed;
+  }, []);
+
+  // 换版式（srcdoc 变）→ 拆掉旧绑定；新绑定交给 onLoad
+  useEffect(() => {
+    if (!srcdoc) {
+      editorRef.current?.dispose();
+      editorRef.current = null;
+      return;
+    }
+    // srcdoc 已是新值时，`onLoad` 一定会来；这里只负责把旧的拆掉
+    editorRef.current?.dispose();
+    editorRef.current = null;
+  }, [srcdoc]);
+
+  // 卸载时清干净（React StrictMode 会挂载两次，必须幂等）
+  useEffect(
+    () => () => {
+      editorRef.current?.dispose();
+      editorRef.current = null;
+    },
+    [],
+  );
+
+  // 数据变了 → 刷新编辑器的工作副本 + 覆盖层
+  useEffect(() => {
+    if (!layoutData) return;
+    editorRef.current?.updateLayout(layoutData.spec, layoutData.appearance);
+  }, [layoutData]);
+
+  // 隐藏集合变了 → 整集下发（幂等）
+  useEffect(() => {
+    editorRef.current?.setHidden(hiddenLayers ?? new Set());
+  }, [hiddenLayers]);
+
+  // 宿主信号（面板发起的选中 / patch）→ 直接调编辑器，不再走 postMessage
+  const lastSeq = useRef(0);
+  useEffect(() => {
+    if (!hostSignal || hostSignal.seq === lastSeq.current) return;
+    lastSeq.current = hostSignal.seq;
+    const ed = editorRef.current;
+    if (!ed) return;
+    if (hostSignal.type === 'select') ed.select(hostSignal.id);
+    if (hostSignal.type === 'patch') ed.patch(hostSignal.id, hostSignal.patch ?? {});
+  }, [hostSignal]);
+
   // ── 鼠标拖拽平移 ──
+  // ⚠️ 只在**画布外的灰底**上拖才平移。画布内部的指针归编辑器：
+  // iframe 现在 `pointer-events:none`，画布内的 mousedown 目标会变成
+  // `.canvas-wrapper` —— 若沿用旧条件（target === wrapper）就会和"拖图层"打架。
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      if (e.target === wrapperRef.current || e.target === canvasRef.current) {
+      if (e.target === canvasRef.current) {
         setDragging(true);
         dragStart.current = { x: e.clientX, y: e.clientY, px: panX, py: panY };
       }
@@ -213,139 +260,6 @@ export function PreviewPanel({
     return () => container.removeEventListener('wheel', handler);
   }, []);
 
-  // ── 与 iframe 通信 ──
-  // 信封同时带 action(旧 interaction-script)与 type(受控编辑脚本)——两代脚本共用一个通道
-  const sendToIframe = useCallback(
-    (action: string, data?: Record<string, unknown>) => {
-      iframeRef.current?.contentWindow?.postMessage(
-        { source: 'vinart', action, type: action, ...data },
-        '*',
-      );
-    },
-    [],
-  );
-
-  // zoom 变化 → 编辑脚本换算鼠标 delta 用
-  useEffect(() => {
-    if (layoutData) sendToIframe('ve:viewport', { zoom });
-  }, [zoom, layoutData, sendToIframe]);
-
-  // 宿主信号(面板发起的选中/patch)转发给 iframe
-  const lastSeq = useRef(0);
-  useEffect(() => {
-    if (!hostSignal || hostSignal.seq === lastSeq.current) return;
-    lastSeq.current = hostSignal.seq;
-    if (hostSignal.type === 'select') sendToIframe('ve:select', { id: hostSignal.id });
-    if (hostSignal.type === 'patch')
-      sendToIframe('ve:patch', { id: hostSignal.id, patch: hostSignal.patch });
-  }, [hostSignal, sendToIframe]);
-
-  /**
-   * 图层可视性 → iframe。
-   *
-   * **整集下发**（不是增量开关），两处都要发：
-   * ① 宿主隐藏集合变了；
-   * ② iframe 重载之后（onLoad）——srcdoc 重建 = 新文档，旧的 postMessage 早丢了，
-   *    而 DOM 回来是"全显示"，不重放就会与宿主态不一致。
-   */
-  const sendHidden = useCallback(() => {
-    if (!layoutData) return;
-    sendToIframe('ve:set-hidden', { ids: [...(hiddenLayers ?? [])] });
-  }, [layoutData, hiddenLayers, sendToIframe]);
-
-  useEffect(() => {
-    sendHidden();
-  }, [sendHidden]);
-
-  // ── 列表→画布：选中新增元素时通知 iframe 高亮 ──
-  const prevSelected = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    for (const id of selectedElements) {
-      if (!prevSelected.current.has(id)) {
-        const el = elements.find((e) => e.id === id);
-        if (el) {
-          sendToIframe('select-by-id', {
-            vinartId: el.id,
-            slotId: el.slotId,
-            tag: el.tag,
-            text: el.textSnippet,
-          });
-        }
-        break;
-      }
-    }
-    prevSelected.current = new Set(selectedElements);
-  }, [selectedElements, elements, sendToIframe]);
-
-  // ── 画布→列表：监听 iframe postMessage ──
-  useEffect(() => {
-    function handleMessage(e: MessageEvent) {
-      const msg = e.data;
-      if (!msg || msg.source === 'vinart') return;
-
-      if (msg.type === 'vinart:select') {
-        const el = msg.element as ElementSelectEvent & { vinartId?: string; vinartType?: string };
-        // 优先用 data-vinart-id 精确匹配
-        let targetId = el.vinartId ?? '';
-        if (!targetId && el.slotId) {
-          // 回退：slotId 直接匹配（元素 id 就是 slotId 值）
-          targetId = el.slotId;
-        }
-        if (!targetId) {
-          // 最终回退：文本前 10 字模糊匹配
-          const found = elements.find(
-            (ext) =>
-              ext.textSnippet && el.text.includes(ext.textSnippet.slice(0, 10)),
-          );
-          targetId = found?.id ?? '';
-        }
-        if (targetId && !selectedElements.has(targetId)) {
-          onToggleElement(targetId);
-        }
-      }
-
-      if (msg.type === 'vinart:deselect') {
-        selectedElements.forEach((id) => onToggleElement(id));
-      }
-
-      if (msg.type === 'vinart:canvas-size' && msg.width > 0 && msg.height > 0) {
-        setCanvasSize({ w: msg.width, h: msg.height });
-      }
-
-      // 版式编辑通路:图上点选/图上操作 → App 合并持久数据
-      if (layoutData && msg.source === 'vinart-editor') {
-        if (msg.type === 've:select' && msg.id) onLayerSelect?.(msg.id as string);
-        if (msg.type === 've:word' && msg.id) onLayerWord?.(msg.id as string, msg.word as string);
-        if (msg.type === 've:change' && msg.id) {
-          onLayerSelect?.(msg.id as string);
-          onLayerChange?.(msg.id as string, (msg.patch ?? {}) as Record<string, unknown>);
-        }
-      }
-    }
-
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [elements, selectedElements, onToggleElement, layoutData, onLayerChange, onLayerSelect]);
-
-  const modifyElementStyle = useCallback(
-    (property: string, value: string) => {
-      sendToIframe('modify-style', { property, value });
-    },
-    [sendToIframe],
-  );
-
-  const modifyElementText = useCallback(
-    (text: string) => {
-      sendToIframe('modify-text', { text });
-    },
-    [sendToIframe],
-  );
-
-  useEffect(() => {
-    (window as any).__vinartPreview = { modifyStyle: modifyElementStyle, modifyText: modifyElementText };
-    return () => { delete (window as any).__vinartPreview; };
-  }, [modifyElementStyle, modifyElementText]);
-
   // ══════════════════════════════════
   // 渲染
   // ══════════════════════════════════
@@ -375,14 +289,19 @@ export function PreviewPanel({
               ref={iframeRef}
               className="preview-frame"
               srcDoc={srcdoc}
-              sandbox="allow-scripts allow-same-origin"
+              // 收紧：不再需要 allow-scripts —— 子文档里已无脚本。
+              // （旧配置 `allow-scripts allow-same-origin` 是"能逃出沙箱"的
+              //  反模式，浏览器自己会在控制台报警。）
+              sandbox="allow-same-origin"
               title="设计预览"
-              onLoad={sendHidden}
+              onLoad={bind}
               style={{
                 width: canvasSize.w,
                 height: canvasSize.h,
                 border: 'none',
-                pointerEvents: dragging ? 'none' : 'auto',
+                // 纯渲染器：平时不收指针（事件由父侧覆盖层接管）；
+                // 就地改字时临时放开，好让鼠标能点到光标位置。
+                pointerEvents: editingText ? 'auto' : 'none',
               }}
             />
           </div>
@@ -401,7 +320,7 @@ export function PreviewPanel({
         )}
 
         {/* 缩放控件 + 导出 */}
-        {(htmlCode || layoutData) && (
+        {layoutData && (
           <div className="zoom-controls">
             <button className="zoom-btn" onClick={() => setZoom((z) => Math.min(5, z * 1.2))} title="放大">
               +
@@ -415,11 +334,6 @@ export function PreviewPanel({
             <button className="zoom-btn zoom-fit" onClick={fitToCanvas} title="适应窗口">
               ⊡
             </button>
-            {onExport && htmlCode && (
-              <button className="export-btn" onClick={onExport} title="渲染导出为成品图">
-                ⬇ 导出
-              </button>
-            )}
           </div>
         )}
       </div>
