@@ -143,6 +143,8 @@ export function createChatSession(config: SessionConfig): ChatSession {
 
         // 3. 工具循环：单轮流式 → 有 tool_calls 就执行回喂再续一轮
         let fullContent = '';
+        /** 整轮思考链（跨所有工具轮累加），随最后一个 chunk 交给调用方展示 */
+        let reasoningText = '';
         let totalPrompt = 0;
         let totalCompletion = 0;
 
@@ -195,6 +197,8 @@ export function createChatSession(config: SessionConfig): ChatSession {
           // 状态机：遇 DSML 开标记起吞，遇 calls 闭标记止吞；跨 chunk 用滚动缓冲。
           let dsmlBuf = '';
           let inDsml = false;
+          /** 本轮思考链全文（多轮累加进 reasoningText）——只做审计/展示，不进模型历史 */
+          let reasoningRound = '';
           const rawContent = (chunk: string): string => {
             dsmlBuf += chunk;
             let out = '';
@@ -238,6 +242,13 @@ export function createChatSession(config: SessionConfig): ChatSession {
             const visible = rawContent(chunk.content);
             filteredRound += visible;
             if (chunk.toolCallDeltas?.length) deltas.push(...chunk.toolCallDeltas);
+            // 思考增量：与正文**并行**流（DeepSeek 先 reasoning 后 content，见
+            // gateway/type/chat.ts 头注释），因此不能挂在下面 `visible` 的分支里——
+            // reasoning-only 的 chunk 没有 content，会被那条判空挡掉（改造前即如此）。
+            if (chunk.reasoningContent) {
+              reasoningRound += chunk.reasoningContent;
+              yield { content: '', reasoningContent: chunk.reasoningContent };
+            }
             if (chunk.usage) {
               roundUsage = chunk.usage; // usage chunk 是记账用的，不透传
             } else if (visible) {
@@ -254,6 +265,7 @@ export function createChatSession(config: SessionConfig): ChatSession {
           inDsml = false;
 
           fullContent += stripDsmlBlocks(filteredRound);
+          reasoningText += reasoningRound; // 只累加，不进历史（防自我强化/烧上下文）
           if (roundUsage) {
             totalPrompt += roundUsage.promptTokens;
             totalCompletion += roundUsage.completionTokens;
@@ -319,9 +331,18 @@ export function createChatSession(config: SessionConfig): ChatSession {
         if (aborted || controller.signal.aborted) {
           const abortChunk: ChatChunk = {
             content: fullContent,
+            reasoningContent: reasoningText || undefined,
             finishReason: 'error',
           };
           yield abortChunk;
+        } else {
+          // 正常收尾：把整轮思考链作为**终章 chunk** 交出去。
+          // 为什么用终章而不是逐段透传：流式期间前端已经实时拼过一遍（UI 要"边想边显示"），
+          // 但工具轮的思考在流式期是分段的、且服务端还要把它拼成完整文本落库。
+          // 终章给出权威全文 → 调用方以它为准（前端覆盖、服务端落盘），避免两处拼接漂移。
+          if (reasoningText) {
+            yield { content: '', reasoningContent: reasoningText, finishReason: 'stop' };
+          }
         }
 
         // 5. 追加 assistant 回复到历史（即使被中止，也保留已生成的部分；

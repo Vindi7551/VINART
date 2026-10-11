@@ -7,6 +7,22 @@ export interface Message {
   kind?: 'chat' | 'log';
   /** 委派记录：哪个子 agent 被调用、结果如何（spawn_design_agents 进度卡片） */
   delegations?: DelegationRecord[];
+  /**
+   * 思考链（reasoning_content）。assistant 消息专用。
+   * 流式期逐段累加；终章 chunk 到达时整段覆盖（服务端给的是权威全文）。
+   * 面向用户的呈现 = 默认折叠的「思考块」；缺省 = 该轮模型未产出思考（不渲染）。
+   */
+  reasoning?: string;
+  /**
+   * 整轮耗时（毫秒，含工具执行）。两种来源：
+   * - 生成中：前端以 `startedAt` 实时走表（见 ConversationPanel 的计时器）
+   * - 完成后 / 历史回放：由服务端落盘的 durationMs 提供（刷新不丢）
+   */
+  durationMs?: number;
+  /** 该条回复的起始时刻（仅本次会话内存中，用于生成中实时计时；不持久化） */
+  startedAt?: number;
+  /** 是否仍在流式接收中——true 时计时器走表、不显示"用时" */
+  streaming?: boolean;
 }
 
 export interface DelegationRecord {

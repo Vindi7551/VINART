@@ -62,6 +62,22 @@ export type SessionEvent =
        * 两数组按下标一一对应；个别图上传失败时对应位为空字符串。
        */
       fileIds?: string[];
+      /**
+       * 本条助手回复的**整轮耗时**（含工具执行；毫秒）。
+       *
+       * 为什么要落盘而不是前端算：用户明确要求「历史会话回放后仍显示耗时」——
+       * 只在前端记 startedAt，刷新/切会话后重放的事件里没有这个信息，耗时会消失。
+       * 口径 = 从收到用户消息到流结束（含 spawn 等长工具），不是首字节延迟。
+       * 仅 assistant 消息写；用户消息与旧数据此字段为 undefined（前端不渲染计时）。
+       */
+      durationMs?: number;
+      /**
+       * 本轮思考链全文（reasoning_content 累加）。
+       *
+       * 默认**不写**：体积可达数千字符，且 deriveMessages 会把它重放进模型上下文
+       * （烧 token / 可能自我强化）。只在显式需要审计时由服务端开关写入。
+       */
+      reasoning?: string;
     }
   | {
       seq?: number;
@@ -78,7 +94,10 @@ export type SessionEvent =
         | 'agent-result'
         // 主 AI 工具循环的中间轮记账（一行摘要：工具名/参数/结果/耗时）——
         // 审计用，deriveMessages 不消费（不喂模型，防大 JSON 烧上下文）
-        | 'tool-call';
+        | 'tool-call'
+        // 思考链审计记录（仅 VINART_PERSIST_REASONING=1 时写入，默认不产生）——
+        // 同样不喂模型。detail.text = 整轮 reasoning_content 全文
+        | 'reasoning';
       detail: Record<string, unknown>;
     }
   // project 字段仅老数据仍带（2026-10-10 拆除项目层后的读取兼容）——新写入不再产生
@@ -486,6 +505,9 @@ export async function deleteSession(sessionId: string): Promise<void> {
  * - 旧数据（只有 images）：读回 workDir 下的图片文件转 dataURL 组成 content parts
  *   （与发送时的形状一致——重启后模型仍能看到历史图）。图片读不到时退化为
  *   文本占位符（文件被移动/删除不阻塞会话恢复）。workDir 缺省时同样退化。
+ *
+ * ⚠️ **durationMs / reasoning 刻意不喂模型**（见 SessionEvent 注释）：前者是 UI 元数据，
+ * 后者体积大且会自我强化。它们由 GET /api/sessions/<id> 的原样事件流直接给前端。
  */
 export async function deriveMessages(
   events: SessionEvent[],

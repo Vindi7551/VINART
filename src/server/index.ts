@@ -462,6 +462,12 @@ async function handleSessions(
         ...(savedImages.length ? { images: savedImages, fileIds } : {}),
       } as Parameters<typeof transcript.appendEvent>[1]);
 
+      // 整轮耗时计时起点：用户消息已落盘之后、模型请求之前。
+      // 口径 = 含工具执行的整轮（用户明确要求），不是首字节延迟。
+      const roundStart = Date.now();
+      // 本轮思考链：流式片段先拼（前端要边想边显示），终章 chunk 再给出权威全文覆盖
+      let reasoningFull = '';
+
       // tool-call 落账 promise 收集：流结束先等账本落齐再发 done——
       // 否则「对话刚结束就刷新会话」可能与写盘竞态，账本读到不完整
       const pendingWrites: Promise<void>[] = [];
@@ -487,6 +493,14 @@ async function handleSessions(
         },
       })) {
         if (chunk.content) send('chunk', { content: chunk.content });
+        // 思考链：与 chunk 平行的独立事件——前端单独渲染成可折叠块。
+        // 终章 chunk 带的是**整轮权威全文**（finishReason 'stop' 且 content 为空那个），
+        // 用 full 标志区分：`full` 事件让前端**覆盖**而非追加（流式期是分段拼的）。
+        if (chunk.reasoningContent) {
+          const isFull = chunk.finishReason === 'stop' && !chunk.content;
+          if (isFull) reasoningFull = chunk.reasoningContent;
+          send('reasoning', { content: chunk.reasoningContent, full: isFull });
+        }
       }
       await Promise.all(pendingWrites);
 
@@ -497,6 +511,7 @@ async function handleSessions(
         last && last.role === 'assistant' && typeof last.content === 'string'
           ? last.content
           : '';
+      const durationMs = Date.now() - roundStart;
       if (full) {
         await transcript.appendEvent(sessionId, {
           ts: new Date().toISOString(),
@@ -504,9 +519,21 @@ async function handleSessions(
           id: `msg_${crypto.randomUUID().slice(0, 8)}`,
           role: 'assistant',
           text: full,
+          // 耗时随消息落盘——历史回放靠它复原「用时 X s」（只在前端算的话刷新即丢）
+          durationMs,
         });
       }
-      send('done', { ok: true });
+      // 思考链**默认不落盘**（体积 + 不进模型：见 SessionEvent 注释）。
+      // 若确需审计，把 REASONING_PERSIST 环境变量置 1 即写入事件（离线分析用）。
+      if (reasoningFull && process.env.VINART_PERSIST_REASONING === '1') {
+        await transcript.appendEvent(sessionId, {
+          ts: new Date().toISOString(),
+          kind: 'action',
+          action: 'reasoning',
+          detail: { text: reasoningFull },
+        } as Parameters<typeof transcript.appendEvent>[1]);
+      }
+      send('done', { ok: true, durationMs: full ? durationMs : 0 });
       res.end();
     } catch (e) {
       send('error', { message: String((e as Error).message ?? e) });

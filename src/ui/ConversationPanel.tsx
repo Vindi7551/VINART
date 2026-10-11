@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Markdown } from './Markdown';
 import type { Message } from './types';
 
@@ -58,6 +58,65 @@ function SendIcon() {
 /** 待发图片的文件名（过长截断） */
 function shortName(name: string): string {
   return name.length > 12 ? name.slice(0, 12) + '…' : name;
+}
+
+/** 毫秒 → 人类可读时长：<1s 显示毫秒，<60s 显示一位小数的秒，其余显示分秒 */
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  return `${m}分${Math.round(s - m * 60)}秒`;
+}
+
+/**
+ * 运行中计时器 —— 只对 `streaming` 的消息走表（每 100ms 一帧）。
+ *
+ * 为什么单独一个组件：走表靠 setState，若挂在 ConversationPanel 顶层会让
+ * **整个消息列表**每 100ms 重渲一次；隔离到这条消息内部，重渲范围最小。
+ * 停表后不再订阅 tick，静态显示服务端给的最终 durationMs。
+ */
+function ElapsedTimer({ startedAt, durationMs, streaming }: {
+  startedAt?: number;
+  durationMs?: number;
+  streaming?: boolean;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!streaming) return;
+    const id = setInterval(() => setNow(Date.now()), 100);
+    return () => clearInterval(id);
+  }, [streaming]);
+
+  // 无起始时间也无最终耗时（如纯委派卡片消息）→ 不显示
+  if (startedAt == null && durationMs == null) return null;
+  const ms = streaming ? now - (startedAt ?? now) : (durationMs ?? 0);
+
+  return (
+    <span className={`msg-timer${streaming ? ' running' : ''}`} title={streaming ? '已用时（含工具执行）' : '本轮总用时（含工具执行）'}>
+      {streaming ? `已用时 ${formatDuration(ms)}` : `用时 ${formatDuration(ms)}`}
+    </span>
+  );
+}
+
+/**
+ * 思考块 —— 默认折叠（用户明确要求），点击标题展开/收起。
+ *
+ * 收起了也必须"有信号"：标题行始终在，显示"已完成思考 / 正在思考…"，
+ * 否则用户不知道这轮模型思考过（可发现性 > 界面干净）。
+ */
+function ReasoningBlock({ text, streaming }: { text: string; streaming?: boolean }) {
+  const [open, setOpen] = useState(false);
+  if (!text.trim() && !streaming) return null;
+  return (
+    <div className={`reasoning-block${open ? ' open' : ''}`}>
+      <button className="reasoning-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        <span className="reasoning-caret">{open ? '▾' : '▸'}</span>
+        <span className="reasoning-label">{streaming ? '正在思考…' : '已完成思考'}</span>
+      </button>
+      {open && <div className="reasoning-body">{text}</div>}
+    </div>
+  );
 }
 
 export function ConversationPanel({
@@ -153,6 +212,10 @@ export function ConversationPanel({
                 ))}
               </div>
             )}
+            {/* 思考块：仅助手消息（日志/用户不渲染思考）。默认折叠，见 ReasoningBlock */}
+            {msg.role === 'assistant' && msg.kind !== 'log' && (
+              <ReasoningBlock text={msg.reasoning ?? ''} streaming={msg.streaming} />
+            )}
             {/* 纯委派卡片消息（text 空）：不渲染气泡，只渲染 delegation-list */}
             {(msg.text || !msg.delegations || msg.delegations.length === 0) && (
               <div className="chat-bubble">
@@ -181,6 +244,12 @@ export function ConversationPanel({
                     </span>
                   </div>
                 ))}
+              </div>
+            )}
+            {/* 耗时：所有助手消息都带（委派卡片是独立消息，故放在最外层而不是气泡内） */}
+            {msg.role === 'assistant' && msg.kind !== 'log' && (
+              <div className="msg-footer">
+                <ElapsedTimer startedAt={msg.startedAt} durationMs={msg.durationMs} streaming={msg.streaming} />
               </div>
             )}
           </div>

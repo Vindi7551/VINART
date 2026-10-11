@@ -99,8 +99,9 @@ function layoutApiUrl(
 
 export function App() {
   const [messages, setMessages] = useState<Message[]>([]);
-  // 旧 run/pipeline 的生成中标记。聊天发送暂不互斥（SSE 流由后端会话锁保护）。
-  const [isGenerating] = useState(false);
+  // 生成中标记：SSE 流的真实开合状态（handleSend 里置起、流结束/异常置回）。
+  // ⚠️ 改造前这里是写死的 `useState(false)` —— 连 spinner 都不可能出现。
+  const [isGenerating, setIsGenerating] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   /** 产物可能有新图时 +1,画廊据此重新拉清单 */
   const [galleryKey, setGalleryKey] = useState(0);
@@ -175,6 +176,8 @@ export function App() {
           text?: string;
           action?: string;
           detail?: Record<string, unknown>;
+          /** 助手消息的整轮耗时（含工具）；老数据无此字段 → 不渲染计时 */
+          durationMs?: number;
         }>;
       };
       const out: Message[] = [];
@@ -190,6 +193,8 @@ export function App() {
             id: e.id ?? crypto.randomUUID(),
             role: (e.role as 'user' | 'assistant') ?? 'assistant',
             text: e.text ?? '',
+            // 历史回放复原耗时（用户要求刷新/切会话后仍显示「用时 X s」）
+            ...(typeof e.durationMs === 'number' ? { durationMs: e.durationMs } : {}),
           });
         } else if (e.kind === 'action' && e.action === 'agent-spawn') {
           flush();
@@ -952,7 +957,12 @@ export function App() {
         },
       ]);
       const replyId = crypto.randomUUID();
-      setMessages((prev) => [...prev, { id: replyId, role: 'assistant', text: '' }]);
+      // startedAt 用于生成中的实时计时；流结束由 'done' 事件的 durationMs 定格
+      setMessages((prev) => [
+        ...prev,
+        { id: replyId, role: 'assistant', text: '', reasoning: '', startedAt: Date.now(), streaming: true },
+      ]);
+      setIsGenerating(true);
       const setReply = (fn: (t: string) => string) =>
         setMessages((prev) => prev.map((m) => (m.id === replyId ? { ...m, text: fn(m.text) } : m)));
       // 委派进度卡片：SSE 'agent' 事件（子 agent spawn/result）实时更新本条回复的 delegations
@@ -1031,8 +1041,35 @@ export function App() {
             const dataLine = lines.find((l) => l.startsWith('data: '));
             if (!dataLine) continue;
             const ev = evLine?.slice(7) ?? '';
-            const data = JSON.parse(dataLine.slice(6)) as { content?: string; message?: string };
+            const data = JSON.parse(dataLine.slice(6)) as {
+              content?: string;
+              message?: string;
+              full?: boolean;
+              durationMs?: number;
+            };
             if (ev === 'chunk' && data.content) setReply((t) => t + data.content);
+            // 思考链：流式期逐段追加；终章（full=true）整段覆盖成权威全文
+            if (ev === 'reasoning' && data.content) {
+              const text = data.content;
+              const isFull = data.full === true;
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === replyId
+                    ? { ...m, reasoning: isFull ? text : (m.reasoning ?? '') + text }
+                    : m,
+                ),
+              );
+            }
+            // 收尾：定格耗时、解除"生成中"（计时器停表、显示「用时 X s」）
+            if (ev === 'done') {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === replyId
+                    ? { ...m, streaming: false, durationMs: data.durationMs ?? (Date.now() - (m.startedAt ?? Date.now())) }
+                    : m,
+                ),
+              );
+            }
             if (ev === 'agent') applyAgentEvent(data as Parameters<typeof applyAgentEvent>[0]);
             // 主 AI 工具调用中间轮：实时插一行 log 摘要（刷新后由账本重放同格式）
             if (ev === 'tool') {
@@ -1056,6 +1093,17 @@ export function App() {
       } catch (e) {
         setReply((t) => t + `\n\n✗ ${(e as Error).message}`);
         setGalleryKey((k) => k + 1); // 异常收尾同样兜底（工具可能已落了部分产物）
+        // 异常路径下 'done' 不会来 → 计时器必须手动停表，否则永远走表
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === replyId
+              ? { ...m, streaming: false, durationMs: Date.now() - (m.startedAt ?? Date.now()) }
+              : m,
+          ),
+        );
+      } finally {
+        // 无论正常/异常收尾都要解除生成中——否则输入区永久 spinner + 按钮禁用
+        setIsGenerating(false);
       }
     },
     [sessionId, ensureSession, layout, refreshSessions, toChatImageDataURL],
