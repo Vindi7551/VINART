@@ -7,9 +7,9 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { renderDesign } from '../src/workflow/design-sketch/render';
-import { loadPalette, loadTypography } from '../src/workflow/design-sketch/runtime';
-import type { DesignSketch } from '../src/workflow/design-sketch/design-sketch';
+import { renderDesign } from '../src/render/declarative/render';
+import { loadPalette, loadTypography } from '../src/render/runtime';
+import type { DesignSketch } from '../src/document/design-sketch';
 
 const OUT = resolve('test_product/layout/_GRID');
 mkdirSync(OUT, { recursive: true });
@@ -19,7 +19,7 @@ const spec = JSON.parse(
 ) as DesignSketch;
 const palette = loadPalette('warm-copper');
 const typ = loadTypography('slab-rokkitt');
-const { createBlinkRenderer } = await import('../src/render/blink-renderer');
+const { createBlinkRenderer } = await import('../src/render/rasterize/blink-renderer');
 
 const densities: [string, number | false][] = [
   ['00-no-grid', false],

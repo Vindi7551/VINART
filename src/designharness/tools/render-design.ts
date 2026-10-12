@@ -16,9 +16,9 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
-import { checkAppearance, checkAppearanceRefs, checkSketch } from '../../workflow/design-sketch/validate';
-import { loadAppearance, loadPalette, loadTypography, getSharedRenderer } from '../../workflow/design-sketch/runtime';
-import { applyAppearance, type DesignAppearance } from '../../workflow/design-sketch/design-appearance';
+import { checkAppearance, checkAppearanceRefs, checkSketch } from '../../document/validate';
+import { loadAppearance, loadPalette, loadTypography, getSharedRenderer } from '../../render/runtime';
+import { applyAppearance, type DesignAppearance } from '../../document/design-appearance';
 import { assembleFinal } from '../../workflow/compose/assemble';
 import type { AssetOrders } from '../../workflow/assetsgen/asset-order';
 import type { AgentTool } from '../subagent/types';

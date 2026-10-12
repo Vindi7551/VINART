@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>第二轮 · 放大清晰度 + 纤维参数</title>
+<style>
+  html,body{margin:0;padding:0}
+  body{background:#1e1e1e;font:13px/1.6 "Segoe UI","Microsoft YaHei",sans-serif;color:#ddd;padding:22px 26px 40px}
+  h2{font-size:15px;font-weight:600;margin:0 0 12px;color:#fff}
+  .row{display:flex;gap:24px;margin-bottom:26px}
+  .cell{}
+  .cap{font-size:12px;color:#9a9a9a;margin-top:8px}
+  .cap b{color:#fff}
+
+  .stage{width:380px;height:285px;position:relative;background:#efe7d3;overflow:hidden}
+  .stage img{width:380px;height:285px;object-fit:cover;position:absolute;inset:0}
+  .masked{-webkit-mask-image:url(#maskA);mask-image:url(#maskA);
+          -webkit-mask-size:380px 285px;mask-size:380px 285px;
+          -webkit-mask-repeat:no-repeat;mask-repeat:no-repeat}
+
+  /* 放大框：3x 看毛边细节 */
+  .zoom{width:253px;height:190px;overflow:hidden;position:relative;
+        background:#efe7d3;outline:1px solid #444}
+  .zoom .inner{position:absolute;top:0;left:0;width:380px;height:285px;
+               transform:scale(3);transform-origin:0 0}
+  .zoom.br .inner{transform-origin:100% 100%;top:auto;left:auto;bottom:0;right:0}
+
+  .fiberstage{width:380px;height:285px;position:relative;background:#efe7d3;overflow:hidden}
+  .fiberstage .core{position:absolute;inset:0;background:#fffdf7}
+  .fiberstage img{position:absolute;inset:0;width:380px;height:285px;object-fit:cover}
+  .mf1 img{-webkit-mask-image:url(#mF1);mask-image:url(#mF1);-webkit-mask-size:380px 285px;mask-size:380px 285px;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat}
+  .mf2 img{-webkit-mask-image:url(#mF2);mask-image:url(#mF2);-webkit-mask-size:380px 285px;mask-size:380px 285px;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat}
+  .mf3 img{-webkit-mask-image:url(#mF3);mask-image:url(#mF3);-webkit-mask-size:380px 285px;mask-size:380px 285px;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat}
+  .mf4 img{-webkit-mask-image:url(#mF4);mask-image:url(#mF4);-webkit-mask-size:380px 285px;mask-size:380px 285px;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <filter id="roughA" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.013 0.019" numOctaves="4" seed="17" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="24" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <mask id="maskA" maskUnits="userSpaceOnUse" x="-40" y="-40" width="460" height="365">
+      <rect x="0" y="0" width="380" height="285" fill="#fff" filter="url(#roughA)"/>
+    </mask>
+
+    <!-- F1 中频 turbulence -->
+    <filter id="rF1" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feTurbulence type="turbulence" baseFrequency="0.3 0.006" numOctaves="4" seed="21" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="14" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <mask id="mF1" maskUnits="userSpaceOnUse" x="-40" y="-40" width="460" height="365">
+      <rect x="0" y="0" width="380" height="285" fill="#fff" filter="url(#rF1)"/>
+    </mask>
+
+    <!-- F2 稍高频率 + 低倍频 -->
+    <filter id="rF2" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feTurbulence type="turbulence" baseFrequency="0.6 0.01" numOctaves="2" seed="13" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="12" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <mask id="mF2" maskUnits="userSpaceOnUse" x="-40" y="-40" width="460" height="365">
+      <rect x="0" y="0" width="380" height="285" fill="#fff" filter="url(#rF2)"/>
+    </mask>
+
+    <!-- F3 低频大弧线（最接近撕纸本体） -->
+    <filter id="rF3" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.25 0.004" numOctaves="4" seed="7" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="16" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <mask id="mF3" maskUnits="userSpaceOnUse" x="-40" y="-40" width="460" height="365">
+      <rect x="0" y="0" width="380" height="285" fill="#fff" filter="url(#rF3)"/>
+    </mask>
+
+    <!-- F4 两级串联：低频撕口 + 高频毛刺 -->
+    <filter id="rF4" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.011 0.014" numOctaves="3" seed="2" result="lo"/>
+      <feTurbulence type="fractalNoise" baseFrequency="0.35 0.008" numOctaves="3" seed="8" result="hi"/>
+      <feDisplacementMap in="SourceGraphic" in2="lo" scale="26" xChannelSelector="R" yChannelSelector="G" result="d1"/>
+      <feDisplacementMap in="d1" in2="hi" scale="7" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <mask id="mF4" maskUnits="userSpaceOnUse" x="-40" y="-40" width="460" height="365">
+      <rect x="0" y="0" width="380" height="285" fill="#fff" filter="url(#rF4)"/>
+    </mask>
+  </defs>
+</svg>
+
+<h2>① 放大 3 倍：矢量遮罩会不会糊？（关键判据）</h2>
+<div class="row">
+  <div class="cell">
+    <div class="zoom"><div class="inner">
+      <img class="masked" src="file:///D:/desktop/vinart/test_product/shirt/71R5FYOm25L._AC_SX522_.jpg" alt="">
+    </div></div>
+    <div class="cap"><b>Z1</b> 左上角 3x —— 毛茬仍锐利，无位图化锯齿</div>
+  </div>
+  <div class="cell">
+    <div class="zoom br"><div class="inner">
+      <img class="masked" src="file:///D:/desktop/vinart/test_product/shirt/71R5FYOm25L._AC_SX522_.jpg" alt="">
+    </div></div>
+    <div class="cap"><b>Z2</b> 右下角 3x —— 边缘为矢量级，可缩放到任意尺寸</div>
+  </div>
+</div>
+
+<h2>② 纤维毛须：四组噪声参数</h2>
+<div class="row">
+  <div class="cell">
+    <div class="fiberstage mf1"><div class="core"></div>
+      <img src="file:///D:/desktop/vinart/test_product/shirt/71R5FYOm25L._AC_SX522_.jpg" alt="">
+    </div>
+    <div class="cap"><b>F1</b> turbulence 0.3/0.006 · oct4 · scale14</div>
+  </div>
+  <div class="cell">
+    <div class="fiberstage mf2"><div class="core"></div>
+      <img src="file:///D:/desktop/vinart/test_product/shirt/71R5FYOm25L._AC_SX522_.jpg" alt="">
+    </div>
+    <div class="cap"><b>F2</b> turbulence 0.6/0.01 · oct2 · scale12（仍偏机械）</div>
+  </div>
+  <div class="cell">
+    <div class="fiberstage mf3"><div class="core"></div>
+      <img src="file:///D:/desktop/vinart/test_product/shirt/71R5FYOm25L._AC_SX522_.jpg" alt="">
+    </div>
+    <div class="cap"><b>F3</b> fractalNoise 0.25/0.004 · oct4 · scale16</div>
+  </div>
+  <div class="cell">
+    <div class="fiberstage mf4"><div class="core"></div>
+      <img src="file:///D:/desktop/vinart/test_product/shirt/71R5FYOm25L._AC_SX522_.jpg" alt="">
+    </div>
+    <div class="cap"><b>F4</b> 两级串联：低频撕口 + 高频毛刺 ⭐</div>
+  </div>
+</div>
+
+</body>
+</html>

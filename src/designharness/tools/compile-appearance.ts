@@ -17,9 +17,9 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
-import { checkSketch } from '../../workflow/design-sketch/validate';
+import { checkSketch } from '../../document/validate';
 import { compileAppearance } from '../../workflow/appearance/compile';
-import type { DesignSketch } from '../../workflow/design-sketch/design-sketch';
+import type { DesignSketch } from '../../document/design-sketch';
 import type { AgentTool } from '../subagent/types';
 import { resolveDesignDir } from './project-paths';
 

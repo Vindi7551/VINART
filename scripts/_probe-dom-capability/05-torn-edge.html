@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>撕纸边缘 · DOM 可行性对照实验</title>
+<style>
+  html,body{margin:0;padding:0}
+  body{background:#1e1e1e;font:13px/1.6 "Segoe UI","Microsoft YaHei",sans-serif;color:#ddd;padding:24px 28px 60px}
+  h1{font-size:16px;font-weight:600;margin:0 0 4px;color:#fff}
+  .note{color:#999;font-size:12px;margin-bottom:20px}
+  .grid{display:grid;grid-template-columns:repeat(3,380px);gap:26px}
+  .cell{width:380px}
+  .cap{font-size:12px;color:#9a9a9a;margin-top:8px;min-height:34px}
+  .cap b{color:#fff;font-weight:600}
+
+  /* 统一舞台：米色纸底板 + 照片 */
+  .stage{width:380px;height:285px;position:relative;overflow:visible;
+         background:#efe7d3;background-image:linear-gradient(#efe7d3,#e8dcc2)}
+  .stage img{width:380px;height:285px;object-fit:cover;display:block;position:absolute;inset:0}
+
+  /* B2 clip-path 折线 */
+  .b2{clip-path:polygon(0% 5%,8% 0%,18% 4%,30% 0%,42% 5%,55% 1%,68% 5%,80% 0%,92% 4%,100% 9%,
+        98% 22%,100% 36%,97% 50%,100% 64%,98% 78%,100% 90%,94% 97%,82% 93%,70% 99%,58% 94%,
+        46% 99%,34% 94%,22% 99%,10% 95%,3% 99%,0% 90%,3% 76%,0% 62%,2% 48%,0% 34%,3% 20%,0% 11%)}
+
+  /* B3 / B4 / B5 走 SVG 遮罩 */
+  .m3,.m4,.m5{-webkit-mask-image:url(#maskA);mask-image:url(#maskA);
+              -webkit-mask-size:380px 285px;mask-size:380px 285px;
+              -webkit-mask-repeat:no-repeat;mask-repeat:no-repeat}
+  .m5{-webkit-mask-image:url(#maskFiber);mask-image:url(#maskFiber)}
+
+  /* B4 白纸芯：白色层露出右下 */
+  .papercore{position:absolute;inset:0;background:#fffdf7;
+             -webkit-mask-image:url(#maskA);mask-image:url(#maskA);
+             -webkit-mask-size:380px 285px;mask-size:380px 285px;
+             -webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;
+             transform:translate(4px,4px)}
+
+  /* B5 各向异性纤维遮罩 */
+  .fiber{position:absolute;inset:0;background:#efe7d3}
+
+  /* B6 纯 CSS 程序化毛须（对照） */
+  .b6{position:absolute;inset:0;background:#efe7d3}
+  .b6 img{-webkit-mask-image:repeating-linear-gradient(90deg,#000 0 3px,transparent 3px 5px);
+          mask-image:repeating-linear-gradient(90deg,#000 0 3px,transparent 3px 5px)}
+</style>
+</head>
+<body>
+
+<h1>撕纸 / 毛边效果 —— DOM 能力对照实验</h1>
+<div class="note">同一张照片，六种实现。全部纯 HTML+CSS+SVG，零位图素材（除照片本身）。</div>
+
+<!-- ========== SVG 定义 ========== -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <!-- 遮罩 A：中频各向同性噪声 → 不规则撕裂轮廓 -->
+    <filter id="roughA" x="-30%" y="-30%" width="160%" height="160%"
+            color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.013 0.019" numOctaves="4" seed="17" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="24"
+                         xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <mask id="maskA" maskUnits="userSpaceOnUse" x="-40" y="-40" width="460" height="365">
+      <rect x="0" y="0" width="380" height="285" fill="#fff" filter="url(#roughA)"/>
+    </mask>
+
+    <!-- 遮罩 F：强各向异性噪声 → 纵向细丝（亚麻/纤维毛须） -->
+    <filter id="roughF" x="-30%" y="-30%" width="160%" height="160%"
+            color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9 0.012" numOctaves="3" seed="5" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="18"
+                         xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <mask id="maskFiber" maskUnits="userSpaceOnUse" x="-40" y="-40" width="460" height="365">
+      <rect x="0" y="0" width="380" height="285" fill="#fff" filter="url(#roughF)"/>
+    </mask>
+  </defs>
+</svg>
+
+<div class="grid">
+
+  <!-- B1 现状 -->
+  <div class="cell">
+    <div class="stage">
+      <img src="file:///D:/desktop/vinart/test_product/shirt/71R5FYOm25L._AC_SX522_.jpg" alt="">
+    </div>
+    <div class="cap"><b>B1 · 现状</b><br>矩形硬边，clip-path 也切不出毛茬</div>
+  </div>
+
+  <!-- B2 clip-path -->
+  <div class="cell">
+    <div class="stage">
+      <img class="b2" src="file:///D:/desktop/vinart/test_product/shirt/71R5FYOm25L._AC_SX522_.jpg" alt="">
+    </div>
+    <div class="cap"><b>B2 · clip-path</b><br>轮廓能乱，但每段边仍是<b>绝对直线</b></div>
+  </div>
+
+  <!-- B3 SVG 遮罩 -->
+  <div class="cell">
+    <div class="stage">
+      <img class="m3" src="file:///D:/desktop/vinart/test_product/shirt/71R5FYOm25L._AC_SX522_.jpg" alt="">
+    </div>
+    <div class="cap"><b>B3 · 矢量位移遮罩</b><br>feTurbulence 位移 → 真实撕裂毛边，可缩放</div>
+  </div>
+
+  <!-- B4 B3 + 白纸芯 -->
+  <div class="cell">
+    <div class="stage">
+      <div class="papercore"></div>
+      <img class="m4" src="file:///D:/desktop/vinart/test_product/shirt/71R5FYOm25L._AC_SX522_.jpg" alt="">
+    </div>
+    <div class="cap"><b>B4 · B3 + 白纸芯</b><br>复刻图1「撕开露白」的双层结构</div>
+  </div>
+
+  <!-- B5 各向异性纤维 -->
+  <div class="cell">
+    <div class="stage">
+      <div class="fiber"></div>
+      <img class="m5" src="file:///D:/desktop/vinart/test_product/shirt/71R5FYOm25L._AC_SX522_.jpg" alt="">
+    </div>
+    <div class="cap"><b>B5 · 各向异性噪声</b><br>拉长 baseFrequency → 纵向纤维毛须</div>
+  </div>
+
+  <!-- B6 纯 CSS 手绘 -->
+  <div class="cell">
+    <div class="stage">
+      <div class="b6">
+        <img src="file:///D:/desktop/vinart/test_product/shirt/71R5FYOm25L._AC_SX522_.jpg" alt="">
+      </div>
+    </div>
+    <div class="cap"><b>B6 · 纯 CSS 手绘毛须</b><br>周期性条纹 → 机械重复，一眼假</div>
+  </div>
+
+</div>
+</body>
+</html>

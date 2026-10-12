@@ -7,7 +7,7 @@
 > 实现开始后，`src/editor/README.md` 才是模块说明；本文负责"为什么这么走"。
 >
 > 本文所有数字与结论均为**实测**，证据索引见 §7。  
-> 术语沿用 `src/workflow/design-sketch/README.md`（「渲染」= 确定性那步；「方案生成」= 调模型那步）。
+> 术语沿用 `src/document/README.md`（「渲染」= 确定性那步；「方案生成」= 调模型那步）。
 
 ---
 
@@ -352,7 +352,7 @@ HTML 是 spec 的**有损投影**：文字自适应走了"实测两遍回填 `fi
 > `mix-blend-mode` / `backdrop-filter` / 依赖下层的滤镜是**例外**（分层截图时下层根本不在场）。
 >
 > **★★ 关键补充：这条边界项目里早就写好了 —— 就是契约规则 3。**  
-> `src/workflow/design-sketch/README.md` §3.5 规则 3 原文：  
+> `src/document/README.md` §3.3 规则 3 原文：  
 > 「节点不得依赖父容器来实现自身效果。不能让某个节点的外观靠父级的  
 > `background` / `opacity` / `mix-blend-mode` / `filter`。每个节点必须能被单独截出来而不变样。」  
 > —— **判据与实验结论逐字吻合**（连例外清单都一样）。  
@@ -686,7 +686,7 @@ src/editor/                        ← M1 已实现（✅）+ 后续（⏳）
 | `htmlCode` 世代不可达                                | `App.tsx:106` 只赋初值；`:1114` 恒传 `undefined`                                                                                                                                           |
 | 分层栅格化保真度 98.79 %                                | `%TEMP%\vinart-layer-exp\`：`probe.cjs`、`diff-map.png`、`zoom-compare.png`                                                                                                            |
 | 分层性能数据                                          | 同上：`timing2.cjs`、`timing3.cjs`                                                                                                                                                      |
-| 契约规则 3 未被机器强制                                   | `grep mix-blend\|backdrop\|filter\|opacity src/workflow/design-sketch/validate.ts` → 无匹配                                                                                            |
+| 契约规则 3 未被机器强制                                   | `grep mix-blend\|backdrop\|filter\|opacity src/document/validate.ts` → 无匹配                                                                                            |
 | 渲染器不产出跨层效果                                      | `grep -rn "mix-blend\|backdrop-filter" src/workflow/ src/ui/ src/editor/` → 仅注释                                                                                                    |
 | **iframe 内 clientX 是 local 坐标**                 | `%TEMP%\vinart-coord\probe.cjs`（5 场景：scale 1/0.5/0.3/0.4 + 生产 sandbox，全一致）                                                                                                          |
 | **拖拽位移随 zoom 放大 1/zoom 倍**                      | `%TEMP%\vinart-coord\e2e-edit.cjs`（真实脚本 + 真实产物；修前 zoom=0.3 时 Δ=333.3 应为 100，修后 Δ=100）                                                                                               |
@@ -696,7 +696,7 @@ src/editor/                        ← M1 已实现（✅）+ 后续（⏳）
 | **sandbox 可收紧到 `allow-same-origin`**            | `%TEMP%\vinart-coord\probe-sandbox.cjs`：父侧仍可访问 `contentDocument`，子文档脚本**不执行**；现状配置浏览器自报警"can escape its sandboxing"                                                                 |
 | **就地改字与父侧接管不冲突**                                | 同上：父侧聚焦子文档 `contentEditable` 后 `keyboard.type('HELLO')` 写入成功                                                                                                                        |
 | 产物 CSS 里有 `html,body` 规则（**但已证其为冗余**）           | `render.ts:385-386`；产物样式表实测匹配到 2 条；渲染影响见 §4.1 三臂实测                                                                                                                                  |
-| 渲染真源                                            | `src/workflow/design-sketch/render.ts`（`renderDesign`，425 行）                                                                                                                        |
+| 渲染真源                                            | `src/render/declarative/render.ts`（`renderDesign`，425 行）                                                                                                                            |
 
 ---
 
@@ -705,12 +705,13 @@ src/editor/                        ← M1 已实现（✅）+ 后续（⏳）
 | 文档                                                    | 关系                                     |
 | ----------------------------------------------------- | -------------------------------------- |
 | `CLAUDE.md`                                           | 项目总览（✅ 已于 2026-10-10 全量重写，与本文一致）       |
-| `src/workflow/design-sketch/README.md`                | 渲染真源所在阶段（spec → HTML，纯函数）。**改那里之前先读它** |
+| `src/document/README.md`                | 渲染真源所在阶段（spec → HTML，纯函数）。**改那里之前先读它** |
 | `src/workflow/{compose,assetsgen}/README.md`          | 链路上的其它阶段                               |
 | `src/designharness/SESSIONS.md`                       | 会话层设计（同类"带状态横幅的设计文档"，格式参照）             |
 | `scripts/_probe-*.ts`                                 | 项目探针惯例；本文实验探针**尚未移植进来**（见 §7 ⚠️）       |
 
-> ⚠️ **实测遗留的文档过时项**：`src/workflow/design-sketch/README.md` §七 仍写  
-> 「`src/schema/` 只剩 `asset-order.ts`」——实际 `src/schema/` **已空**，  
-> `asset-order.ts` 在 `workflow/assetsgen/`。另：`src/schema/` 与 `src/designharness/memory/`  
-> 是**空目录**，用途待定。
+> ⚠️ **文档过时项**（2026-10-12 结构搬迁后）：
+> `src/bitmap/` 与 `src/designharness/memory/` 是**空目录**（前者是预留的位图能力位）。
+> 另：`src/schema/` 已随搬迁**删除**；`asset-order.ts` 在 `workflow/assetsgen/`。
+> **`src/document/README.md` 的框架性重写待做**——它下方仍按"设计草图阶段（契约/校验/渲染三合一）"行文，
+> 而渲染器已移到 `src/render/declarative/`（该文件顶部已加搬迁说明）。

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>能力账本 04 · 边界（需生成 / 需光栅）</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{width:1180px;font-family:"Segoe UI",system-ui,sans-serif;background:#ece7dc;color:#1c1a17;padding:22px 26px 26px}
+  h1{font-size:19px}
+  .sub{font-size:12px;color:#6b6459;margin:6px 0 14px}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:13px}
+  .card{background:#f5f2ea;border:1px solid #d8d2c6;border-radius:12px;padding:11px 12px 12px}
+  .head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+  .name{font-size:12.5px;font-weight:700}
+  .badge{font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:999px;white-space:nowrap}
+  .gen{background:#f7eed3;color:#8a5a12;border:1px solid #e0c98a}
+  .no{background:#f7dede;color:#9b2b2b;border:1px solid #e3adad}
+  .stage{height:128px;border-radius:8px;background:#fff;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
+  .note{font-size:10.5px;color:#5f584e;margin-top:7px;line-height:1.5}
+  .note code{background:#e7e1d5;padding:0 4px;border-radius:4px;font-size:10px}
+  .note b{color:#8a2b2b}
+</style>
+</head>
+<body>
+  <h1>能力账本 04 · 边界：DOM 做不到 / 需额外引擎的</h1>
+  <div class="sub">这一页全是<b>负例</b>——展示 DOM 给出的版本，以及为什么不够。</div>
+
+  <div class="grid">
+
+    <div class="card"><div class="head"><span class="name">变宽笔触（沿路径粗细变化）</span><span class="badge no">❌ 原生不行</span></div>
+      <div class="stage"><svg width="220" height="118" viewBox="0 0 220 118">
+        <path d="M20 86 C 70 18, 130 108, 200 44" fill="none" stroke="#1c1a17" stroke-width="10" stroke-linecap="round"/></svg></div>
+      <div class="note">SVG <code>stroke-width</code> <b>沿线恒定</b>。要"由粗到细"须先<b>算出变宽轮廓</b>（几何计算）再填充</div></div>
+
+    <div class="card"><div class="head"><span class="name">液化 Liquify</span><span class="badge no">❌ 需光栅</span></div>
+      <div class="stage"><img src="../../test_product/goose/source.jpg" style="width:216px;height:112px;object-fit:cover;border-radius:6px" alt=""></div>
+      <div class="note">上面是<b>未液化</b>的原图。液化 = <b>可交互控制的网格变形</b>；<code>feDisplacementMap</code> 只能做<b>固定</b>位移，做不到"用笔刷推"</div></div>
+
+    <div class="card"><div class="head"><span class="name">操控变形 Puppet Warp</span><span class="badge no">❌ 需光栅</span></div>
+      <div class="stage"><img src="../../test_product/goose/source.jpg" style="width:216px;height:112px;object-fit:cover;border-radius:6px" alt=""></div>
+      <div class="note">需"加钉子 + 骨架形变"；浏览器无对应能力，须自建网格解算（CPU/GPU）</div></div>
+
+    <div class="card"><div class="head"><span class="name">内容识别填充</span><span class="badge no">❌ 需算法/模型</span></div>
+      <div class="stage"><img src="../../test_product/goose/source.jpg" style="width:216px;height:112px;object-fit:cover;border-radius:6px" alt=""></div>
+      <div class="note">需 inpainting 算法（WASM）或 <b>生成式模型（外部 API）</b>——DOM 无任何对应</div></div>
+
+    <div class="card"><div class="head"><span class="name">真实笔刷（压感 / 纹理累积）</span><span class="badge no">❌ 需光栅</span></div>
+      <div class="stage"><svg width="220" height="118" viewBox="0 0 220 118">
+        <path d="M24 88 C 66 40, 100 96, 140 56 S 196 74, 200 74" fill="none" stroke="#b8722f" stroke-width="9" stroke-linecap="round"/></svg></div>
+      <div class="note">DOM 只能画<b>均匀几何笔画</b>；压感宽度、笔尖纹理、笔画间的<b>混合累积</b>都要光栅画笔引擎</div></div>
+
+    <div class="card"><div class="head"><span class="name">布尔路径运算</span><span class="badge gen">⚙️ 需几何引擎</span></div>
+      <div class="stage"><svg width="220" height="118" viewBox="0 0 220 118">
+        <circle cx="88" cy="58" r="42" fill="none" stroke="#b8722f" stroke-width="3"/>
+        <circle cx="132" cy="58" r="42" fill="none" stroke="#2f6b8a" stroke-width="3"/></svg></div>
+      <div class="note">并/交/差/排除要找<b>几何库先算</b>（如 paper.js / clipper），算出新路径再交给 SVG 渲染——<b>不是 DOM 的活</b></div></div>
+
+  </div>
+</body>
+</html>

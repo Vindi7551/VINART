@@ -15,11 +15,11 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { basename, relative, resolve } from 'node:path';
-import { checkSketch } from '../../workflow/design-sketch/validate';
-import { getSharedRenderer } from '../../workflow/design-sketch/runtime';
+import { checkSketch } from '../../document/validate';
+import { getSharedRenderer } from '../../render/runtime';
 import { generateAssets, type AssetJobResult } from '../../workflow/assetsgen/image';
 import type { AssetOrders } from '../../workflow/assetsgen/asset-order';
-import type { DesignSketch } from '../../workflow/design-sketch/design-sketch';
+import type { DesignSketch } from '../../document/design-sketch';
 import type { AgentTool } from '../subagent/types';
 import { resolveDesignDir } from './project-paths';
 

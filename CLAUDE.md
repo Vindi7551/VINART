@@ -90,10 +90,19 @@ src/
 │   ├── tools/             工具集（见下表）
 │   ├── SESSIONS.md        会话层设计文档
 │   └── SKILLS.md          技能层设计文档（三层来源 + 优先级 bundled>project>user）
-├── render/                Blink 渲染（只有 blink-renderer.ts）
-├── schema/                ⚠️ 空（`asset-order.ts` 已移至 workflow/assetsgen/）
+├── document/              版式契约 + 校验（**唯一文档模型**，跨阶段）
+│   ├── design-sketch.ts      契约：三类节点 + rect + transform
+│   ├── design-appearance.ts  契约：外观（颜色 / 描边）
+│   ├── validate.ts           校验（错误信息可行动）
+│   ├── design-sketch.md      LLM 契约文档（子 agent system prompt 的真源）
+│   └── README.md             版式完整规范 ← 改这里之前先读
+├── render/                渲染流水线（② 矢量→HTML → ③ 位图 → ④ 合成）
+│   ├── declarative/          ② 矢量 → HTML（render · sketch · shared · render-style）
+│   ├── rasterize/            ③ HTML → 位图（blink-renderer）
+│   ├── composite/            ④ 合成（**今天空着**：由 Chromium 代劳；将来自建合成器落这里）
+│   └── runtime.ts            编排（资产加载 + 共享渲染器生命周期）
+├── bitmap/                ⚠️ 位图能力（像素 / 笔刷 / 算子）—— 未实现，见 `docs/HYBRID-RENDERING.md`
 └── workflow/              一条工作流一个目录
-    ├── design-sketch/     版式规格 + **渲染真源 render.ts** ← 改这里之前先读它的 README
     ├── appearance/        外观编译（compile.ts）
     ├── assetsgen/         素材生成（asset-order · order · image · cutout）
     └── compose/           组装出图（assemble · emit-html）
@@ -122,7 +131,7 @@ src/
 
 ## 关键设计决策
 
-### 版式契约（`src/workflow/design-sketch/`）
+### 版式契约（`src/document/`）
 
 - **三类节点**：`image` / `text` / `shape`。三类都必须有 `id` 与 `rect`。
 - **★「框」是独立节点**，不是内容的属性：`image` 与 `shape` **位置重叠**，
@@ -259,7 +268,8 @@ src/
 | 文档 | 内容 |
 |---|---|
 | **`docs/EDITOR-EVOLUTION.md`** | **项目级**：编辑器现状 + 类 PS 演进方案 + 分阶段验收 + 未决问题。**动编辑器前先读。** |
-| `src/workflow/design-sketch/README.md` | 版式阶段完整规范（契约 / 校验 / 渲染）。**改这里之前先读。** |
+| `src/document/README.md` | **版式文档模型**（契约 / 校验 / LLM 文档）。**改这里之前先读。** |
+| `src/render/declarative/README.md` | 声明式渲染器（spec → HTML；两种模式 + 草图视觉语言） |
 | `src/workflow/compose/README.md` | 组装出图 + 文字自适应 |
 | `src/workflow/assetsgen/README.md` | 素材订单与生成 |
 | `src/designharness/SESSIONS.md` | 会话层设计 |
@@ -269,7 +279,7 @@ src/
 
 ## 已知的文档过时项（待清）
 
-- `src/workflow/design-sketch/README.md` §七 仍写「`src/schema/` 只剩 `asset-order.ts`」——
-  实际 `src/schema/` **已空**，`asset-order.ts` 在 `workflow/assetsgen/`。
-- `src/schema/` 与 `src/designharness/memory/` 是**空目录**，用途待定。
+- `src/document/README.md` **已于 2026-10-12 重写**（只讲文档模型；渲染部分移到
+  `src/render/declarative/README.md`）。`src/schema/` 同批**已删除**。
+- `src/bitmap/` 与 `src/designharness/memory/` 是**空目录**（前者是预留的位图能力位，已有 README）。
 - 编辑器层尚未实现（见 `docs/EDITOR-EVOLUTION.md` §5）。

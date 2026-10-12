@@ -30,7 +30,7 @@
  */
 
 import type { ChatMessage, TokenUsage } from '../../designharness/gateway/type/chat';
-import type { DesignSketch, ImageNode } from '../design-sketch/design-sketch';
+import type { DesignSketch, ImageNode } from '../../document/design-sketch';
 import { BANNED_WORDS, type AssetOrders } from './asset-order';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';

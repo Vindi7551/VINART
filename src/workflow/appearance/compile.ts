@@ -30,8 +30,8 @@ import {
   APPEARANCE_KEYS,
   type DesignAppearance,
   type LayerAppearance,
-} from '../design-sketch/design-appearance';
-import type { DesignSketch } from '../design-sketch/design-sketch';
+} from '../../document/design-appearance';
+import type { DesignSketch } from '../../document/design-sketch';
 
 const FONT_SCHEMES_DIR = resolve('designassets/fonts/schemes');
 const MAX_TOKENS = 8000;

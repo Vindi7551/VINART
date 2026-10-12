@@ -121,7 +121,7 @@ const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
 async function main() {
   console.log('\n图标迭代渲染');
   mkdirSync(OUT, { recursive: true });
-  const { createBlinkRenderer } = await import('../src/render/blink-renderer');
+  const { createBlinkRenderer } = await import('../src/render/rasterize/blink-renderer');
   const r = createBlinkRenderer();
   try {
     const out = await r.render({ html }, OUT, {

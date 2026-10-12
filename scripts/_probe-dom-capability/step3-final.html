@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>变换型混合流水线 · DOM 烘焙 → 光栅操作 → 回填合成</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{width:1180px;font-family:"Segoe UI",system-ui,sans-serif;background:#ece7dc;color:#1c1a17;padding:22px 26px 26px}
+  h1{font-size:19px}
+  .sub{font-size:12px;color:#6b6459;margin:6px 0 16px;line-height:1.6}
+  .row{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .panel{background:#f5f2ea;border:1px solid #d8d2c6;border-radius:12px;padding:11px 12px 12px}
+  .plabel{font-size:11.5px;font-weight:700;margin-bottom:8px;line-height:1.45}
+  .plabel b{color:#8a5a12}
+  .cb{width:336px;height:240px;border-radius:8px;overflow:hidden;
+      background-image:linear-gradient(45deg,#c9c9c9 25%,transparent 25%),linear-gradient(-45deg,#c9c9c9 25%,transparent 25%),
+                       linear-gradient(45deg,transparent 75%,#c9c9c9 75%),linear-gradient(-45deg,transparent 75%,#c9c9c9 75%);
+      background-size:18px 18px;background-position:0 0,0 9px,9px -9px,-9px 0;background-color:#e6e6e6}
+  .fin{position:relative;width:336px;height:240px;
+       background:linear-gradient(135deg,#f2e8da,#cdbfa6)}
+  .fin img{position:absolute;left:0;top:0;width:336px;height:240px}
+  .fin .cap{position:absolute;left:22px;bottom:16px;font-family:Georgia,serif;font-weight:900;
+            font-size:32px;color:#fff;text-shadow:0 2px 9px rgba(0,0,0,.55)}
+  .note{font-size:10.5px;color:#5f584e;margin-top:8px;line-height:1.5}
+  .note code{background:#e7e1d5;padding:0 4px;border-radius:4px;font-size:10px}
+  .arrow{font-size:10.5px;color:#8a5a12;margin-top:8px}
+</style>
+</head>
+<body>
+  <h1>变换型混合流水线 · DOM 烘焙 → 光栅操作 → 回填合成</h1>
+  <div class="sub">棋盘格 = 透明区。三格是同一条流水线的三个阶段：<b>①</b> DOM 声明式图层烘焙成位图；
+    <b>②</b> 对位图做 DOM 做不到的光栅操作（局部推挤变形 + 笔刷盖章）；<b>③</b> 把处理结果<b>回填</b>进合成（DOM 底板 + 光栅层 + DOM 文字层）。</div>
+
+  <div class="row">
+    <div class="panel">
+      <div class="plabel">① DOM 层 · 声明式（圆角 / 渐变 / 文字 / 描边环）</div>
+      <div class="cb"><img src="dom-layer.png" style="width:336px;height:240px"></div>
+      <div class="note">由 <code>step1-dom-layer.html</code> 渲染后截出 —— 即"烘焙"。</div>
+    </div>
+
+    <div class="panel">
+      <div class="plabel">② 光栅处理后 · <b>局部推挤变形 + 笔刷盖章</b></div>
+      <div class="cb"><img src="raster-result.png" style="width:336px;height:240px"></div>
+      <div class="note">Canvas 逐条带位移（空间变化的 warp）+ 软边圆点沿 S 形路径变半径累积 —— <b>CSS/SVG 的均匀 transform 给不了</b>。</div>
+    </div>
+
+    <div class="panel">
+      <div class="plabel">③ 回填合成 · DOM 底板 + 光栅层 + DOM 文字层</div>
+      <div class="fin">
+        <img src="raster-result.png">
+        <div class="cap">FINAL</div>
+      </div>
+      <div class="note">光栅结果<b>当普通图层用</b>：垫在 DOM 底板上、压在 DOM 文字下 —— 与既有渲染管线无缝。</div>
+    </div>
+  </div>
+</body>
+</html>

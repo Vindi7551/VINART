@@ -6,13 +6,13 @@
  * 这个脚本把文档里所有 ```json / ```jsonc 块抠出来，能当版式解析的就跑一遍校验。
  *
  * 用法：
- *   npm run step scripts/check-doc-examples.ts -- src/workflow/design-sketch/design-sketch.md src/workflow/design-sketch/README.md
+ *   npm run step scripts/check-doc-examples.ts -- src/document/design-sketch.md src/document/README.md
  *
  * ⚠️ README.md 是 CRLF 换行，匹配代码围栏的正则必须写成 `\r?\n`，
  * 否则一个块都抓不到（会误报"发现 0 个"）。
  */
 import { readFileSync } from 'node:fs';
-import { checkSketch } from '../src/workflow/design-sketch/validate';
+import { checkSketch } from '../src/document/validate';
 
 const files = process.argv.slice(2);
 let totalBad = 0;

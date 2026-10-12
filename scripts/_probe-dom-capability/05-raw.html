@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+*{margin:0;padding:0}
+html,body{width:340px;background:#fff}
+.canvas{position:relative;width:340px;height:250px;overflow:hidden}
+.dl{position:absolute}
+.iso{isolation:isolate}
+.auto{isolation:auto}
+</style></head><body>
+  <!-- 三段严格等尺寸堆叠：A=[0,250) B=[250,500) C=[500,750) -->
+
+  <div class="canvas">
+    <div class="dl iso" style="left:0;top:0;width:340px;height:250px;background:linear-gradient(120deg,#f2e8da,#cdbfa6)"></div>
+    <div class="dl iso" style="left:22px;top:40px;width:150px;height:120px;background:#e8a24a;border-radius:8px"></div>
+    <div class="dl iso" style="left:64px;top:28px;width:250px;height:200px;mix-blend-mode:multiply">
+      <img src="paint-layer.png" style="width:100%;height:100%;object-fit:contain" alt=""></div>
+  </div>
+
+  <div class="canvas">
+    <div class="dl auto" style="left:0;top:0;width:340px;height:250px;background:linear-gradient(120deg,#f2e8da,#cdbfa6)"></div>
+    <div class="dl auto" style="left:22px;top:40px;width:150px;height:120px;background:#e8a24a;border-radius:8px"></div>
+    <div class="dl auto" style="left:64px;top:28px;width:250px;height:200px;mix-blend-mode:multiply">
+      <img src="paint-layer.png" style="width:100%;height:100%;object-fit:contain" alt=""></div>
+  </div>
+
+  <div class="canvas">
+    <div class="dl iso" style="left:0;top:0;width:340px;height:250px;background:linear-gradient(120deg,#f2e8da,#cdbfa6)"></div>
+    <div class="dl iso" style="left:22px;top:40px;width:150px;height:120px;background:#e8a24a;border-radius:8px"></div>
+    <div class="dl iso" style="left:64px;top:28px;width:250px;height:200px">
+      <img src="paint-layer.png" style="width:100%;height:100%;object-fit:contain" alt=""></div>
+  </div>
+</body></html>

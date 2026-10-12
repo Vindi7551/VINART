@@ -16,16 +16,16 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-import { renderDesign } from './render';
-import { applyAppearance, type DesignAppearance } from './design-appearance';
+import { renderDesign } from './declarative/render';
+import { applyAppearance, type DesignAppearance } from '../document/design-appearance';
 import {
   DEFAULT_TYPOGRAPHY,
   PALETTE,
   type Palette,
   type Typography,
-} from './render-style';
-import type { DesignSketch } from './design-sketch';
-import type { BlinkRenderer } from '../../render/blink-renderer';
+} from './declarative/render-style';
+import type { DesignSketch } from '../document/design-sketch';
+import type { BlinkRenderer } from './rasterize/blink-renderer';
 
 // ══════════════════════════════════════════════════════════════════════
 // 共享渲染器
@@ -103,7 +103,7 @@ function ensureExitHooks(): void {
 
 async function withSharedRenderer<T>(fn: (r: BlinkRenderer) => Promise<T>): Promise<T> {
   if (!sharedRenderer) {
-    const { createBlinkRenderer } = await import('../../render/blink-renderer');
+    const { createBlinkRenderer } = await import('./rasterize/blink-renderer');
     // 草图固定 1:1（deviceScaleFactor 是 persistent context 的实例级选项）
     sharedRenderer = createBlinkRenderer({ deviceScaleFactor: 1 });
     ensureExitHooks();

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  html,body{margin:0;background:transparent}
+  .layer{position:relative;width:420px;height:300px}
+  .card{position:absolute;left:18px;top:18px;width:384px;height:264px;border-radius:16px;
+        background:linear-gradient(135deg,#2f6b8a,#16303f)}
+  .ring{position:absolute;left:298px;top:168px;width:78px;height:78px;border-radius:50%;
+        border:6px solid #e8a24a}
+  .bar{position:absolute;left:44px;top:210px;width:150px;height:10px;border-radius:5px;background:#f2e8da;opacity:.8}
+  .t{position:absolute;left:44px;top:100px;font-family:Georgia,serif;font-weight:900;
+     font-size:62px;color:#f2e8da;letter-spacing:.02em}
+</style></head><body>
+  <!-- ① 声明式图层：由 DOM 渲染（圆角/渐变/文字/描边环） -->
+  <div class="layer">
+    <div class="card"></div>
+    <div class="ring"></div>
+    <div class="bar"></div>
+    <div class="t">BAKE</div>
+  </div>
+</body></html>

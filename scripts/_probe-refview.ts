@@ -61,7 +61,7 @@ function page(src: string, label: string): string {
 async function main() {
   console.log('\n参考图放大对照');
   mkdirSync(OUT, { recursive: true });
-  const { createBlinkRenderer } = await import('../src/render/blink-renderer');
+  const { createBlinkRenderer } = await import('../src/render/rasterize/blink-renderer');
 
   const sections = paths
     .map((p) => page(dataUrl(p), basename(p)))

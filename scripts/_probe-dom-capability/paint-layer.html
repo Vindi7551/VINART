@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head><meta charset="utf-8">
+<style>html,body{margin:0;background:transparent}</style>
+</head>
+<body>
+<!-- 模拟"光栅图层"：透明底 + 笔刷状笔画（真 RGBA，带 alpha） -->
+<svg width="520" height="380" viewBox="0 0 520 380" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="brush" x="-25%" y="-25%" width="150%" height="150%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.045 0.13" numOctaves="3" seed="9" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="14" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs>
+  <g filter="url(#brush)">
+    <path d="M40 250 C 150 90, 250 300, 400 150" fill="none" stroke="#d23b3b" stroke-width="40" stroke-linecap="round" opacity=".95"/>
+    <path d="M70 150 C 180 60, 300 260, 470 210" fill="none" stroke="#f0a02a" stroke-width="18" stroke-linecap="round" opacity=".9"/>
+    <path d="M120 330 C 220 280, 330 350, 460 300" fill="none" stroke="#2f6b8a" stroke-width="24" stroke-linecap="round" opacity=".85"/>
+  </g>
+</svg>
+</body>
+</html>

@@ -115,7 +115,7 @@ ${blocks}
 </body></html>`;
 
   mkdirSync(OUT, { recursive: true });
-  const { createBlinkRenderer } = await import('../src/render/blink-renderer');
+  const { createBlinkRenderer } = await import('../src/render/rasterize/blink-renderer');
   const r = createBlinkRenderer();
   try {
     const out = await r.render({ html }, OUT, {

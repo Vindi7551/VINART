@@ -34,7 +34,7 @@
  * 实测：草图上写真实文字，生成模型会把那些字画进成品，而且必然出错字。
  */
 
-import type { Canvas, Node } from './design-sketch';
+import type { Canvas, Node } from '../../document/design-sketch';
 import { escapeHtml, layerBox, wrap } from './shared';
 
 /** 节点没有 `name` 时，草图上显示什么 */

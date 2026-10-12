@@ -20,8 +20,8 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
-import { checkAppearance, checkAppearanceRefs, checkSketch, type CheckResult, type SketchIssue } from '../../workflow/design-sketch/validate';
-import { renderSketchFile } from '../../workflow/design-sketch/runtime';
+import { checkAppearance, checkAppearanceRefs, checkSketch, type CheckResult, type SketchIssue } from '../../document/validate';
+import { renderSketchFile } from '../../render/runtime';
 import type { AgentTool, AgentToolContext } from '../subagent/types';
 
 // ── 共享 ──

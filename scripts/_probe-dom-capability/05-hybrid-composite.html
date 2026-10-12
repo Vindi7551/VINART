@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>混合探针 · isolation 会不会挡住 mix-blend-mode</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{width:1180px;font-family:"Segoe UI",system-ui,sans-serif;background:#ece7dc;color:#1c1a17;padding:22px 26px 26px}
+  h1{font-size:19px}
+  .sub{font-size:12px;color:#6b6459;margin:6px 0 14px;line-height:1.6}
+  .row{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .panel{background:#f5f2ea;border:1px solid #d8d2c6;border-radius:12px;padding:11px 12px 12px}
+  .plabel{font-size:11.5px;font-weight:700;margin-bottom:8px;line-height:1.45}
+  .plabel code{background:#e7e1d5;padding:0 4px;border-radius:4px;font-size:10.5px}
+  .canvas{position:relative;width:340px;height:250px;border-radius:8px;overflow:hidden;background:#fff}
+  .dl{position:absolute}          /* 复刻 Vinart：节点容器绝对定位 */
+  .iso{isolation:isolate}         /* Vinart 现状：压制内部 z-index 外逃 */
+  .auto{isolation:auto}           /* 对照组：不隔离 */
+  .note{font-size:10.5px;color:#5f584e;margin-top:8px;line-height:1.5}
+</style>
+</head>
+<body>
+  <h1>混合探针 · <code>isolation:isolate</code> 会不会挡住 <code>mix-blend-mode</code>？</h1>
+  <div class="sub">结构完全一致：底层渐变 + 中层橙块 + <b>上层「光栅图层」</b>（真 RGBA 笔刷 PNG）。
+    唯一变量是容器上的 <code>isolation</code> 与光栅层的 <code>mix-blend-mode</code>。
+    若 A 与 B 视觉一致 ⇒ <b>isolation 不挡混合</b>；若 A 明显不同（光栅层"浮"在上面）⇒ <b>挡住</b>。</div>
+
+  <div class="row">
+
+    <div class="panel">
+      <div class="plabel">A · 现状：每层 <code>isolation:isolate</code> ＋ 光栅层 <code>multiply</code></div>
+      <div class="canvas">
+        <div class="dl iso" style="left:0;top:0;width:340px;height:250px;background:linear-gradient(120deg,#f2e8da,#cdbfa6)"></div>
+        <div class="dl iso" style="left:22px;top:40px;width:150px;height:120px;background:#e8a24a;border-radius:8px"></div>
+        <div class="dl iso" style="left:64px;top:28px;width:250px;height:200px;mix-blend-mode:multiply">
+          <img src="paint-layer.png" style="width:100%;height:100%;object-fit:contain" alt="">
+        </div>
+      </div>
+      <div class="note">这就是 Vinart 现在的写法（`render.ts` 的 <code>.dl{isolation:isolate}</code>）。</div>
+    </div>
+
+    <div class="panel">
+      <div class="plabel">B · 对照：每层 <code>isolation:auto</code> ＋ 光栅层 <code>multiply</code></div>
+      <div class="canvas">
+        <div class="dl auto" style="left:0;top:0;width:340px;height:250px;background:linear-gradient(120deg,#f2e8da,#cdbfa6)"></div>
+        <div class="dl auto" style="left:22px;top:40px;width:150px;height:120px;background:#e8a24a;border-radius:8px"></div>
+        <div class="dl auto" style="left:64px;top:28px;width:250px;height:200px;mix-blend-mode:multiply">
+          <img src="paint-layer.png" style="width:100%;height:100%;object-fit:contain" alt="">
+        </div>
+      </div>
+      <div class="note">与 A 唯一差别：把 <code>isolation</code> 去掉。</div>
+    </div>
+
+    <div class="panel">
+      <div class="plabel">C · 对照：光栅层不做混合（普通叠加）</div>
+      <div class="canvas">
+        <div class="dl iso" style="left:0;top:0;width:340px;height:250px;background:linear-gradient(120deg,#f2e8da,#cdbfa6)"></div>
+        <div class="dl iso" style="left:22px;top:40px;width:150px;height:120px;background:#e8a24a;border-radius:8px"></div>
+        <div class="dl iso" style="left:64px;top:28px;width:250px;height:200px">
+          <img src="paint-layer.png" style="width:100%;height:100%;object-fit:contain" alt="">
+        </div>
+      </div>
+      <div class="note">基准：笔画"浮"在画面上的样子（无混合）。</div>
+    </div>
+
+  </div>
+</body>
+</html>

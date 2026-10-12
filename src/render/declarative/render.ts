@@ -23,7 +23,7 @@
  * 每个节点必须能被单独截出来而不变样——拆层时要中性化所有祖先背景。
  */
 
-import type { Canvas, DesignSketch, ImageNode, Node, TextNode } from './design-sketch';
+import type { Canvas, DesignSketch, ImageNode, Node, TextNode } from '../../document/design-sketch';
 import { DEFAULT_TYPOGRAPHY, PALETTE, type Palette, type Typography } from './render-style';
 import { assetKey, escapeAttr, escapeHtml, layerBox, wrap, type Box, type Painted } from './shared';
 import { renderSketchBody, SKETCH_CSS } from './sketch';

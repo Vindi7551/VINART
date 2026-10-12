@@ -18,16 +18,16 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { assembleFinal } from '../src/workflow/compose/assemble';
-import { applyAppearance } from '../src/workflow/design-sketch/design-appearance';
+import { applyAppearance } from '../src/document/design-appearance';
 import {
   disposeSketchRenderer,
   getSharedRenderer,
   loadAppearance,
   loadPalette,
   loadTypography,
-} from '../src/workflow/design-sketch/runtime';
-import { checkAppearance, checkAppearanceRefs, checkSketch } from '../src/workflow/design-sketch/validate';
-import type { DesignSketch } from '../src/workflow/design-sketch/design-sketch';
+} from '../src/render/runtime';
+import { checkAppearance, checkAppearanceRefs, checkSketch } from '../src/document/validate';
+import type { DesignSketch } from '../src/document/design-sketch';
 import type { AssetOrders } from '../src/workflow/assetsgen/asset-order';
 
 const DEFAULT_DIRS = [

@@ -15,7 +15,7 @@
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { checkAppearanceRefs, checkSketch, type CheckResult } from '../../workflow/design-sketch/validate';
+import { checkAppearanceRefs, checkSketch, type CheckResult } from '../../document/validate';
 import type { AgentTool } from '../subagent/types';
 import { resolveDesignDir } from './project-paths';
 

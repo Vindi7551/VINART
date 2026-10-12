@@ -27,10 +27,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import type { DesignSketch } from '../design-sketch/design-sketch';
-import type { Palette, Typography } from '../design-sketch/render-style';
-import { fitTargets, renderDesign, type FitMap } from '../design-sketch/render';
-import type { BlinkRenderer } from '../../render/blink-renderer';
+import type { DesignSketch } from '../../document/design-sketch';
+import type { Palette, Typography } from '../../render/declarative/render-style';
+import { fitTargets, renderDesign, type FitMap } from '../../render/declarative/render';
+import type { BlinkRenderer } from '../../render/rasterize/blink-renderer';
 import type { AssetOrders } from '../assetsgen/asset-order';
 import type { CanvasHost } from '../assetsgen/image';
 import { emitHtml, inlineAssets } from './emit-html';
@@ -141,7 +141,7 @@ export async function assembleFinal(opts: AssembleOptions): Promise<AssembleResu
   // ── 渲成品 PNG ──
   // 注入了 renderer → 复用（服务进程共享渲染器，零起停）；
   // 没注入 → 自起自关（CLI 驱动脚本的历史行为）。
-  const { createBlinkRenderer } = await import('../../render/blink-renderer');
+  const { createBlinkRenderer } = await import('../../render/rasterize/blink-renderer');
   const r = opts.renderer ?? createBlinkRenderer({ deviceScaleFactor: 1 });
   let pngPath = '';
   try {

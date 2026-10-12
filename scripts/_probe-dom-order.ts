@@ -37,7 +37,7 @@ async function main() {
   console.log('DOM 顺序是怎么确定的');
   console.log('═'.repeat(72));
 
-  const { renderDesign } = await import('../src/workflow/design-sketch/render');
+  const { renderDesign } = await import('../src/render/declarative/render');
 
   console.log('\n[1] 输入：spec.layers 数组\n');
   spec.layers.forEach((l, i) => console.log(`     layers[${i}] = ${l.id}`));
@@ -75,7 +75,7 @@ async function main() {
     '<style>.dl{outline:2px solid rgba(255,255,255,.28)}</style></head>',
   );
 
-  const { createBlinkRenderer } = await import('../src/render/blink-renderer');
+  const { createBlinkRenderer } = await import('../src/render/rasterize/blink-renderer');
   const r = createBlinkRenderer();
   try {
     const out = await r.render({ html: full }, OUT, {

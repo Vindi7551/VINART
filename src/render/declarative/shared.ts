@@ -9,8 +9,8 @@
  * ⚠️ 本文件**不得 import 任何渲染器**（否则成环）。它只依赖契约。
  */
 
-import type { Canvas, Node } from './design-sketch';
-import type { LayerAppearance } from './design-appearance';
+import type { Canvas, Node } from '../../document/design-sketch';
+import type { LayerAppearance } from '../../document/design-appearance';
 
 /**
  * 渲染器实际拿到的东西：**契约节点 + 外观合并后的结果**。

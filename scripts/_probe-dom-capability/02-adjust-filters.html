@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>能力账本 02 · 调色与滤镜算子</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{width:1180px;font-family:"Segoe UI",system-ui,sans-serif;background:#ece7dc;color:#1c1a17;padding:22px 26px 26px}
+  h1{font-size:19px}
+  .sub{font-size:12px;color:#6b6459;margin:6px 0 14px}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:13px}
+  .card{background:#f5f2ea;border:1px solid #d8d2c6;border-radius:12px;padding:11px 12px 12px}
+  .head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+  .name{font-size:12.5px;font-weight:700}
+  .badge{font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:999px;white-space:nowrap}
+  .ok{background:#ddefdd;color:#1f6b2b;border:1px solid #a6d5aa}
+  .gen{background:#f7eed3;color:#8a5a12;border:1px solid #e0c98a}
+  .no{background:#f7dede;color:#9b2b2b;border:1px solid #e3adad}
+  .stage{height:128px;border-radius:8px;background:#fff;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
+  .note{font-size:10.5px;color:#5f584e;margin-top:7px;line-height:1.5}
+  .note code{background:#e7e1d5;padding:0 4px;border-radius:4px;font-size:10px}
+  .strip{display:flex;gap:5px}
+  .strip img{width:74px;height:104px;object-fit:cover;border-radius:5px}
+</style>
+</head>
+<body>
+  <h1>能力账本 02 · 调色与滤镜算子</h1>
+  <div class="sub">对照 Photoshop 调整层 / 滤镜。全部作用于同一张真实照片（<code>test_product/goose/source.jpg</code>）。</div>
+
+  <!-- 所有 SVG 滤镜集中定义一次，各卡片按 id 引用 -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+    <filter id="f-blur"><feGaussianBlur stdDeviation="4"/></filter>
+    <filter id="f-curve"><feComponentTransfer>
+      <feFuncR type="table" tableValues="0.08 0.28 0.55 0.82 1"/>
+      <feFuncG type="table" tableValues="0.05 0.24 0.50 0.80 1"/>
+      <feFuncB type="table" tableValues="0.12 0.34 0.62 0.88 1"/>
+    </feComponentTransfer></filter>
+    <filter id="f-chan"><feColorMatrix type="matrix" values="0 0 1 0 0  1 0 0 0 0  0 1 0 0 0  0 0 0 1 0"/></filter>
+    <filter id="f-dilate"><feMorphology operator="dilate" radius="2.5"/></filter>
+    <filter id="f-noise" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="2" seed="4" result="n"/>
+      <feColorMatrix in="n" type="saturate" values="0" result="g"/>
+      <feBlend in="SourceGraphic" in2="g" mode="multiply"/></filter>
+    <filter id="f-light" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="4" result="b"/>
+      <feSpecularLighting in="b" surfaceScale="6" specularConstant="1.1" specularExponent="18" lighting-color="#ffd9a0" result="s">
+        <fePointLight x="130" y="20" z="150"/></feSpecularLighting>
+      <feComposite in="s" in2="SourceAlpha" operator="in" result="s2"/>
+      <feComposite in="SourceGraphic" in2="s2" operator="arithmetic" k1="0" k2="1" k3="1" k4="0"/></filter>
+    <filter id="f-sharp"><feConvolveMatrix order="3" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0" preserveAlpha="true"/></filter>
+    <filter id="f-warp" x="-15%" y="-15%" width="130%" height="130%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.018 0.028" numOctaves="2" seed="5" result="w"/>
+      <feDisplacementMap in="SourceGraphic" in2="w" scale="28" xChannelSelector="R" yChannelSelector="G"/></filter>
+  </defs></svg>
+
+  <div class="grid">
+
+    <div class="card"><div class="head"><span class="name">CSS filter 全套</span><span class="badge ok">✅ 直接做</span></div>
+      <div class="stage"><div class="strip">
+        <img src="../../test_product/goose/source.jpg" alt="">
+        <img src="../../test_product/goose/source.jpg" style="filter:grayscale(1)" alt="">
+        <img src="../../test_product/goose/source.jpg" style="filter:sepia(.9)" alt="">
+        <img src="../../test_product/goose/source.jpg" style="filter:hue-rotate(150deg) saturate(1.4)" alt="">
+      </div></div>
+      <div class="note">原图 / 灰度 / 棕褐 / 色相旋转 —— <code>blur brightness contrast saturate hue-rotate grayscale sepia invert drop-shadow</code>，全部原生+GPU</div></div>
+
+    <div class="card"><div class="head"><span class="name">曲线 Curves</span><span class="badge ok">✅ 直接做</span></div>
+      <div class="stage"><svg width="220" height="118" viewBox="0 0 220 118"><image href="../../test_product/goose/source.jpg" width="220" height="118" preserveAspectRatio="xMidYMid slice" filter="url(#f-curve)"/></svg></div>
+      <div class="note">SVG <code>feComponentTransfer</code> 的 <code>type="table"</code> —— 每个通道一条映射曲线，即 PS 的曲线/色阶</div></div>
+
+    <div class="card"><div class="head"><span class="name">通道混合 / 色相</span><span class="badge ok">✅ 直接做</span></div>
+      <div class="stage"><svg width="220" height="118" viewBox="0 0 220 118"><image href="../../test_product/goose/source.jpg" width="220" height="118" preserveAspectRatio="xMidYMid slice" filter="url(#f-chan)"/></svg></div>
+      <div class="note"><code>feColorMatrix type="matrix"</code> —— 通道互换/加权，即 PS 通道混合器</div></div>
+
+    <div class="card"><div class="head"><span class="name">形态学 膨胀/腐蚀</span><span class="badge ok">✅ 直接做</span></div>
+      <div class="stage"><svg width="220" height="118" viewBox="0 0 220 118"><image href="../../test_product/goose/source.jpg" width="220" height="118" preserveAspectRatio="xMidYMid slice" filter="url(#f-dilate)"/></svg></div>
+      <div class="note"><code>feMorphology operator="dilate|erode"</code> —— 加粗/瘦身，可做描边外扩</div></div>
+
+    <div class="card"><div class="head"><span class="name">噪声 / 颗粒</span><span class="badge ok">✅ 直接做</span></div>
+      <div class="stage"><svg width="220" height="118" viewBox="0 0 220 118"><image href="../../test_product/goose/source.jpg" width="220" height="118" preserveAspectRatio="xMidYMid slice" filter="url(#f-noise)"/></svg></div>
+      <div class="note"><code>feTurbulence</code> + <code>feBlend</code> —— 即 PS 的「颗粒 / 添加杂色」</div></div>
+
+    <div class="card"><div class="head"><span class="name">光照效果 Lighting</span><span class="badge ok">✅ 直接做</span></div>
+      <div class="stage"><svg width="220" height="118" viewBox="0 0 220 118"><image href="../../test_product/goose/source.jpg" width="220" height="118" preserveAspectRatio="xMidYMid slice" filter="url(#f-light)"/></svg></div>
+      <div class="note"><code>feSpecularLighting</code> + <code>fePointLight</code> —— 即 PS 的「光照效果」</div></div>
+
+    <div class="card"><div class="head"><span class="name">锐化 Convolution</span><span class="badge ok">✅ 直接做</span></div>
+      <div class="stage"><svg width="220" height="118" viewBox="0 0 220 118"><image href="../../test_product/goose/source.jpg" width="220" height="118" preserveAspectRatio="xMidYMid slice" filter="url(#f-sharp)"/></svg></div>
+      <div class="note"><code>feConvolveMatrix</code> —— 任意卷积核，即 USM 锐化 / 自定义算子</div></div>
+
+    <div class="card"><div class="head"><span class="name">位移扭曲 Displace</span><span class="badge ok">✅ 直接做</span></div>
+      <div class="stage"><svg width="220" height="118" viewBox="0 0 220 118"><image href="../../test_product/goose/source.jpg" width="220" height="118" preserveAspectRatio="xMidYMid slice" filter="url(#f-warp)"/></svg></div>
+      <div class="note"><code>feDisplacementMap</code> —— 即 PS「置换/波纹」；液化是它的<b>交互可控版</b>（见第 4 页）</div></div>
+
+    <div class="card"><div class="head"><span class="name">高斯模糊 Gaussian Blur</span><span class="badge ok">✅ 直接做</span></div>
+      <div class="stage"><svg width="220" height="118" viewBox="0 0 220 118"><image href="../../test_product/goose/source.jpg" width="220" height="118" preserveAspectRatio="xMidYMid slice" filter="url(#f-blur)"/></svg></div>
+      <div class="note"><code>feGaussianBlur</code> 或 CSS <code>blur()</code></div></div>
+
+  </div>
+</body>
+</html>

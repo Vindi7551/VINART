@@ -23,7 +23,7 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import type { DesignSketch } from '../design-sketch/design-sketch';
+import type { DesignSketch } from '../../document/design-sketch';
 import { BANNED_WORDS, type AssetOrders, type AssetReference, type AssetRequest } from './asset-order';
 import { cropToRef, dataUrlToBuffer, downscaleToRef, prepareProduct } from './cutout';
 

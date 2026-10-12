@@ -80,10 +80,10 @@ async function handleLayout(
     // ⚠️ html **始终现场生成**——不从任何落盘快照读。这样编辑视图永远与
     // spec + appearance 一致；落盘快照（final.html / final.linked.html）已于
     // 2026-10-09 删除，那条路整个消失。spec 才是编辑的数据源。
-    const { renderDesign } = await import('../workflow/design-sketch/render');
-    const { applyAppearance } = await import('../workflow/design-sketch/design-appearance');
+    const { renderDesign } = await import('../render/declarative/render');
+    const { applyAppearance } = await import('../document/design-appearance');
     const { loadAppearance, loadPalette, loadTypography } = await import(
-      '../workflow/design-sketch/runtime'
+      '../render/runtime'
     );
     const app2 = loadAppearance(specPath);
     const merged = {

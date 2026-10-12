@@ -67,7 +67,7 @@ async function main() {
   console.log('═'.repeat(68));
   mkdirSync(OUT, { recursive: true });
 
-  const { createBlinkRenderer } = await import('../src/render/blink-renderer');
+  const { createBlinkRenderer } = await import('../src/render/rasterize/blink-renderer');
   const renderer = createBlinkRenderer();
 
   const { chromium } = await import('playwright');

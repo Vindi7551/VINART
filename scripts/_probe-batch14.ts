@@ -18,7 +18,7 @@ import { runAgentBatch, type AgentBatchEvent } from '../src/designharness/subage
 import { designAgentSystem } from '../src/designharness/subagent/design-system';
 import { DESIGN_SKETCH_TOOLS } from '../src/designharness/tools';
 import { getChatGateway } from '../src/config';
-import { disposeSketchRenderer } from '../src/workflow/design-sketch/runtime';
+import { disposeSketchRenderer } from '../src/render/runtime';
 
 // 与 2026-10-01 串行压测同一名单（原文件已丢失，按同主题同难度重建）
 const SLUGS = [

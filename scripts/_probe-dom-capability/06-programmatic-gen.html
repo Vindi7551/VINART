@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>能力账本 05 · 程序化生成（算法产数据 → DOM 渲染）</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{width:1180px;font-family:"Segoe UI",system-ui,sans-serif;background:#ece7dc;color:#1c1a17;padding:22px 26px 26px}
+  h1{font-size:19px}
+  .sub{font-size:12px;color:#6b6459;margin:6px 0 14px;line-height:1.6}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:13px}
+  .card{background:#f5f2ea;border:1px solid #d8d2c6;border-radius:12px;padding:11px 12px 12px}
+  .head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+  .name{font-size:12.5px;font-weight:700}
+  .badge{font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:999px;white-space:nowrap;
+         background:#ddefdd;color:#1f6b2b;border:1px solid #a6d5aa}
+  .stage{height:196px;border-radius:8px;background:#fff;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .note{font-size:10.5px;color:#5f584e;margin-top:7px;line-height:1.5}
+  .note code{background:#e7e1d5;padding:0 4px;border-radius:4px;font-size:10px}
+  .seed{color:#8a5a12;font-weight:700}
+</style>
+</head>
+<body>
+  <h1>能力账本 05 · 程序化生成 —— 算法产数据，DOM 渲染</h1>
+  <div class="sub">这一页的东西"看起来像光栅/艺术"，其实是 <b>确定性算法算出数据</b>（路径 / 盖章序列 / 图案），
+    再交给 SVG 渲染。<b>零光栅、零新后端</b>，且<b>给定种子即完全可复现</b>。</div>
+
+  <div class="grid">
+
+    <div class="card"><div class="head"><span class="name">撕纸边（算出的毛边路径）</span><span class="badge">算法 → clipPath</span></div>
+      <div class="stage"><svg id="t1" viewBox="0 0 336 196" width="336" height="196"></svg></div>
+      <div class="note">沿矩形四边按噪声扰动算出闭合路径 → 当 <code>clipPath</code>。种子 <span class="seed">s=7</span></div></div>
+
+    <div class="card"><div class="head"><span class="name">毛边条带 / 丝带</span><span class="badge">算法 → path</span></div>
+      <div class="stage"><svg id="t2" viewBox="0 0 336 196" width="336" height="196"></svg></div>
+      <div class="note">上下两条毛边曲线闭合填充；边缘抖动 = 一次性算好的一串点。<span class="seed">s=21</span></div></div>
+
+    <div class="card"><div class="head"><span class="name">变宽笔触（第 04 页的 ❌ 变 ✅）</span><span class="badge">算法 → 轮廓</span></div>
+      <div class="stage"><svg id="t3" viewBox="0 0 336 196" width="336" height="196"></svg></div>
+      <div class="note">沿中心线求<b>法向偏移</b>生成闭合轮廓再填充 —— <code>stroke-width</code> 做不到的"由粗到细"，<b>算出来就有了</b>。<span class="seed">s=33</span></div></div>
+
+    <div class="card"><div class="head"><span class="name">沿路径盖章笔刷</span><span class="badge">算法 → 图元序列</span></div>
+      <div class="stage"><svg id="t4" viewBox="0 0 336 196" width="336" height="196"></svg></div>
+      <div class="note">算出 N 个椭圆（位置 / 半径 / 角度带抖动）→ 逐个渲染、透明度累积。<span class="seed">s=5</span></div></div>
+
+    <div class="card"><div class="head"><span class="name">程序化图案</span><span class="badge">算法 → 图形</span></div>
+      <div class="stage"><svg id="t5" viewBox="0 0 336 196" width="336" height="196"></svg></div>
+      <div class="note">种子化点阵 + 抖动 / 半径渐变 —— 即生成式底纹，不必生图。<span class="seed">s=99</span></div></div>
+
+    <div class="card"><div class="head"><span class="name">手绘感边框（双层毛线）</span><span class="badge">算法 → path</span></div>
+      <div class="stage"><svg id="t6" viewBox="0 0 336 196" width="336" height="196"></svg></div>
+      <div class="note">两条轻微错位的毛边闭合曲线叠加 —— "马克笔框"效果。<span class="seed">s=13</span></div></div>
+
+  </div>
+
+<script>
+const SVGNS = 'http://www.w3.org/2000/svg';
+const el = (n, a = {}) => { const e = document.createElementNS(SVGNS, n); for (const k in a) e.setAttribute(k, a[k]); return e; };
+const P = (pts) => 'M' + pts.map(p => `${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' L') + ' Z';
+
+// ── 确定性伪随机（mulberry32）：同种子 ⇒ 同结果 ──
+function rng(seed) {
+  let a = seed >>> 0;
+  return () => { a = (a + 0x6D2B79F5) >>> 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+
+// ── 沿一条边铺"毛边"点 ──
+function edgePoints(x0, y0, x1, y1, amp, r, step) {
+  const dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy);
+  const n = Math.max(2, Math.round(len / step)), nx = -dy / len, ny = dx / len, out = [];
+  for (let i = 0; i <= n; i++) { const t = i / n, o = (r() - 0.5) * 2 * amp; out.push([x0 + dx*t + nx*o, y0 + dy*t + ny*o]); }
+  return out;
+}
+function raggedRect(x, y, w, h, amp, seed, step = 10) {
+  const r = rng(seed);
+  return P([...edgePoints(x, y, x+w, y, amp, r, step), ...edgePoints(x+w, y, x+w, y+h, amp, r, step),
+            ...edgePoints(x+w, y+h, x, y+h, amp, r, step), ...edgePoints(x, y+h, x, y, amp, r, step)]);
+}
+
+// ── T1 撕纸边：算出的毛边路径当 clipPath ──
+(() => {
+  const svg = document.getElementById('t1'), d = raggedRect(8, 8, 320, 180, 5, 7, 9);
+  const defs = el('defs'), cp = el('clipPath', { id: 'torn' }); cp.appendChild(el('path', { d })); defs.appendChild(cp);
+  svg.appendChild(defs);
+  svg.appendChild(el('image', { href: '../../test_product/goose/source.jpg', x: 0, y: 0, width: 336, height: 196,
+                                preserveAspectRatio: 'xMidYMid slice', 'clip-path': 'url(#torn)' }));
+})();
+
+// ── T2 毛边条带 ──
+(() => {
+  const svg = document.getElementById('t2'), r = rng(21);
+  const top = edgePoints(14, 62, 322, 70, 7, r, 16), bot = edgePoints(14, 138, 322, 130, 7, r, 16).reverse();
+  svg.appendChild(el('path', { d: P([...top, ...bot]), fill: '#2f6b8a' }));
+  const top2 = edgePoints(24, 92, 312, 96, 5, rng(22), 16), bot2 = edgePoints(24, 176, 312, 172, 5, rng(23), 16).reverse();
+  svg.appendChild(el('path', { d: P([...top2, ...bot2]), fill: '#e8a24a', opacity: '.9' }));
+})();
+
+// ── T3 变宽笔触轮廓（法向偏移）──
+(() => {
+  const svg = document.getElementById('t3'), N = 72, pts = [], radii = [];
+  for (let i = 0; i <= N; i++) { const t = i / N; pts.push({ x: 26 + 284*t, y: 104 + 62*Math.sin(t*Math.PI*1.7) });
+    radii.push(1.6 + 17*Math.pow(Math.sin(t*Math.PI), 1.25)); }
+  const L = [], R = [];
+  for (let i = 0; i <= N; i++) {
+    const p = pts[i], a = pts[Math.max(0, i-1)], b = pts[Math.min(N, i+1)];
+    let tx = b.x - a.x, ty = b.y - a.y; const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+    const nx = -ty, ny = tx, rr = radii[i];
+    L.push([p.x + nx*rr, p.y + ny*rr]); R.push([p.x - nx*rr, p.y - ny*rr]);
+  }
+  svg.appendChild(el('path', { d: P([...L, ...R.reverse()]), fill: '#1c1a17' }));
+})();
+
+// ── T4 沿路径盖章 ──
+(() => {
+  const svg = document.getElementById('t4'), r = rng(5), N = 90;
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const x = 30 + 276*t, y = 100 + 56*Math.sin(t*Math.PI*2.2);
+    const rad = 3 + 8*Math.abs(Math.sin(t*Math.PI*3)) + (r()-0.5)*1.6;
+    const rot = (r()-0.5)*46;
+    svg.appendChild(el('ellipse', { cx: x.toFixed(1), cy: y.toFixed(1), rx: Math.max(1.2, rad).toFixed(1), ry: (Math.max(1.2, rad)*0.72).toFixed(1),
+                                    transform: `rotate(${rot.toFixed(1)} ${x.toFixed(1)} ${y.toFixed(1)})`,
+                                    fill: '#d23b3b', opacity: '0.16' }));
+  }
+})();
+
+// ── T5 程序化图案 ──
+(() => {
+  const svg = document.getElementById('t5'), r = rng(99);
+  svg.appendChild(el('rect', { x: 0, y: 0, width: 336, height: 196, fill: '#16303f' }));
+  for (let gy = 0; gy < 7; gy++) for (let gx = 0; gx < 12; gx++) {
+    const x = 22 + gx*26 + (r()-0.5)*9, y = 22 + gy*26 + (r()-0.5)*9;
+    const rad = 2 + 4*r();
+    svg.appendChild(el('circle', { cx: x.toFixed(1), cy: y.toFixed(1), r: rad.toFixed(1), fill: '#e8a24a', opacity: (0.35+0.5*r()).toFixed(2) }));
+  }
+})();
+
+// ── T6 手绘感边框 ──
+(() => {
+  const svg = document.getElementById('t6');
+  svg.appendChild(el('rect', { x: 0, y: 0, width: 336, height: 196, fill: '#f2e8da' }));
+  svg.appendChild(el('path', { d: raggedRect(22, 22, 292, 152, 3.4, 13, 12), fill: 'none', stroke: '#b8722f', 'stroke-width': 3.4 }));
+  svg.appendChild(el('path', { d: raggedRect(27, 27, 282, 142, 2.6, 14, 12), fill: 'none', stroke: '#b8722f', 'stroke-width': 2.2, opacity: '.75' }));
+  svg.appendChild(el('text', { x: 168, y: 112, 'text-anchor': 'middle', 'font-family': 'Georgia,serif',
+                               'font-size': 30, 'font-weight': 900, fill: '#1c1a17' })).textContent = 'HAND-DRAWN';
+})();
+</script>
+</body>
+</html>
