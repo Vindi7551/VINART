@@ -90,7 +90,7 @@ src/
 │   ├── tools/             工具集（见下表）
 │   ├── SESSIONS.md        会话层设计文档
 │   └── SKILLS.md          技能层设计文档（三层来源 + 优先级 bundled>project>user）
-├── render/                Blink 渲染（blink-renderer · embed-images · index）
+├── render/                Blink 渲染（只有 blink-renderer.ts）
 ├── schema/                ⚠️ 空（`asset-order.ts` 已移至 workflow/assetsgen/）
 └── workflow/              一条工作流一个目录
     ├── design-sketch/     版式规格 + **渲染真源 render.ts** ← 改这里之前先读它的 README
