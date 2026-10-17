@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { createVocabEditor, type VocabEditorHandle } from '../editor/vocab-editor';
 import type { SelectionSnapshot } from '../editor/inspector';
 import { emitDocument, emitElementHtml, emitLayerHtml } from '../render/vocabulary/emit';
-import { findElement, type ElementNode, type Rect } from '../document/vocabulary';
+import { findElement, findLayer, type ElementNode, type Rect } from '../document/vocabulary';
 import type { PreviewData, HostSignal } from './types';
 
 interface PreviewPanelProps {
@@ -119,6 +119,8 @@ export function PreviewPanel({
   shapeKind,
 }: PreviewPanelProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  /** ⭐ 面板刚 patch 过哪个节点 —— 等新文档到了（`onChange`）再重发它的 DOM */
+  const pendingPatchRef = useRef<string | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<VocabEditorHandle | null>(null);
@@ -318,6 +320,25 @@ export function PreviewPanel({
       // ⭐ 编辑器给的 label（见 editor-stack 的 submit）：App 靠它区分就地/结构变化
       onChange: (id, next, label) => {
         lastEmitted.current = next;
+        // ⭐ **面板改字段的"改 DOM"那一半**：真到这里才算拿到新文档。
+        //    只重发**被改的那一个**节点（不重渲整页）：用它自己的 emit 产出替换掉旧节点。
+        //    ⚠️ 用 `insertAdjacentHTML` + `remove` 而不是 `outerHTML =`：emit 对带 clip/mask
+        //       的元素会**内联一段 defs `<svg>`**（自包含）⇒ 不止一个根节点，`outerHTML` 会塞错位置。
+        const patchId = pendingPatchRef.current;
+        if (patchId) {
+          pendingPatchRef.current = null;
+          const realm = iframeRef.current?.contentDocument;
+          const node = realm?.querySelector(`[data-layer="${CSS.escape(patchId)}"]`);
+          const asEl = findElement(next, patchId);
+          const asLayer = asEl ? null : findLayer(next, patchId);
+          if (realm && node && (asEl || asLayer)) {
+            const html = asEl
+              ? emitElementHtml(asEl, next.canvas, { assets: assetRef.current }).html
+              : emitLayerHtml(asLayer!, next.canvas, { assets: assetRef.current }).html;
+            node.insertAdjacentHTML('beforebegin', html);
+            node.remove();
+          }
+        }
         // ⚠️ **必须无条件外发**，不能 `if (id)`：（2026-10-17 修）
         //    编辑器的 `submit` 在**结构性操作**上会传 `id = null` —— 移动/删除图层
         //    （`moveLayer` / `removeLayer` 的图层分支）、以及撤销时的选中节点。
@@ -503,7 +524,15 @@ export function PreviewPanel({
         if (sig.id) ed.select(sig.id);
         break;
       case 'patch':
-        if (sig.id && sig.path) ed.patch(sig.id, sig.path, sig.value);
+        if (sig.id && sig.path) {
+          ed.patch(sig.id, sig.path, sig.value);
+          // ⭐ **补齐"改 DOM"那一半**：面板改字段原来只写了 doc，画布不动。
+          //    ⚠️ **不能在这里就地重发**：`ed.patch()` 之后新文档要经过
+          //      `scheduleCommit` 的防抖（80ms）才通过 `onChange` 送到宿主，
+          //      此刻手上还是**旧文档** ⇒ 重发出来的 HTML 里没有这次改动（实测踩过）。
+          //      ⇒ 只记下"改的是谁"，真正的重发放到 `onChange` 里（那时 `next` 才是新的）。
+          pendingPatchRef.current = sig.id;
+        }
         break;
       /**
        * ⭐ 给画面上**选中的那几个字**刷样式（样式面板发起的）。
