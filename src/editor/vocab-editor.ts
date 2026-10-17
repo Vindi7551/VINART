@@ -303,7 +303,7 @@ export interface VocabEditorHandle {
    *    所以这里先定一条**临时规则**（见实现里的注释）：加到第一个图层，
    *    一个图层都没有就先建一个默认图层。等图层面板做出来，这个入口应当改成"加进当前图层"。
    */
-  addLayer(node: ElementNode): void;
+  addElement(node: ElementNode): void;
   /** ⭐ 删除元素（组会连子元素一起删；进撤销栈） */
   removeLayer(id: string): void;
   /**
@@ -1874,21 +1874,23 @@ export function createVocabEditor(
     },
     undoDepth: () => stackUndoDepth(stack),
 
-    addLayer(node: ElementNode) {
-      // ⚠️ **临时规则（文档模型改版迁移期）**：文档现在是「画布 → 图层 → 元素」，
-      //    而"往文档里加一个新元素"这件事**还没说加进哪个图层** ⇒ 这里定：
-      //    **加到第一个图层**；**一个图层都没有，就先建一个默认图层再加**
-      //    （`id` 用 `layer-1` 这种就够 —— 空文档里不会有重名）。
-      //    ⚠️ 图层**永远和画布一样大** ⇒ 里面的元素就是**画布坐标**，
-      //       新元素加进去不用做任何坐标换算（与现有文档同一套口径）。
-      //    ⭐ 等图层面板做出来，这个入口应改成"加进**当前选中**的那个图层"。
-      let layer = doc.layers[0];
-      if (!layer) {
-        layer = { id: 'layer-1', elements: [] };
-        doc.layers.push(layer);
-      }
-      // ⭐ 追加到**尾部**（数组后面的在上 ⇒ 新元素在最上层，压在所有东西上面）
-      layer.elements.push(node);
+    addElement(node: ElementNode) {
+      // ⭐ **新增元素进「当前图层」的尾部**（数组尾 = 最上层，压在所有东西上面）。
+      //    当前图层是唯一的编辑作用域，规则见 `currentLayerId` 的注释。
+      //    ⚠️ 图层**永远和画布一样大** ⇒ 里面的元素就是**画布坐标**，不用做任何换算。
+      const layer = currentLayer();
+      // 一个图层都没有（空文档）⇒ 建一个再加
+      const target = layer ?? (() => {
+        const l: Layer = { id: 'layer-1', elements: [] };
+        doc.layers.push(l);
+        return l;
+      })();
+      // 当前图层**被锁定** ⇒ 拒绝（锁定的意思就是别改它）。
+      // ⚠️ 这里只挡住写入；UI 那边也应当把"新增"按钮置灰（更早暴露，不用点了才知道）。
+      if (layer && layer.locked === true) return;
+      // 当前图层**被隐藏** ⇒ 自动显示（否则"画了但看不见"是最糟的体验）
+      if (layer) delete layer.visible;
+      target.elements.push(node);
       select(node.id);
       submit(node.id, `新增 ${node.type}`);
       syncOverlay();

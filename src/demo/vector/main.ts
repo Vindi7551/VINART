@@ -567,7 +567,7 @@ function paintLayers() {
       // ⚠️ `editor.addLayer(...)` 加的**就是元素**（方法名里的 "Layer" 是历史遗留）：
       //    "画布的孩子一律是图层"由编辑器负责落地 —— 它把元素追加进图层并**选中它**，
       //    所以这里不用再 `select` 一次。
-      editor.addLayer(structuredClone(node));
+      editor.addElement(structuredClone(node));
     });
     head.appendChild(btn);
   }

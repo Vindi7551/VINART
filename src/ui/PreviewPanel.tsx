@@ -1,8 +1,8 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { createVocabEditor, type VocabEditorHandle } from '../editor/vocab-editor';
 import type { SelectionSnapshot } from '../editor/inspector';
-import { emitDocument } from '../render/vocabulary/emit';
-import { findElement } from '../document/vocabulary';
+import { emitDocument, emitElementHtml, emitLayerHtml } from '../render/vocabulary/emit';
+import { findElement, type ElementNode } from '../document/vocabulary';
 import type { PreviewData, HostSignal } from './types';
 
 interface PreviewPanelProps {
@@ -376,26 +376,46 @@ export function PreviewPanel({
     //    而画布的 srcdoc 是快照 ⇒ 不主动同步的话"文档删了元素、画布上还留着"。
     //    ⚠️ 判据是 `data-layer` 属性在不在文档的那份清单里；用 `display:none` 而不是删节点，
     //    撤销回来还能恢复。
-    const syncChildren = (parentDom: Element, want: readonly { id: string; type: string; elements?: unknown }[]) => {
+    const syncChildren = (parentDom: Element, want: readonly ElementNode[]) => {
       const wantIds = new Set(want.map((e) => e.id));
       for (const el of Array.from(parentDom.children)) {
         const id = el.getAttribute('data-layer') ?? '';
         if (!wantIds.has(id) && el instanceof HTMLEl) el.style.display = 'none';
       }
       for (const e of want) {
-        const el = parentDom.querySelector(`:scope > [data-layer="${CSS.escape(e.id)}"]`);
+        let el = parentDom.querySelector(`:scope > [data-layer="${CSS.escape(e.id)}"]`);
+        // ⭐ **双写**：文档里有、DOM 里没有（刚新增的元素 / 撤销恢复回来的）⇒
+        //    用 `emitElementHtml` 生成那一段插进去。它**自包含**（clip/mask 要的 defs 一起带上），
+        //    所以插进去的和整份渲染出来的逐字节相同。
+        if (!(el instanceof HTMLEl) && layoutData) {
+          parentDom.insertAdjacentHTML(
+            'beforeend',
+            emitElementHtml(e, layoutData.doc.canvas, { assets: layoutData.assets }).html,
+          );
+          el = parentDom.querySelector(`:scope > [data-layer="${CSS.escape(e.id)}"]`);
+        }
         if (!(el instanceof HTMLEl)) continue;
         el.style.display = '';
         parentDom.appendChild(el);
         if (e.type === 'group') {
           // 组内元素：`GroupNode.elements`
-          syncChildren(el, (e as unknown as { elements: typeof want }).elements ?? []);
+          syncChildren(el, e.elements);
         }
       }
     };
 
     for (const l of layers) {
-      const el = d.querySelector(`[data-layer="${CSS.escape(l.id)}"]`);
+      let el = d.querySelector(`[data-layer="${CSS.escape(l.id)}"]`);
+      // ⭐ **双写**：文档里有、DOM 里没有（新建的图层 / 撤销恢复回来的）⇒
+      //    用 `emitLayerHtml` 生成那一段**直接插进去**，不重渲整页（不闪、不打断编辑态）。
+      //    和整份渲染是**同一段代码**产的 ⇒ 不会和产物漂。
+      if (!(el instanceof HTMLEl) && layoutData) {
+        (d.querySelector('.stage') ?? d.body).insertAdjacentHTML(
+          'beforeend',
+          emitLayerHtml(l, layoutData.doc.canvas, { assets: layoutData.assets }).html,
+        );
+        el = d.querySelector(`[data-layer="${CSS.escape(l.id)}"]`);
+      }
       if (!(el instanceof HTMLEl)) continue;
       el.style.display = l.visible === false ? 'none' : '';
       el.parentElement?.appendChild(el);
@@ -436,7 +456,7 @@ export function PreviewPanel({
         break;
       // ⭐ 增删/排序走 handle（M3 API）——id 生成在这里（add 用时间戳，保唯一）
       case 'add-text':
-        ed.addLayer({
+        ed.addElement({
           id: `t${Date.now()}`,
           type: 'text',
           rect: { x: 270, y: 192, w: 360, h: 72 },
@@ -447,7 +467,7 @@ export function PreviewPanel({
         });
         break;
       case 'add-rect':
-        ed.addLayer({
+        ed.addElement({
           id: `s${Date.now()}`,
           type: 'shape',
           kind: 'rect',
@@ -459,7 +479,7 @@ export function PreviewPanel({
       // ⭐ 另外三种几何（词汇表早就有，只是原来没有入口）。
       //    默认几何都给"看得出是什么形状"的最小样子，摆在新元素该出现的位置。
       case 'add-ellipse':
-        ed.addLayer({
+        ed.addElement({
           id: `s${Date.now()}`,
           type: 'shape',
           kind: 'ellipse',
@@ -468,7 +488,7 @@ export function PreviewPanel({
         });
         break;
       case 'add-polygon':
-        ed.addLayer({
+        ed.addElement({
           id: `s${Date.now()}`,
           type: 'shape',
           kind: 'polygon',
@@ -485,7 +505,7 @@ export function PreviewPanel({
         });
         break;
       case 'add-path':
-        ed.addLayer({
+        ed.addElement({
           id: `s${Date.now()}`,
           type: 'shape',
           kind: 'path',
