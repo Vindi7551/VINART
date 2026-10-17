@@ -211,6 +211,13 @@ export interface VocabEditorOptions {
 export interface VocabEditorHandle {
   /** 换根（iframe 重载 / 重渲后是新文档）—— 覆盖层不动，只改它认的子文档 */
   attachRoot(root: LayerDom): void;
+  /**
+   * ⭐ **宿主就地改过 DOM 之后调**（插入了新节点 / 替换了某一层）。
+   *
+   * 重画描边与覆盖层、并让文字态重新接上。与 `attachRoot` 的区别：
+   * **document 没换**（只是里面的节点变了）⇒ 不用重建编辑器、也不用换 root。
+   */
+  refreshDom(): void;
   updateDoc(doc: DesignDocument): void;
   /**
    * ⭐ 编辑器**内部工作副本**的引用（不是拷贝、不是宿主手里那份）。
@@ -1934,6 +1941,14 @@ export function createVocabEditor(
       syncOverlay();
       // ⭐ 文字态里重渲过：DOM 是新的一份 ⇒ `contentEditable`、子文档监听、
       //    光标与选区**全部要重来**（不然打完字一点、可编辑态就没了）
+      textSession.refreshRunCount();
+      textSession.reattach();
+    },
+
+    /** 宿主就地改过 DOM（新节点 / 换了一层）⇒ 同一个 document 里重新对一次 */
+    refreshDom() {
+      outline(selectedId);
+      syncOverlay();
       textSession.refreshRunCount();
       textSession.reattach();
     },

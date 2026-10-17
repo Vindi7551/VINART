@@ -384,14 +384,18 @@ export function PreviewPanel({
         //    图层容器的 HTML 里含它的元素 ⇒ 逐图层替换一次就够 ✓
         if (label === '撤销' || label === '重做' || label === '历史跳转') {
           const realm = iframeRef.current?.contentDocument;
+          let replaced = false;
           if (realm) {
             for (const l of next.layers) {
               const n = realm.querySelector(`[data-layer="${CSS.escape(l.id)}"]`);
               if (!n) continue; // 画布上还没有这一层 ⇒ 交给 reconcile effect 插
               n.insertAdjacentHTML('beforebegin', emitLayerHtml(l, next.canvas, { assets: assetRef.current }).html);
               n.remove();
+              replaced = true;
             }
           }
+          // 图层节点被换成新的 DOM ⇒ 描边/选中框要重新量一遍（尤其是文字）
+          if (replaced) editorRef.current?.refreshDom();
         }
         // ⭐ **面板改字段的"改 DOM"那一半**：真到这里才算拿到新文档。
         //    只重发**被改的那一个**节点（不重渲整页）：用它自己的 emit 产出替换掉旧节点。
@@ -410,6 +414,8 @@ export function PreviewPanel({
               : emitLayerHtml(asLayer!, next.canvas, { assets: assetRef.current }).html;
             node.insertAdjacentHTML('beforebegin', html);
             node.remove();
+            // 节点是新的 DOM ⇒ 覆盖层按新的量一次（文字的高度是排版结果）
+            editorRef.current?.refreshDom();
           }
         }
         // ⚠️ **必须无条件外发**，不能 `if (id)`：（2026-10-17 修）
@@ -543,6 +549,12 @@ export function PreviewPanel({
     //    打点显示文档对、节点也找到了，display 就是不生效）。
     const HTMLEl = d.defaultView?.HTMLElement;
     if (!HTMLEl) return;
+    /**
+     * 这一轮**真的动了 DOM** 吗（插入了新节点）。
+     * 只重排/显隐不需要重画覆盖层；插入/替换之后必须 `refreshDom()` ——
+     * 否则新文字节点的选中框会按"还没进 DOM"量成 0 高。
+     */
+    let domChanged = false;
     const layers = layoutData?.doc.layers ?? [];
     const live = new Set(layers.map((l) => l.id));
     // ① 文档里**已经删掉**的图层 ⇒ 把残留的容器藏起来。
@@ -576,6 +588,7 @@ export function PreviewPanel({
             emitElementHtml(e, layoutData.doc.canvas, { assets: layoutData.assets }).html,
           );
           el = parentDom.querySelector(`:scope > [data-layer="${CSS.escape(e.id)}"]`);
+          domChanged = true;
         }
         if (!(el instanceof HTMLEl)) continue;
         el.style.display = '';
@@ -593,17 +606,24 @@ export function PreviewPanel({
       //    用 `emitLayerHtml` 生成那一段**直接插进去**，不重渲整页（不闪、不打断编辑态）。
       //    和整份渲染是**同一段代码**产的 ⇒ 不会和产物漂。
       if (!(el instanceof HTMLEl) && layoutData) {
-        (d.querySelector('.stage') ?? d.body).insertAdjacentHTML(
+        // ⚠️ 必须插进**画布** `.vc`（图层容器在 emit 里就是 `.vc` 的孩子）。
+        //    以前写的是 `.stage` / `body`——emit 里根本没有 `.stage`，
+        //    于是新图层被插到 `body`（画布外面，不被 `.vc` 的 overflow 裁）。
+        //    以前整页重渲把它盖过去了，就地补 DOM 之后就藏不住了。
+        (d.querySelector('.vc') ?? d.body).insertAdjacentHTML(
           'beforeend',
           emitLayerHtml(l, layoutData.doc.canvas, { assets: layoutData.assets }).html,
         );
         el = d.querySelector(`[data-layer="${CSS.escape(l.id)}"]`);
+        domChanged = true;
       }
       if (!(el instanceof HTMLEl)) continue;
       el.style.display = l.visible === false ? 'none' : '';
       el.parentElement?.appendChild(el);
       syncChildren(el, l.elements);
     }
+    // 插过节点 ⇒ 覆盖层要按**新 DOM** 重量一次（新文字节点的框高 = 实测高度）
+    if (domChanged) editorRef.current?.refreshDom();
   }, [layoutData]);
 
   // 宿主信号（面板发起的选中 / patch）→ 直接调编辑器，不再走 postMessage

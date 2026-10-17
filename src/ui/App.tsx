@@ -11,7 +11,6 @@ import { shouldFollowSelection, toolForLayer, type ToolId } from './tools';
 import type { Message, DelegationRecord } from './types';
 import type { PreviewData, HostSignal, SessionItem } from './types';
 import { fieldsFor, type SelectionSnapshot } from '../editor/inspector';
-import { emitDocument } from '../render/vocabulary/emit';
 import { findElement, findLayer, type DesignDocument } from '../document/vocabulary';
 import { createEditorStack, historyEntries, type EditorStack } from '../editor/editor-stack';
 
@@ -525,47 +524,23 @@ export function App() {
   }
 
   /**
-   * ⭐ 新数据流（2026-10-15）：**编辑器给整份文档**，App 只负责"存 + 需要时重渲"。
-   * 旧的 mergePatch（spec/appearance 双层合并）随旧链删除——patch 的合并活
-   * 已由编辑器内部完成（vocab-editor 直接改内部 doc，onTyping 就地补 DOM）。
-   */
-  /** 结构性变化的 label（画布与文档会脱节 ⇒ 必须重取服务端渲染的 HTML） */
-  /**
-   * 这些 label 的操作会**改变渲染产物本身** ⇒ 必须重新 `emitDocument` + 换 srcdoc。
+   * ⭐ **编辑动作只更新 doc + 自动保存；DOM 由编辑器 / PreviewPanel 就地同步。**
    *
-   * ⚠️ `改 visible` 必须在这里：**隐藏图层 = 那个图层不产出 DOM**（见 `emitLayer`），
-   *    不重渲的话文档改了、磁盘存了，**画布上那个图层却还在** —— 看起来就是"点了没用"。
-   *    `改 locked` **不用**重渲：锁定只影响交互，不改变渲染产物。
+   * 这里**绝不再 `emitDocument` / 换 `srcdoc`**：整页重渲会换掉 iframe 的 document
+   * ⇒ 编辑器必须重建（文字态 / 光标 / 当前图层全丢），与「就地改 DOM + 双写 doc」
+   * 的路线直接冲突。
+   *
+   * 结构性差异（增删 / 排序 / 显隐 / 撤销重做）由 PreviewPanel 的同步 effect 用
+   * `emitLayerHtml` / `emitElementHtml` **就地**补 —— 和整页 emit 是同一段代码产的
+   * HTML（自包含），所以不会和产物漂。
    */
-  const STRUCT_LABELS = ['撤销', '重做', '新增', '删除元素', '调整图层顺序', '改 visible'];
-
   const handleLayerChanged = useCallback(
-    (_id: string, next: DesignDocument, label?: string) => {
+    (_id: string, next: DesignDocument, _label?: string) => {
       const prev = layoutRef.current;
       if (!prev) return;
       setHistTick((n) => n + 1); // 栈变了 ⇒ 历史页要重画（见 setHistTick 的注释）
-      const updated: PreviewData = { ...prev, doc: next };
-      commitLayout(updated);
+      commitLayout({ ...prev, doc: next });
       scheduleAutoSave();
-      // ⭐ 结构性变化（撤销/重做/增删/排序）⇒ 就地改的 DOM 已失效
-      //    ⇒ **前端自己 emitDocument**（编辑即渲染：编译是纯函数，浏览器里毫秒级，
-      //    素材映射随 PreviewData 下发）⇒ 换 srcdoc 重载。零网络往返。
-      //
-      // ⚠️ **除了 label 判据，还直接比对图层的开关**（`visible` / `locked`）——
-      //    `visible` 改变**渲染产物本身**（隐藏的图层不产出 DOM，见 `emitLayer`），必须重渲。
-      //    曾经只靠 label 字符串匹配（在 `STRUCT_LABELS` 里写死 `改 visible`），
-      //    **实测没生效**：文档改了、磁盘也存了，`srcdoc` 一个字节都没变（画布不动）。
-      //    ⇒ 教训：别用"字符串猜语义"，直接看数据。
-      const layerFlagsChanged =
-        next.layers.length !== prev.doc.layers.length ||
-        next.layers.some((l, i) => {
-          const p = prev.doc.layers[i];
-          return !p || p.visible !== l.visible || p.locked !== l.locked;
-        });
-      if (layerFlagsChanged || (label && STRUCT_LABELS.some((k) => label.startsWith(k)))) {
-        const { html } = emitDocument(next, { assets: prev.assets });
-        commitLayout({ ...updated, html });
-      }
     },
     [sessionId],
   );
