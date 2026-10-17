@@ -308,8 +308,8 @@ export interface VocabEditorHandle {
   gotoStep(index: number): boolean;
   /** 调试/未来 UI：栈内命令摘要（before/after 里 title 的文本） */
   dump(): {
-    done: Array<{ label: string; before: string[]; after: string[]; at: number; key: string }>;
-    undone: Array<{ label: string; before: string[]; after: string[]; at: number; key: string }>;
+    done: Array<{ label: string; after: string[]; at: number; key: string }>;
+    undone: Array<{ label: string; after: string[]; at: number; key: string }>;
   };
 
   /**
@@ -2040,8 +2040,8 @@ export function createVocabEditor(
     },
     /** 调试/未来 UI：栈内命令摘要（before/after 里 title 的文本） */
     dump(): {
-      done: Array<{ label: string; before: string[]; after: string[]; at: number; key: string }>;
-      undone: Array<{ label: string; before: string[]; after: string[]; at: number; key: string }>;
+      done: Array<{ label: string; after: string[]; at: number; key: string }>;
+      undone: Array<{ label: string; after: string[]; at: number; key: string }>;
     } {
       // ⚠️ `doc.layers` 现在是**图层**表 ⇒ 直接 `map((x) => x.id)` 只会摘出 `layer-1` 这种
       //    名字，看不出改了什么。摘要要的是**元素** id ⇒ 按图层逐个 `iterElements` 展开。
@@ -2051,7 +2051,8 @@ export function createVocabEditor(
         label: c.label,
         at: c.at,
         key: c.key ?? '',
-        before: idsOf(c.before),
+        // ⚠️ `Command` 已经**不存 `before`**（2026-10-17 优化，省一半内存）
+        //    ⇒ 摘要里也不给"改之前"了；要旧状态用 `stateAfterDone` 现算。
         after: idsOf(c.after),
       });
       return {

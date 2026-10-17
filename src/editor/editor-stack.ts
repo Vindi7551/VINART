@@ -16,7 +16,14 @@ export interface Command {
   key?: string;
   /** 提交时间（合并窗口判定用） */
   at: number;
-  before: DesignDocument;
+  /**
+   * **改完之后**的文档。
+   *
+   * ⚠️ 这里**不再存 `before`**（2026-10-17 优化）：它永远等于"上一条的 `after`"
+   *    （第 1 条的 `before` 就是 `base`）⇒ 纯冗余 ✗
+   *    ⇒ **每条命令只存一份文档**，内存 / 深拷贝开销**减半** ✓
+   *    要"改之前"的状态，用 `stateAfterDone()` 现算 ✓
+   */
   after: DesignDocument;
 }
 
@@ -45,6 +52,17 @@ const MERGE_WINDOW = 800;
 
 const clone = (d: DesignDocument): DesignDocument => structuredClone(d);
 
+/**
+ * **"当前 `done` 走完之后"的文档状态** —— 也就是下一次撤销要装回的那一份。
+ *
+ * ⚠️ 这是取代 `Command.before` 的关键：`before` 永远等于上一条的 `after`，
+ *    第 1 条的 `before` 就是 `base` ⇒ 现算即可，不用存 ✓
+ */
+export function stateAfterDone(stack: EditorStack): DesignDocument {
+  const top = stack.done[stack.done.length - 1];
+  return clone(top ? top.after : stack.base);
+}
+
 export function createEditorStack(base: DesignDocument, limit = 100): EditorStack {
   return { done: [], undone: [], limit, head: clone(base), base: clone(base) };
 }
@@ -67,8 +85,7 @@ export function pushCommand(stack: EditorStack, doc: DesignDocument, label: stri
     label,
     key,
     at: now,
-    before: clone(stack.head),
-    after: clone(doc),
+    after: clone(doc), // ⚠️ 只存一份（`before` 由 `stateAfterDone` 现算）
   };
   stack.done.push(cmd);
   if (stack.done.length > stack.limit) stack.done.shift();
@@ -76,12 +93,12 @@ export function pushCommand(stack: EditorStack, doc: DesignDocument, label: stri
   stack.undone = [];
 }
 
-/** 撤销：返回要**装回**的文档（= 栈顶命令的 before）；没有可撤销 ⇒ `null` */
+/** 撤销：返回要**装回**的文档（= "上一条的 after"，没有就 `base`）；没有可撤销 ⇒ `null` */
 export function undo(stack: EditorStack): DesignDocument | null {
   const cmd = stack.done.pop();
   if (!cmd) return null;
   stack.undone.push(cmd);
-  stack.head = clone(cmd.before);
+  stack.head = stateAfterDone(stack);
   return stack.head;
 }
 
