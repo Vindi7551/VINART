@@ -13,6 +13,7 @@ import {
   IconFont,
   IconFrame,
   IconGlyph,
+  IconHistory,
   IconImage,
   IconLayers,
   IconLock,
@@ -98,6 +99,13 @@ interface EditPanelProps {
   layout: PreviewData;
   selectedLayer: string | null;
   /**
+   * ⭐ **历史列表**（`historyEntries(stack)` 的结果：升序、`undone` 标灰）。
+   * 栈在宿主的一个 ref 里 ⇒ 宿主靠 `histTick` 的重渲把新列表传下来。
+   */
+  history: Array<{ index: number; label: string; at: number; undone: boolean }>;
+  /** ⭐ 跳到第 index 步（0 = 最初） */
+  onGotoStep: (index: number) => void;
+  /**
    * ⭐ **当前图层**（"新增元素进哪一层"，也是编辑器里唯一能被选中的范围）。
    *
    * 与 `selectedLayer` **不是一回事**：点元素时 `selectedLayer` 变、这个**不变**。
@@ -125,6 +133,8 @@ export function EditPanel({
   layout,
   selectedLayer,
   currentLayerId,
+  history,
+  onGotoStep,
   shapeKind,
   onShapeKind,
   busy,
@@ -149,6 +159,8 @@ export function EditPanel({
    * ⚠️ 不看它的话就是"点了没反应"（编辑器 `addElement` 会拒绝写入）—— 静默失败。
    */
   const currentLayerLocked = findLayer(layout.doc, currentLayerId)?.locked === true;
+  /** 历史里**当前所在那一步** = 没被撤销的最后一条（面板要高亮它） */
+  const currentStep = history.filter((h) => !h.undone).length;
   const allFields = node ? fieldsFor(node, layout.doc.canvas) : [];
   const shown = fieldsOfTool(allFields, tool);
   const toolDef = TOOLS.find((t) => t.id === tool);
@@ -269,6 +281,27 @@ export function EditPanel({
             {/* ⚠️ 这里**不再有「新增」按钮**（2026-10-17 用户定）：形状一律**拖画**出来。
                 那个按钮用的是写死坐标（当年给 900×600 试的），在别的画布尺寸下位置都不对，
                 而且和拖画是**两条做同一件事的路** ⇒ 删掉。 */}
+          </Section>
+        ) : null}
+
+        {/* ⭐ **历史页**（PS「历史记录」）：列出每一步，点任意一条跳过去。
+            `undone` 的（= 已经撤销掉的）灰掉 —— 点它们就等于重做回去 ✓ */}
+        {tool === 'history' ? (
+          <Section title="历史记录" icon={<IconHistory />} count={history.length} collapsible={false}>
+            <div className="ui-layer-list">
+              {history.map((h) => (
+                <ListItem key={h.index} active={h.index === currentStep} onClick={() => onGotoStep(h.index)}>
+                  <span className={`layer-name${h.undone ? ' is-undone' : ''}`}>
+                    {h.index}. {h.label}
+                  </span>
+                </ListItem>
+              ))}
+            </div>
+            {history.length === 0 ? (
+              <Hint>还没有任何编辑 —— 改点东西就会出现在这里。</Hint>
+            ) : (
+              <Hint>灰掉的是已撤销的步骤，点一下就能重做回去。</Hint>
+            )}
           </Section>
         ) : null}
 

@@ -13,7 +13,7 @@ import type { PreviewData, HostSignal, SessionItem } from './types';
 import { fieldsFor, type SelectionSnapshot } from '../editor/inspector';
 import { emitDocument } from '../render/vocabulary/emit';
 import { findElement, findLayer, type DesignDocument } from '../document/vocabulary';
-import { createEditorStack, type EditorStack } from '../editor/editor-stack';
+import { createEditorStack, historyEntries, type EditorStack } from '../editor/editor-stack';
 
 // ══════════════════════════════════════════════════════════
 // ⚠️ Agent 层已清空，等待重新设计
@@ -543,6 +543,7 @@ export function App() {
     (_id: string, next: DesignDocument, label?: string) => {
       const prev = layoutRef.current;
       if (!prev) return;
+      setHistTick((n) => n + 1); // 栈变了 ⇒ 历史页要重画（见 setHistTick 的注释）
       const updated: PreviewData = { ...prev, doc: next };
       commitLayout(updated);
       scheduleAutoSave();
@@ -619,6 +620,15 @@ export function App() {
    * ⚠️ 用 `useRef` 不用 state：栈变化**不需要**触发渲染（它是编辑器内部数据）。
    */
   const stacksRef = useRef(new Map<string, EditorStack>());
+
+  /**
+   * ⭐ **历史列表的重渲计数**。
+   *
+   * ⚠️ 撤销栈在 `stacksRef`（**ref**）里 ⇒ 改它**不会触发渲染** ⇒ 历史页会一直是
+   *    打开那一刻的样子 ✗ 所以每次文档变化都 `+1`，逼一次重渲。
+   *    （值本身不用，所以解构时丢掉 ✓）
+   */
+  const [, setHistTick] = useState(0);
 
   /** 取某个产物的栈（没有就按这份文档新建）—— 传给 `PreviewPanel`，它 `bind()` 时注入编辑器 */
   const getStack = useCallback((name: string, base: DesignDocument): EditorStack => {
@@ -1330,6 +1340,17 @@ export function App() {
                 layout={layout}
                 selectedLayer={selectedLayer}
                 currentLayerId={effectiveCurrentLayer}
+                // ⭐ 历史页的数据（栈在 ref 里 ⇒ 靠 histTick 的重渲刷新）
+                // ⚠️ 栈可能是**还没创建**（编辑器还没 bind）⇒ 必须守卫，
+                //    否则 `historyEntries(undefined)` 会抛异常把整个页面弄崩 ✗（实测踩过）
+                history={(() => {
+                  const s = layout?.name ? stacksRef.current.get(layout.name) : undefined;
+                  return s ? historyEntries(s) : [];
+                })()}
+                onGotoStep={(i) => {
+                  seqRef.current += 1;
+                  setHostSignal({ seq: seqRef.current, type: 'goto-step', index: i });
+                }}
                 shapeKind={shapeKind}
                 onShapeKind={setShapeKind}
                 selection={selection}

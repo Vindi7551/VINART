@@ -627,6 +627,11 @@ export function PreviewPanel({
       case 'new-layer':
         ed.createLayer();
         break;
+      case 'goto-step':
+        // ⭐ 历史面板：跳到第 index 步（`0` = 最初）。整份文档会换 ⇒ 上面那条
+        //   `label === '历史跳转'` 的重发会负责把画布整块换掉 ✓
+        ed.gotoStep(sig.index ?? 0);
+        break;
       case 'remove':
       case 'up':
       case 'down':

@@ -92,11 +92,15 @@ export interface HostSignal {
     | 'down'
     /** ⭐ **新建一个空图层**（追加到最上层并选中它） */
     | 'new-layer'
+    /** ⭐ **跳到历史里的第 index 步**（历史面板点击；`index` 字段给出，0 = 最初） */
+    | 'goto-step'
     /** ⭐ 给**画面上选中的那几个字**刷样式（`path` 来自 `selectionFields()`） */
     | 'style-selection';
-  /** select/patch/remove/up/down/style-selection 需要；add-* 不需要 */
+  /** select/patch/remove/up/down/style-selection/goto-step 需要 */
   id?: string;
   /** `patch` / `style-selection` 要 */
   path?: string;
+  /** `goto-step` 要 */
+  index?: number;
   value?: unknown;
 }

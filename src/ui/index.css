@@ -2017,6 +2017,11 @@ html, body, #root {
   padding-left: 12px;
   color: var(--text-secondary);
 }
+
+/* ⭐ 历史页里"已撤销"的那些步（PS 里是灰掉的）—— 点它们 = 重做回去 */
+.layer-name.is-undone {
+  opacity: 0.45;
+}
 /* 行内动作：平时藏起来，hover / 选中才出现 —— 一屏 18×3 个按钮太吵 */
 .ui-layer-actions {
   display: flex;

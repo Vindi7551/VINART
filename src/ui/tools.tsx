@@ -6,6 +6,7 @@ import {
   IconAddRect,
   IconAddText,
   IconCursor,
+  IconHistory,
   IconImage,
   IconLayers,
   IconSwatch,
@@ -33,7 +34,7 @@ import {
  *    需要编辑器先有 `setTool()` 这种 API —— **还没做**。
  */
 
-export type ToolId = 'select' | 'appearance' | 'shape' | 'text' | 'media' | 'vector' | 'layers';
+export type ToolId = 'select' | 'appearance' | 'shape' | 'text' | 'media' | 'vector' | 'layers' | 'history';
 
 /** 这一页顶部的"新增"按钮（`signal` 直接进 `HostSignal`） */
 export interface ToolAdd {
@@ -119,6 +120,20 @@ export const TOOLS: ToolDef[] = [
     label: '图层',
     hint: '顺序 · 增删 · 选中',
     icon: <IconLayers />,
+  },
+  {
+    /**
+     * ⭐ **历史记录**（2026-10-17）：PS 那种"列出每一步、点任意一条跳过去"。
+     *
+     * ⚠️ 和工具栏下边那对**撤销/重做按钮**不是一回事：
+     *    - 那两个是**动作**（点一次撤一步）
+     *    - 这是**一页**（看完整历史、任意跳转）
+     *    两个都留着 —— 撤销/重做是高频操作，历史页是"看/跳"。
+     */
+    id: 'history',
+    label: '历史',
+    hint: '每一步都列出来 · 点任意一条跳过去（灰掉的 = 已撤销，点一下重做回去）',
+    icon: <IconHistory />,
   },
 ];
 

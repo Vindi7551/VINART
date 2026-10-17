@@ -124,6 +124,15 @@ export const IconLayers = ({ size }: IconProps) => (
   </Glyph>
 );
 
+/** 历史记录 —— 表盘 + 逆时针箭头（"历史记录"面板那个图标） */
+export const IconHistory = ({ size }: IconProps) => (
+  <Glyph size={size}>
+    <path d="M8 4.2A3.8 3.8 0 1 1 4.2 8" />
+    <path d="M4.2 8 2.4 6.2M4.2 8 6 6.2" />
+    <path d="M8 6.2V8l1.6 1" />
+  </Glyph>
+);
+
 /** 显示（眼睛睁开）—— 图层行左侧那个开关 */
 export const IconEye = ({ size }: IconProps) => (
   <Glyph size={size}>
