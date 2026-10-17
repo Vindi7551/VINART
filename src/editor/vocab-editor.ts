@@ -1751,6 +1751,31 @@ export function createVocabEditor(
 
   const onKeyDown: EventListener = (ev) => {
     const e = ev as KeyboardEvent;
+    // ⭐ **撤销 / 重做快捷键**（2026-10-17）：
+    //    Ctrl/Cmd+Z = 撤销 · Ctrl/Cmd+Shift+Z = 重做 · Ctrl+Y = 重做（Windows 习惯）
+    //
+    // ⚠️ 三个"先让路"的前提，缺一个就会抢别人的键盘：
+    //    ① 焦点在**输入框**里 ⇒ 那是输入框自己的撤销（检查器的数字框/文本框）
+    //    ② 在**文字态**里 ⇒ `text-session` 自己拦了（它要保证 contentEditable 与真源一致）
+    //    ③ 在**手势**里 ⇒ 拖到一半按快捷键没意义
+    if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+      const k = e.key.toLowerCase();
+      if (k === 'z' || k === 'y') {
+        // ⚠️ 用 `wrap.ownerDocument`（宿主文档），不是 `host` —— `HostDom` 是**最小接口**，
+        //    只有编辑器真正用到的几个方法（见 editor/README 不变量②）
+        const ae = wrap.ownerDocument?.activeElement as HTMLElement | null;
+        const tag = ae?.tagName;
+        const inField =
+          tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || ae?.isContentEditable === true;
+        if (inField || textEditId || session) return;
+        // ⚠️ **必须 preventDefault**：不拦的话浏览器会做"原生撤销"，而它改的是 DOM
+        //    ⇒ 会把真源（文档）搞乱 ✗（`text-session` 里那条注释同源）
+        e.preventDefault();
+        if (k === 'y' || e.shiftKey) redo();
+        else undo();
+        return;
+      }
+    }
     if (e.key !== 'Escape') return;
     if (session) return;
     // ⚠️ 先退文字态，再谈取消选中 —— 不然按一下 Esc 两件事一起发生，
