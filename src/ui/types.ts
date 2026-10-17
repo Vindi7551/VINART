@@ -94,6 +94,8 @@ export interface HostSignal {
     | 'new-layer'
     /** ⭐ **跳到历史里的第 index 步**（历史面板点击；`index` 字段给出，0 = 最初） */
     | 'goto-step'
+    /** ⭐ **删掉历史里的第 index 步**（历史面板右键；`index` 字段给出。不可逆） */
+    | 'remove-history'
     /** ⭐ 给**画面上选中的那几个字**刷样式（`path` 来自 `selectionFields()`） */
     | 'style-selection';
   /** select/patch/remove/up/down/style-selection/goto-step 需要 */

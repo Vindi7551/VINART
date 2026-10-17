@@ -86,6 +86,8 @@ import {
   canUndo as stackCanUndo,
   /** ⭐ 跳到任意一步（历史面板用） */
   gotoStep as stackGotoStep,
+  /** ⭐ 删掉历史里的某一步（不可逆） */
+  removeStep as stackRemoveStep,
   createEditorStack,
   pushCommand,
   redo as stackRedo,
@@ -306,6 +308,13 @@ export interface VocabEditorHandle {
    * 和 `undo`/`redo` 同一条路：装回文档 + 通知宿主（label = `'历史跳转'`）。
    */
   gotoStep(index: number): boolean;
+  /**
+   * ⭐ **删掉历史里的第 `index` 步**（历史面板右键，不可逆）。
+   *
+   * - 删的不是当前步 ⇒ 文档不动（只刷新面板）
+   * - 删的是当前步 ⇒ **退到上一步**（"删当前那行就直接跳到上一条"）
+   */
+  removeHistoryStep(index: number): boolean;
   /** 调试/未来 UI：栈内命令摘要（before/after 里 title 的文本） */
   dump(): {
     done: Array<{ label: string; after: string[]; at: number; key: string }>;
@@ -1943,6 +1952,28 @@ export function createVocabEditor(
       }
       syncOverlay();
       opts.onChange?.(selectedId, doc, '历史跳转');
+      return true;
+    },
+
+    /**
+     * ⭐ **删掉历史里的第 `index` 步**（不可逆；历史面板右键）。
+     * 删的是当前步 ⇒ 编辑器会退到上一步 ⇒ 用 `'历史跳转'` 让宿主把画布整块重发 ✓
+     * 删的不是当前步 ⇒ 文档不变 ⇒ 用 `'历史删除'` 只让宿主刷新面板 ✓
+     */
+    removeHistoryStep(index: number): boolean {
+      if (textEditId) exitTextEdit();
+      const next = stackRemoveStep(stack, index);
+      if (next) {
+        doc = cloneDoc(next);
+        if (selectedId && !elementById(selectedId)) {
+          selectedId = null;
+          outline(null);
+        }
+        syncOverlay();
+        opts.onChange?.(selectedId, doc, '历史跳转');
+      } else {
+        opts.onChange?.(selectedId, doc, '历史删除');
+      }
       return true;
     },
 

@@ -1351,6 +1351,10 @@ export function App() {
                   seqRef.current += 1;
                   setHostSignal({ seq: seqRef.current, type: 'goto-step', index: i });
                 }}
+                onRemoveHistoryStep={(i) => {
+                  seqRef.current += 1;
+                  setHostSignal({ seq: seqRef.current, type: 'remove-history', index: i });
+                }}
                 shapeKind={shapeKind}
                 onShapeKind={setShapeKind}
                 selection={selection}

@@ -632,6 +632,12 @@ export function PreviewPanel({
         //   `label === '历史跳转'` 的重发会负责把画布整块换掉 ✓
         ed.gotoStep(sig.index ?? 0);
         break;
+      case 'remove-history':
+        // ⭐ 历史面板右键"删除这条历史"：删当前步 ⇒ 编辑器会退到上一步，
+        //   并带 `label='历史跳转'` 发一次变更 ⇒ 画布整块重发 ✓
+        //   删的不是当前步 ⇒ 文档不变（label='历史删除'，画布不用动）✓
+        ed.removeHistoryStep(sig.index ?? 0);
+        break;
       case 'remove':
       case 'up':
       case 'down':

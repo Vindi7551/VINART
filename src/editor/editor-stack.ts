@@ -159,6 +159,41 @@ export function gotoStep(stack: EditorStack, index: number): DesignDocument | nu
   return stack.head;
 }
 
+/**
+ * ⭐ **删掉历史里的某一步**（历史面板右键"删除这条历史"）。
+ *
+ * 行为（用户 2026-10-17 定）：
+ * - 删的**不是**当前步 ⇒ 只从列表里抹掉，**文档不动** ⇒ 返回 `null`
+ * - 删的**是**当前步（`done` 的栈顶）⇒ 抹掉**并退到上一步** ⇒ 返回要装回的文档
+ *   （"删当前那行就直接跳到上一条"）
+ *
+ * ⚠️ 为什么"只删中间的某一步"是安全的：每条命令**自带 `after`**，后面的步骤
+ *    **不依赖**被删那一条 ⇒ 画面不用变、后面的状态仍然完整 ✓
+ *    （逆操作方案在这里就串不起来了 —— 这是"每步存完整状态"的又一个好处）
+ *
+ * ⚠️ **不可逆**（PS 同款）：不能"撤销一次删除历史"，否则它自己又成一条历史 ✗
+ *
+ * @param index 1-based 步号（和 `historyEntries` 的 `index` 同一套编号）
+ */
+export function removeStep(stack: EditorStack, index: number): DesignDocument | null {
+  const total = totalSteps(stack);
+  if (!Number.isInteger(index) || index < 1 || index > total) return null;
+
+  const wasCurrent = index === stack.done.length;
+  if (index <= stack.done.length) {
+    stack.done.splice(index - 1, 1);
+  } else {
+    // `undone` 是**栈**（栈顶 = 最近撤销）⇒ 步号 k 对应 original 下标 `total - k`
+    stack.undone.splice(total - index, 1);
+  }
+
+  // 删的不是当前步 ⇒ 当前文档不变（`head` 也不动）
+  if (!wasCurrent) return null;
+
+  // 删的正是当前步 ⇒ 退到"新的当前步"
+  stack.head = stateAfterDone(stack);
+  return stack.head;
+}
 /** 历史列表（给面板用）：`[{ index, label, at }]`，index 从 1 开始（0 = 初始，不在列表里） */
 export function historyEntries(s: EditorStack): Array<{ index: number; label: string; at: number; undone: boolean }> {
   return [

@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react';
+import { useState } from 'react';
 
 import { fieldsFor, fieldsForLayer, type Field, type SelectionSnapshot } from '../editor/inspector';
 import { findElement, findLayer, type ElementNode } from '../document/vocabulary';
 import { SelectionStylePanel } from './SelectionStylePanel';
-import { Button, Field as FieldRow, FieldGrid, Hint, ListItem, Panel, PanelBody, PanelHeader, Row, Section } from './primitives';
+import { Button, ContextMenu, Field as FieldRow, FieldGrid, Hint, ListItem, Panel, PanelBody, PanelHeader, Row, Section } from './primitives';
 import { FieldControl, isCheckKind, isWideKind } from './field-control';
 import {
   IconCurve,
@@ -105,6 +106,8 @@ interface EditPanelProps {
   history: Array<{ index: number; label: string; at: number; undone: boolean }>;
   /** ⭐ 跳到第 index 步（0 = 最初） */
   onGotoStep: (index: number) => void;
+  /** ⭐ 删掉历史里的第 index 步（右键菜单；不可逆） */
+  onRemoveHistoryStep: (index: number) => void;
   /**
    * ⭐ **当前图层**（"新增元素进哪一层"，也是编辑器里唯一能被选中的范围）。
    *
@@ -135,6 +138,7 @@ export function EditPanel({
   currentLayerId,
   history,
   onGotoStep,
+  onRemoveHistoryStep,
   shapeKind,
   onShapeKind,
   busy,
@@ -159,6 +163,8 @@ export function EditPanel({
    * ⚠️ 不看它的话就是"点了没反应"（编辑器 `addElement` 会拒绝写入）—— 静默失败。
    */
   const currentLayerLocked = findLayer(layout.doc, currentLayerId)?.locked === true;
+  /** 历史行的右键菜单（x/y = 屏幕坐标；index = 哪一步） */
+  const [historyMenu, setHistoryMenu] = useState<{ x: number; y: number; index: number } | null>(null);
   /** 历史里**当前所在那一步** = 没被撤销的最后一条（面板要高亮它） */
   const currentStep = history.filter((h) => !h.undone).length;
   const allFields = node ? fieldsFor(node, layout.doc.canvas) : [];
@@ -291,12 +297,37 @@ export function EditPanel({
             <div className="ui-layer-list">
               {history.map((h) => (
                 <ListItem key={h.index} active={h.index === currentStep} onClick={() => onGotoStep(h.index)}>
-                  <span className={`layer-name${h.undone ? ' is-undone' : ''}`}>
+                  <span
+                    className={`layer-name${h.undone ? ' is-undone' : ''}`}
+                    // ⭐ 右键 ⇒ 删除这条历史（PS 历史记录里的 Delete）
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setHistoryMenu({ x: e.clientX, y: e.clientY, index: h.index });
+                    }}
+                    title="右键：删除这条历史"
+                  >
                     {h.index}. {h.label}
                   </span>
                 </ListItem>
               ))}
             </div>
+            {historyMenu ? (
+              <ContextMenu
+                x={historyMenu.x}
+                y={historyMenu.y}
+                items={[
+                  {
+                    key: 'del',
+                    label: `删除这条历史（第 ${historyMenu.index} 步）`,
+                    onPick: () => {
+                      onRemoveHistoryStep(historyMenu.index);
+                      setHistoryMenu(null);
+                    },
+                  },
+                ]}
+                onClose={() => setHistoryMenu(null)}
+              />
+            ) : null}
             {history.length === 0 ? (
               <Hint>还没有任何编辑 —— 改点东西就会出现在这里。</Hint>
             ) : (
