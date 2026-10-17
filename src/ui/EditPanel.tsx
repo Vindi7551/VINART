@@ -28,14 +28,6 @@ import {
 } from './icons';
 import { fieldsOfTool, TOOLS, type ToolId } from './tools';
 import { SHAPE_KINDS } from './tools';
-
-/** 形状种类 → "在默认位置新增一个"的宿主信号（形状页只有一个新增按钮，靠它按种类分派） */
-const ADD_SIGNAL = {
-  rect: 'add-rect',
-  ellipse: 'add-ellipse',
-  polygon: 'add-polygon',
-  path: 'add-path',
-} as const;
 import type { PreviewData, HostSignal } from './types';
 
 /**
@@ -259,13 +251,9 @@ export function EditPanel({
                 </Button>
               ))}
             </Row>
-            {/* ⭐ 一个「新增」：用**当前种类**在默认位置放一个（另一条路是画布上拖画）。
-                ⚠️ 不摆 4 个按钮 —— 会变成两排一模一样的字。 */}
-            <Row>
-              <Button disabled={busy} title="在默认位置新增一个当前种类的形状" onClick={() => onSignal({ type: ADD_SIGNAL[shapeKind] })}>
-                ＋ 新增{SHAPE_KINDS.find((k) => k.id === shapeKind)?.label ?? ''}
-              </Button>
-            </Row>
+            {/* ⚠️ 这里**不再有「新增」按钮**（2026-10-17 用户定）：形状一律**拖画**出来。
+                那个按钮用的是写死坐标（当年给 900×600 试的），在别的画布尺寸下位置都不对，
+                而且和拖画是**两条做同一件事的路** ⇒ 删掉。 */}
           </Section>
         ) : null}
 
