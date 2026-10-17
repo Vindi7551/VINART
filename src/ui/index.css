@@ -1952,11 +1952,24 @@ html, body, #root {
   /* 触摸也要能用，否则手机上拖不动 */
   touch-action: none;
 }
-/* 拖出来的虚线框（预览） */
-.canvas-draw-draft {
+/**
+ * 绘制过程的**预览层**：里面装的是 `emitElementHtml` 生成的真实形状（强调色描边）。
+ * `inset:0` ⇒ 元素自己的 `position:absolute` + 画布 px 坐标直接落位，不用额外换算。
+ * ⚠️ `pointer-events:none`：预览绝不能抢指针，否则拖到一半就断了。
+ */
+.canvas-draw-preview {
   position: absolute;
-  border: 1px dashed var(--accent);
-  background: rgba(108, 92, 231, 0.12);
+  inset: 0;
+  pointer-events: none;
+}
+/**
+ * 很淡的**包围盒**（只是尺寸参考，不抢形状的戏）。
+ * ⚠️ 刻意比形状本身淡得多 —— 用户要的是"看得出正在画的是什么形状"，
+ *    而不是"一个抢眼的虚线方框"。
+ */
+.canvas-draw-box {
+  position: absolute;
+  border: 1px dashed rgba(108, 92, 231, 0.35);
   pointer-events: none;
 }
 

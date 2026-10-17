@@ -45,17 +45,25 @@ interface PreviewPanelProps {
  * ⭐ 抽出来的原因：**两条路共用** —— 工具页的「＋ 新增」（放默认位置）和
  * 画布上**拖画**（位置尺寸由拖出来的框给）。模板只此一份，两边不会漂。
  */
-function makeShapeNode(kind: 'rect' | 'ellipse' | 'polygon' | 'path', rect: Rect): ElementNode {
+function makeShapeNode(
+  kind: 'rect' | 'ellipse' | 'polygon' | 'path',
+  rect: Rect,
+  /**
+   * 描边颜色。默认中性灰（= 落盘的样子）；**拖画过程中的预览传强调色**，
+   * 让人一眼看出"还在画、还没松手"（用户 2026-10-17 定）。
+   */
+  paint = '#9AA0A6',
+): ElementNode {
   const id = `s${Date.now()}`;
   /**
    * ⭐ 新形状**只给描边、不给填充**（里面透明）—— 用户 2026-10-17 定。
    *
    * ⚠️ 为什么不能"什么都不给"：既没填充也没描边 ⇒ **完全看不见**，
    *    拖完一个框会以为没画出来（其实是画了个透明的）。
-   * ⚠️ 为什么用**中性灰**：这是"占位框"，不预设任何设计色 —— 填充留给你去「外观」页给。
+   * ⚠️ 为什么默认用**中性灰**：这是"占位框"，不预设任何设计色 —— 填充留给你去「外观」页给。
    *    （原来 4 种形状各写死一个颜色 `#2F6B8A`/`#B8722F`/`#C8323C`，纯属当年"能看见就行"。）
    */
-  const stroke = { paint: '#9AA0A6', width: 2 };
+  const stroke = { paint, width: 2 };
   if (kind === 'ellipse') return { id, type: 'shape', kind: 'ellipse', rect, stroke };
   if (kind === 'polygon')
     return {
@@ -789,10 +797,26 @@ export function PreviewPanel({
                 onPointerUp={onDrawUp}
               >
                 {draft && draft.w > 0 && draft.h > 0 ? (
-                  <div
-                    className="canvas-draw-draft"
-                    style={{ left: draft.x, top: draft.y, width: draft.w, height: draft.h }}
-                  />
+                  <>
+                    {/* ⭐ 预览 = **真实形状**，用 `emitElementHtml` 生成的那一段
+                        （和松手后落盘的是同一段代码 ⇒ 不可能出现"看着是圆、松手变方"）。
+                        拖的时候描边用强调色，一眼看出"还在画"；松手落盘是中性灰。 */}
+                    <div
+                      className="canvas-draw-preview"
+                      dangerouslySetInnerHTML={{
+                        __html: layoutData
+                          ? emitElementHtml(makeShapeNode(shapeKind ?? 'rect', draft, '#6C5CE7'), layoutData.doc.canvas, {
+                              assets: layoutData.assets,
+                            }).html
+                          : '',
+                      }}
+                    />
+                    {/* 很淡的包围盒（只是尺寸参考，不抢形状的戏） */}
+                    <div
+                      className="canvas-draw-box"
+                      style={{ left: draft.x, top: draft.y, width: draft.w, height: draft.h }}
+                    />
+                  </>
                 ) : null}
               </div>
             ) : null}
