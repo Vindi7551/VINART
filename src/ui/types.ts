@@ -85,11 +85,8 @@ export interface HostSignal {
     | 'undo'
     | 'redo'
     | 'add-text'
-    | 'add-rect'
-    /** ⭐ 词汇表支持的五种形状，编辑器现在**五种都能加**（原来只有 rect） */
-    | 'add-ellipse'
-    | 'add-polygon'
-    | 'add-path'
+    // ⚠️ `add-rect` / `add-ellipse` / `add-polygon` / `add-path` **已删**（2026-10-17）：
+    //    形状一律**拖画**（`.canvas-draw-layer` + `makeShapeNode`），不再有"一键放一个写死尺寸"的入口。
     | 'remove'
     | 'up'
     | 'down'

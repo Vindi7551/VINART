@@ -533,55 +533,9 @@ export function PreviewPanel({
           align: 'left',
         });
         break;
-      case 'add-rect':
-        ed.addElement({
-          id: `s${Date.now()}`,
-          type: 'shape',
-          kind: 'rect',
-          rect: { x: 270, y: 180, w: 270, h: 120 },
-          fill: '#2F6B8A',
-          radius: 0.04,
-        });
-        break;
-      // ⭐ 另外三种几何（词汇表早就有，只是原来没有入口）。
-      //    默认几何都给"看得出是什么形状"的最小样子，摆在新元素该出现的位置。
-      case 'add-ellipse':
-        ed.addElement({
-          id: `s${Date.now()}`,
-          type: 'shape',
-          kind: 'ellipse',
-          rect: { x: 330, y: 210, w: 240, h: 180 },
-          fill: '#B8722F',
-        });
-        break;
-      case 'add-polygon':
-        ed.addElement({
-          id: `s${Date.now()}`,
-          type: 'shape',
-          kind: 'polygon',
-          rect: { x: 330, y: 210, w: 240, h: 180 },
-          // 默认正五边形（0–1，相对自己的盒子）—— 顶点可拖，所以给个"一看就知道能拖"的形状
-          points: [
-            [0.5, 0],
-            [1, 0.37],
-            [0.81, 1],
-            [0.19, 1],
-            [0, 0.37],
-          ],
-          fill: '#2F6B8A',
-        });
-        break;
-      case 'add-path':
-        ed.addElement({
-          id: `s${Date.now()}`,
-          type: 'shape',
-          kind: 'path',
-          rect: { x: 300, y: 240, w: 300, h: 120 },
-          // ⚠️ `path.d` 恒为 **0–1**（见词汇表分母表）—— 不是像素
-          d: 'M0,1 C0.25,0 0.75,0 1,1 Z',
-          fill: '#C8323C',
-        });
-        break;
+      // ⚠️ 这里原来有 `add-rect` / `add-ellipse` / `add-polygon` / `add-path` 四个分支
+      //    （在写死的位置放个写死的尺寸）—— **已删**（2026-10-17）：形状一律**拖画**出来
+      //    （见 `.canvas-draw-layer` + `makeShapeNode`），那 4 个信号再没有任何 UI 会发。
       case 'new-layer':
         ed.createLayer();
         break;
