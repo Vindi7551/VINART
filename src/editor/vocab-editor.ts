@@ -1780,7 +1780,7 @@ export function createVocabEditor(
       outline(null);
     }
     syncOverlay();
-    opts.onChange?.(selectedId, doc);
+    opts.onChange?.(selectedId, doc, '撤销');
     return true;
   }
 
@@ -1794,7 +1794,7 @@ export function createVocabEditor(
       outline(null);
     }
     syncOverlay();
-    opts.onChange?.(selectedId, doc);
+    opts.onChange?.(selectedId, doc, '重做');
     return true;
   }
 

@@ -352,6 +352,22 @@ export function PreviewPanel({
       // ⭐ 编辑器给的 label（见 editor-stack 的 submit）：App 靠它区分就地/结构变化
       onChange: (id, next, label) => {
         lastEmitted.current = next;
+        // ⭐ **撤销 / 重做 ⇒ 画布整块重发**（这是"整份文档换了"，不是某个字段，
+        //    所以没法像 `patch` 那样只重发一个节点）。
+        //    ⚠️ 判据是 **label** —— 编辑器在 undo/redo 里必须带上 '撤销'/'重做'
+        //      （原来没带 ⇒ 宿主不知道这是撤销 ⇒ 画布永远不跟 ✗ 实测抓到的）。
+        //    图层容器的 HTML 里含它的元素 ⇒ 逐图层替换一次就够 ✓
+        if (label === '撤销' || label === '重做') {
+          const realm = iframeRef.current?.contentDocument;
+          if (realm) {
+            for (const l of next.layers) {
+              const n = realm.querySelector(`[data-layer="${CSS.escape(l.id)}"]`);
+              if (!n) continue; // 画布上还没有这一层 ⇒ 交给 reconcile effect 插
+              n.insertAdjacentHTML('beforebegin', emitLayerHtml(l, next.canvas, { assets: assetRef.current }).html);
+              n.remove();
+            }
+          }
+        }
         // ⭐ **面板改字段的"改 DOM"那一半**：真到这里才算拿到新文档。
         //    只重发**被改的那一个**节点（不重渲整页）：用它自己的 emit 产出替换掉旧节点。
         //    ⚠️ 用 `insertAdjacentHTML` + `remove` 而不是 `outerHTML =`：emit 对带 clip/mask
