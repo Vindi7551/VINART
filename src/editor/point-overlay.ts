@@ -205,10 +205,18 @@ export function createPointOverlay(host: HostDom, parent: HTMLElement): PointOve
           vertexEls.push(v);
           root.appendChild(v);
         }
+        // ⚠️ **"边中点的加点提示圆点"不再挂到 DOM 上**（2026-10-17 用户要求：
+        //    那些橙色小圆点在画面上太吵，像一堆投影点）。
+        //
+        // ⚠️ **加顶点 / 删顶点的能力一点没动**：
+        //    - 加点靠**坐标判定**（`point-editor.ts` 的 `edgeUnder` + `setHover`
+        //      记下的 `hoverEdge`/`hoverAt`），**不依赖**这些圆点的 DOM ✓
+        //      （代码原来就写着："这个小圆点只是个提示，本来就不该碰事件"）
+        //    - 删点靠右键顶点 / 双击（`makeVertex` 那条路）✓
+        //    ⇒ 这里仍然建元素（`makeEdge` / `EDGE_SIZE` 保持在用，免得变死代码），
+        //      但**不 append** ⇒ 不在画面上出现 ✓ `paintEdges` 给它们设样式也无害 ✓
         for (let i = 0; i < points.length; i++) {
-          const e = makeEdge(i);
-          edgeEls.push(e);
-          root.appendChild(e);
+          edgeEls.push(makeEdge(i));
         }
         paintActive();
       }
