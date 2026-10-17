@@ -47,7 +47,16 @@ interface PreviewPanelProps {
  */
 function makeShapeNode(kind: 'rect' | 'ellipse' | 'polygon' | 'path', rect: Rect): ElementNode {
   const id = `s${Date.now()}`;
-  if (kind === 'ellipse') return { id, type: 'shape', kind: 'ellipse', rect, fill: '#B8722F' };
+  /**
+   * ⭐ 新形状**只给描边、不给填充**（里面透明）—— 用户 2026-10-17 定。
+   *
+   * ⚠️ 为什么不能"什么都不给"：既没填充也没描边 ⇒ **完全看不见**，
+   *    拖完一个框会以为没画出来（其实是画了个透明的）。
+   * ⚠️ 为什么用**中性灰**：这是"占位框"，不预设任何设计色 —— 填充留给你去「外观」页给。
+   *    （原来 4 种形状各写死一个颜色 `#2F6B8A`/`#B8722F`/`#C8323C`，纯属当年"能看见就行"。）
+   */
+  const stroke = { paint: '#9AA0A6', width: 2 };
+  if (kind === 'ellipse') return { id, type: 'shape', kind: 'ellipse', rect, stroke };
   if (kind === 'polygon')
     return {
       id,
@@ -62,7 +71,7 @@ function makeShapeNode(kind: 'rect' | 'ellipse' | 'polygon' | 'path', rect: Rect
         [0.19, 1],
         [0, 0.37],
       ],
-      fill: '#2F6B8A',
+      stroke,
     };
   if (kind === 'path')
     return {
@@ -72,9 +81,9 @@ function makeShapeNode(kind: 'rect' | 'ellipse' | 'polygon' | 'path', rect: Rect
       rect,
       // ⚠️ `path.d` 恒为 **0–1**（见词汇表分母表）—— 不是像素
       d: 'M0,1 C0.25,0 0.75,0 1,1 Z',
-      fill: '#C8323C',
+      stroke,
     };
-  return { id, type: 'shape', kind: 'rect', rect, fill: '#2F6B8A' };
+  return { id, type: 'shape', kind: 'rect', rect, stroke };
 }
 
 /** 默认画布尺寸，在解析不到 HTML 尺寸时使用 */
