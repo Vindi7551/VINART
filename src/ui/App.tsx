@@ -1248,6 +1248,10 @@ export function App() {
           onLayerSelect={handleLayerSelect}
           onSelectionChange={setSelection}
           hostSignal={hostSignal}
+          // ⭐ 形状工具 = **绘制模式**（工具即模式，PS 同款）：画布上盖一层绘制层，
+          //    拖一个框就画出来；这一层同时挡住"选元素/拖元素"（故意的，避免误触）。
+          drawMode={tool === 'shape'}
+          shapeKind={shapeKind}
         />
         {/* 检查器栏（版式编辑器）—— **独立一栏**，贴画布右侧；无版式时不占位。
             2026-10-10 从 .right-col 里搬出来：编辑器与对话不再同栏。

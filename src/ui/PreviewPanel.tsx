@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { createVocabEditor, type VocabEditorHandle } from '../editor/vocab-editor';
 import type { SelectionSnapshot } from '../editor/inspector';
 import { emitDocument, emitElementHtml, emitLayerHtml } from '../render/vocabulary/emit';
-import { findElement, type ElementNode } from '../document/vocabulary';
+import { findElement, type ElementNode, type Rect } from '../document/vocabulary';
 import type { PreviewData, HostSignal } from './types';
 
 interface PreviewPanelProps {
@@ -27,6 +27,54 @@ interface PreviewPanelProps {
   onLayerWord?: (id: string, word: string) => void;
   /** 宿主信号：参数面板/图层清单发起的选中 / 单字段 patch / 撤销 / 重做 */
   hostSignal?: HostSignal | null;
+  /**
+   * ⭐ **形状工具的绘制模式**（工具页 = 形状时为 true）。
+   *
+   * 打开时在画布上盖一层透明"绘制层"：拖一个框就画出一个形状。
+   * ⚠️ 这一层会**挡住**选元素/拖元素 —— 这是**故意的**（PS 同样是"形状工具下不选图层"），
+   *    否则画形状时很容易误触到旁边的元素。切回「选择」工具即可恢复编辑。
+   */
+  drawMode?: boolean;
+  /** ⭐ 形状工具当前种类（决定画出来的是哪种节点） */
+  shapeKind?: 'rect' | 'ellipse' | 'polygon' | 'path';
+}
+
+/**
+ * **按种类造一个形状节点**（`rect` 由调用方给）。
+ *
+ * ⭐ 抽出来的原因：**两条路共用** —— 工具页的「＋ 新增」（放默认位置）和
+ * 画布上**拖画**（位置尺寸由拖出来的框给）。模板只此一份，两边不会漂。
+ */
+function makeShapeNode(kind: 'rect' | 'ellipse' | 'polygon' | 'path', rect: Rect): ElementNode {
+  const id = `s${Date.now()}`;
+  if (kind === 'ellipse') return { id, type: 'shape', kind: 'ellipse', rect, fill: '#B8722F' };
+  if (kind === 'polygon')
+    return {
+      id,
+      type: 'shape',
+      kind: 'polygon',
+      rect,
+      // 默认正五边形（0–1，相对自己的盒子）
+      points: [
+        [0.5, 0],
+        [1, 0.37],
+        [0.81, 1],
+        [0.19, 1],
+        [0, 0.37],
+      ],
+      fill: '#2F6B8A',
+    };
+  if (kind === 'path')
+    return {
+      id,
+      type: 'shape',
+      kind: 'path',
+      rect,
+      // ⚠️ `path.d` 恒为 **0–1**（见词汇表分母表）—— 不是像素
+      d: 'M0,1 C0.25,0 0.75,0 1,1 Z',
+      fill: '#C8323C',
+    };
+  return { id, type: 'shape', kind: 'rect', rect, fill: '#2F6B8A' };
 }
 
 /** 默认画布尺寸，在解析不到 HTML 尺寸时使用 */
@@ -50,6 +98,8 @@ export function PreviewPanel({
   onLayerSelect,
   onSelectionChange,
   hostSignal,
+  drawMode,
+  shapeKind,
 }: PreviewPanelProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -528,6 +578,101 @@ export function PreviewPanel({
     }
   }, [hostSignal]);
 
+  /**
+   * ⭐ **形状绘制层**（`drawMode` 打开时才有）—— 在画布上拖一个框就画出一个形状。
+   *
+   * 为什么放在**父文档**、而不是编辑器里：绘制是"工具模式"的行为，宿主本来就管着
+   * 画布外的一切（平移、覆盖层）；而且这样**不需要懂 `vocab-editor` 的任何内部**。
+   * 编辑器只负责最后一步 `addElement`（进当前图层 + 双写立刻可见）。
+   *
+   * ⚠️ **坐标不用换算**：这一层是 `.canvas-wrapper`（挂着 `scale(zoom)`）的直接子元素，
+   *    `position:absolute; inset:0` ⇒ 它的本地坐标**就是画布 px** ✓
+   */
+  const [draft, setDraft] = useState<Rect | null>(null);
+  const drawStartRef = useRef<{ x: number; y: number } | null>(null);
+  /** Esc 按下 ⇒ 这一笔作废（松手时**不要**建节点） */
+  const drawCancelledRef = useRef(false);
+
+  /**
+   * 屏幕 px → 画布 px 的比例。
+   *
+   * ⚠️ **不能直接用 `offsetX`**：它不认 CSS transform —— 它是"相对元素**视觉**框的屏幕 px"，
+   *    而 `.canvas-wrapper` 上挂着 `scale(zoom)` ⇒ 拿到的是 `画布px × zoom`（偏小）。
+   *    实测踩过：拖 140×90 的框，画出来只有 `140×zoom`。
+   */
+  const canvasScaleOf = (el: Element): number => {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 ? canvasSize.w / r.width : 1;
+  };
+
+  const onDrawDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return;
+      const r = e.currentTarget.getBoundingClientRect();
+      const k = canvasScaleOf(e.currentTarget);
+      const x = (e.clientX - r.left) * k;
+      const y = (e.clientY - r.top) * k;
+      drawStartRef.current = { x, y };
+      drawCancelledRef.current = false; // 新的一笔 ⇒ 清掉上一笔的"取消"标记
+      setDraft({ x, y, w: 0, h: 0 });
+      e.currentTarget.setPointerCapture(e.pointerId);
+    },
+    [canvasSize.w],
+  );
+
+  const onDrawMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const st = drawStartRef.current;
+      if (!st) return;
+      const r = e.currentTarget.getBoundingClientRect();
+      const k = canvasScaleOf(e.currentTarget);
+      let dx = (e.clientX - r.left) * k - st.x;
+      let dy = (e.clientY - r.top) * k - st.y;
+      if (e.shiftKey) {
+        // Shift ⇒ 正方形 / 正圆
+        const s = Math.max(Math.abs(dx), Math.abs(dy));
+        dx = (Math.sign(dx) || 1) * s;
+        dy = (Math.sign(dy) || 1) * s;
+      }
+      // ⚠️ **反向拖**（右下往左上）必须归一化，否则出现负宽高
+      setDraft({ x: Math.min(st.x, st.x + dx), y: Math.min(st.y, st.y + dy), w: Math.abs(dx), h: Math.abs(dy) });
+    },
+    [canvasSize.w],
+  );
+
+  const onDrawUp = useCallback(() => {
+    const st = drawStartRef.current;
+    const d = draft;
+    const cancelled = drawCancelledRef.current;
+    drawStartRef.current = null;
+    drawCancelledRef.current = false;
+    setDraft(null);
+    if (!st || !d || cancelled) return;
+    // ⚠️ 太小 ⇒ 当作**点击**（不创建）：防止手一抖出现一个看不见的元素
+    if (d.w < 2 || d.h < 2) return;
+    editorRef.current?.addElement(makeShapeNode(shapeKind ?? 'rect', d));
+  }, [draft, shapeKind]);
+
+  /**
+   * **Esc 取消正在画的那一笔**（拖到一半反悔）。
+   *
+   * ⚠️ 只在"正在画"时挂监听（`draft` 有值）—— 平时不能抢 `Esc`
+   *    （别的地方可能用它，比如关 `Dialog` / 取消文字编辑）。
+   * ⚠️ 取消标记必须留到**松手**才消费：Esc 之后鼠标还按着，松手那一下
+   *    如果不清掉标记，就会把作废的这一笔画出来。
+   */
+  useEffect(() => {
+    if (!draft) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      drawCancelledRef.current = true;
+      drawStartRef.current = null;
+      setDraft(null);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [draft]);
+
   // ── 鼠标拖拽平移 ──
   // ⚠️ 只在**画布外的灰底**上拖才平移。画布内部的指针归编辑器：
   // iframe 现在 `pointer-events:none`，画布内的 mousedown 目标会变成
@@ -625,6 +770,23 @@ export function PreviewPanel({
                 pointerEvents: editingText ? 'auto' : 'none',
               }}
             />
+            {/* ⭐ **形状绘制层**（只在「形状」工具下挂载）：拖一个框就画出来。
+                ⚠️ 它会挡住选元素/拖元素 —— 故意的（PS 同款），避免画形状时误触。 */}
+            {drawMode ? (
+              <div
+                className="canvas-draw-layer"
+                onPointerDown={onDrawDown}
+                onPointerMove={onDrawMove}
+                onPointerUp={onDrawUp}
+              >
+                {draft && draft.w > 0 && draft.h > 0 ? (
+                  <div
+                    className="canvas-draw-draft"
+                    style={{ left: draft.x, top: draft.y, width: draft.w, height: draft.h }}
+                  />
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : previewUrl ? (
           <img className="preview-image" src={previewUrl ?? undefined} alt="设计预览" />

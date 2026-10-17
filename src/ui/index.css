@@ -1943,6 +1943,23 @@ html, body, #root {
   border-left: 3px solid var(--accent);
 }
 
+/* ── 形状绘制层（只在「形状」工具下挂载）：盖住画布，拖一个框就画出来 ── */
+.canvas-draw-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  cursor: crosshair;
+  /* 触摸也要能用，否则手机上拖不动 */
+  touch-action: none;
+}
+/* 拖出来的虚线框（预览） */
+.canvas-draw-draft {
+  position: absolute;
+  border: 1px dashed var(--accent);
+  background: rgba(108, 92, 231, 0.12);
+  pointer-events: none;
+}
+
 /* ── 右键浮层（`ContextMenu`）── 贴着鼠标点、不阻塞、点外面自己关 */
 .ui-ctxmenu {
   position: fixed;
