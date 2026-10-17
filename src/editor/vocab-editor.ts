@@ -141,6 +141,14 @@ function isGroupContainer(c: Layer | GroupNode | null): c is GroupNode {
 
 export interface VocabEditorOptions {
   doc: DesignDocument;
+  /**
+   * ⭐ **外部注入的撤销栈**（宿主按产物名持有，2026-10-17）。
+   *
+   * 不传 ⇒ 编辑器自己新建（demo / 一次性用例）。传了 ⇒ **归宿主所有**：
+   * 编辑器 `dispose()` 时**不清它**，也不负责"什么时候作废"
+   * （作废由宿主判断 —— 磁盘上的文档和 `stack.head` 不一致就 `resetStack`）。
+   */
+  stack?: EditorStack;
   /** 一次手势落定 → 宿主拿走新文档去重新渲染。**一次手势只有一条。** */
   onChange?(id: string | null, doc: DesignDocument, label?: string): void;
   onSelect?(id: string | null): void;
@@ -356,8 +364,14 @@ export function createVocabEditor(
   opts: VocabEditorOptions,
 ): VocabEditorHandle {
 
-  /** ⭐ **统一编辑栈**（M2）—— 跨工具混用不乱；见 `undo-stack.ts` */
-  const stack: EditorStack = createEditorStack(opts.doc);
+  /**
+   * ⭐ **统一编辑栈**（M2）—— 跨工具混用不乱；见 `editor-stack.ts`
+   *
+   * ⚠️ **可以不归编辑器所有**：宿主按**产物名**持有它、并通过 `opts.stack` 注入
+   *    （2026-10-17）。这样"切到别的产物再切回来，撤销历史还在"。
+   *    ⇒ 编辑器**绝不**在 `dispose()` 里清它（清不清由宿主决定，见 `resetStack`）。
+   */
+  const stack: EditorStack = opts.stack ?? createEditorStack(opts.doc);
 
   /**
    * ⭐ 所有编辑动作的**唯一出口**：压撤销栈 + 通知宿主。
@@ -1798,7 +1812,19 @@ export function createVocabEditor(
 
     updateDoc(next) {
       doc = cloneDoc(next);
-      resetStack(stack, doc); // ⭐ 宿主整体换文档 ⇒ 历史作废
+      // ⚠️ **只有"文档真的换了"才作废历史**（2026-10-17 修）。
+      //
+      // 原来这里是无条件 `resetStack` —— 而宿主在**每次文档变化**后都会调一次
+      // `updateDoc`（它的早退判断用对象身份，而编辑器 `doc` 是克隆 ⇒ 判等不成立）。
+      // ⇒ 后果：改一个字段 → `submit` 把历史 push 进去（done=1）→ 紧接着这里
+      //   **清空**（done=0）⇒ **撤销栈永远活不过一次编辑** ✗（打点实测）
+      //
+      // 判据用**内容**（`stack.head` 是"上一次提交后的状态"）：
+      //   - 普通编辑后的那次同步：内容相同 ⇒ **不动历史** ✓
+      //   - 换产物 / 外部改了（AI / 手改 / 另一个标签页）：内容不同 ⇒ 作废 ✓
+      // ⚠️ JSON 比较不严谨（key 顺序 / 浮点格式可能误判），但误判的后果是
+      //    "多清一次历史"（安全方向），不会造成数据错误。等服务端有 rev 了再换成比 hash。
+      if (JSON.stringify(stack.head) !== JSON.stringify(doc)) resetStack(stack, doc);
       if (selectedId && !elementById(selectedId)) {
         selectedId = null;
         outline(null);

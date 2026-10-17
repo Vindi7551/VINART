@@ -3,6 +3,7 @@ import { createVocabEditor, type VocabEditorHandle } from '../editor/vocab-edito
 import type { SelectionSnapshot } from '../editor/inspector';
 import { emitDocument, emitElementHtml, emitLayerHtml } from '../render/vocabulary/emit';
 import { findElement, findLayer, type ElementNode, type Rect } from '../document/vocabulary';
+import { createEditorStack, type EditorStack } from '../editor/editor-stack';
 import type { PreviewData, HostSignal } from './types';
 
 interface PreviewPanelProps {
@@ -37,6 +38,13 @@ interface PreviewPanelProps {
   drawMode?: boolean;
   /** ⭐ 形状工具当前种类（决定画出来的是哪种节点） */
   shapeKind?: 'rect' | 'ellipse' | 'polygon' | 'path';
+  /**
+   * ⭐ **取某个产物的撤销栈**（宿主按产物名持有，2026-10-17）。
+   *
+   * 编辑器是跟着 iframe 重建的 ⇒ 栈不能挂在它身上（否则切走再切回历史就没了）。
+   * `bind()` 时按当前产物名取一次、注入编辑器；**顺便做一次版本对账**（见 `bind`）。
+   */
+  getStack?: (name: string, base: PreviewData['doc']) => EditorStack;
 }
 
 /**
@@ -117,6 +125,7 @@ export function PreviewPanel({
   hostSignal,
   drawMode,
   shapeKind,
+  getStack,
 }: PreviewPanelProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   /** ⭐ 面板刚 patch 过哪个节点 —— 等新文档到了（`onChange`）再重发它的 DOM */
@@ -150,6 +159,17 @@ export function PreviewPanel({
   assetRef.current = layoutData?.assets ?? {};
   /** 版式名（摊平重渲时要用；`applyFlatten` 的依赖必须是空的，所以走 ref） */
   const nameRef = useRef<string | null>(null);
+  /**
+   * ⭐ **当前这个编辑器实例绑定的产物名** —— 只在 `bind()` 里写。
+   *
+   * ⚠️ 不能拿 `nameRef` 判断：它在"新产物的数据到了"时就被更新了，而**旧编辑器
+   *    还没被换掉** ⇒ 中间那一段会拿新产物的文档去喂旧编辑器（跨产物污染 ✗）。
+   *    这个 ref 跟着**编辑器实例**走，才是准的。
+   */
+  const boundNameRef = useRef<string | null>(null);
+  /** ⭐ 取撤销栈的回调（放 ref 里，`bind()` 的依赖必须是空的 ⇒ 不能闭包 props） */
+  const getStackRef = useRef<((name: string, base: PreviewData['doc']) => EditorStack) | undefined>(undefined);
+  getStackRef.current = getStack;
   nameRef.current = layoutData?.name ?? null;
   /**
    * ⭐ **编辑器刚交出来的那一份 doc**。
@@ -310,10 +330,22 @@ export function PreviewPanel({
     if (!wrap || !root || !doc) return;
 
     editorRef.current?.dispose();
+    // ⭐ **撤销栈注入**（宿主按产物名持有）+ **版本对账**：
+    //    磁盘上的文档和栈里记的 `head` 不一致（AI / 另一个标签页 / 手改都会造成）
+    //    ⇒ 那份历史是在**别的文档**上录的，套到当前文档上会**覆盖别人的改动** ✗
+    //    ⇒ 直接作废（`resetStack` 以当前文档为新起点）。
+    //    ⚠️ 这里是"穷人的 rev"（整份 JSON 比一次，每次 bind 才比一次）；
+    //       服务端有了 rev 之后换成比 hash。
+    const nm = nameRef.current;
+    boundNameRef.current = nm; // ⭐ 这个 ref 跟着**编辑器实例**走（见声明处的注释）
+    const st = (nm && getStackRef.current ? getStackRef.current(nm, doc) : null) ?? createEditorStack(doc);
+    // ⚠️ 作废判断**只在 `updateDoc` 里做一处**（比内容），这里不要再重复一遍
+    //    （原来是两处各比一次 JSON ✗ 重复且容易漂）。
     // `document` = 宿主（父）文档；`root` = 子文档。两者都从参数流入，
     // 编辑器自己不认识任何"当前页面"（见 src/editor/README.md 不变量①）。
     const ed = createVocabEditor(document, wrap, root, {
       doc,
+      stack: st,
       onSelect: (id) => {
         if (id) cbRef.current.onLayerSelect?.(id);
       },
@@ -422,7 +454,18 @@ export function PreviewPanel({
     //     因为 App 存的时候是 `{ ...prev, doc: next }`（浅拷贝），结构比较会被骗过。
     //  ② `ed.doc`：兜"宿主自己把 layout 换成一份陈旧数据"的情况（getter 见 handle 接口注释）。
     if (lastEmitted.current === layoutData.doc) return;
-    if (ed.doc === layoutData.doc) return;
+    // ⚠️ **用身份判等永远不成立**（编辑器内部的 `doc` 是克隆）⇒ 改成比**内容**：
+    //    内容相同 ⇒ 这份文档就是编辑器自己刚交出来的 ⇒ **不要回灌**
+    //    （回灌会把"撤销"冲掉：撤销后宿主 state 还是旧文档，一回灌就把它又盖回去了 ✗）
+    // ⚠️⚠️ **跨产物污染**（2026-10-17 打点抓到）：换产物时**旧编辑器还没被 `bind()` 换掉**，
+    //    而 `layoutData.doc` 已经是**新产物**的文档 ⇒ 一路喂进旧编辑器
+    //    ⇒ `updateDoc` 判定"内容全变了" ⇒ **按新文档把旧产物的撤销栈重置** ✗
+    //    （实测：vocab-full 的栈被 smoke 的文档清空 ⇒ 撤销永远没东西可撤）
+    //    ⇒ 编辑器只接受**它自己绑定的那个产物**的文档。
+    if (boundNameRef.current !== layoutData.name) return;
+    if (JSON.stringify(ed.doc) === JSON.stringify(layoutData.doc)) return;
+    ed.updateDoc(layoutData.doc);
+    ed.updateDoc(layoutData.doc);
     ed.updateDoc(layoutData.doc);
   }, [layoutData]);
 

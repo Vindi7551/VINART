@@ -13,6 +13,7 @@ import type { PreviewData, HostSignal, SessionItem } from './types';
 import { fieldsFor, type SelectionSnapshot } from '../editor/inspector';
 import { emitDocument } from '../render/vocabulary/emit';
 import { findElement, findLayer, type DesignDocument } from '../document/vocabulary';
+import { createEditorStack, type EditorStack } from '../editor/editor-stack';
 
 // ══════════════════════════════════════════════════════════
 // ⚠️ Agent 层已清空，等待重新设计
@@ -608,6 +609,26 @@ export function App() {
    */
   const [currentLayerId, setCurrentLayerId] = useState<string | null>(null);
 
+  /**
+   * ⭐ **每个产物一份撤销栈**，由宿主持有（2026-10-17）。
+   *
+   * 为什么放在宿主而不是编辑器里：编辑器是**跟着 iframe 重建**的（换版式、重渲都要重建），
+   * 挂在它身上 ⇒ **切到别的产物再切回来，历史就没了** ✗
+   * ⇒ 栈按**产物名**存在这里，编辑器创建时**注入**进去（`opts.stack`）。
+   *
+   * ⚠️ 用 `useRef` 不用 state：栈变化**不需要**触发渲染（它是编辑器内部数据）。
+   */
+  const stacksRef = useRef(new Map<string, EditorStack>());
+
+  /** 取某个产物的栈（没有就按这份文档新建）—— 传给 `PreviewPanel`，它 `bind()` 时注入编辑器 */
+  const getStack = useCallback((name: string, base: DesignDocument): EditorStack => {
+    let s = stacksRef.current.get(name);
+    if (!s) {
+      s = createEditorStack(base);
+      stacksRef.current.set(name, s);
+    }
+    return s;
+  }, []);
   const handleLayerSelect = useCallback((id: string) => {
     setSelectedLayer(id);
     // 选中的是**图层** ⇒ 它成为当前图层；选中元素 ⇒ 不动当前图层
@@ -1273,6 +1294,8 @@ export function App() {
           //    而不是"能拖、松手后什么都没有"（后者最迷惑）。
           drawMode={tool === 'shape' && !currentLayerLocked}
           shapeKind={shapeKind}
+          // ⭐ 撤销栈按产物名由宿主持有（切走再切回，历史还在）
+          getStack={getStack}
         />
         {/* 检查器栏（版式编辑器）—— **独立一栏**，贴画布右侧；无版式时不占位。
             2026-10-10 从 .right-col 里搬出来：编辑器与对话不再同栏。
