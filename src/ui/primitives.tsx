@@ -18,7 +18,7 @@
  * - 输入类基元基本就是「带对类名的原生 input」，**解析与提交交给调用方**
  *   —— 这样换皮不改变任何既有行为。
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
@@ -303,6 +303,63 @@ export function ListItem({
  * - `subtitle` 放在表头第二行（如面包屑、工作目录说明），随表头一起带底边线
  * - `maxHeight` 给「内容很高、需要内部滚动」的弹窗用（如目录列表）
  */
+/**
+ * **右键浮层** —— 贴着鼠标点弹出的一小列选项。
+ *
+ * ⚠️ 项目约定「弹窗一律用 `Dialog`」，但 `Dialog` 是**模态**的（遮罩 + 拦交互）。
+ *    这个不阻塞页面、贴着鼠标点、点外面/Esc/选一项自己关 ⇒ **必须单独一个基元**。
+ *    （别为了"统一"把它折进 `Dialog`：那会让右键菜单盖出一层遮罩。）
+ */
+export function ContextMenu({
+  x,
+  y,
+  items,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  items: Array<{ key: string; label: string; active?: boolean; onPick: () => void }>;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    // ⚠️ 捕获阶段：要赶在别人的 `pointerdown` 之前关掉，否则点菜单外面时
+    //    那一下点击会被下面的元素吃掉（菜单关了、动作也触发了）
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Element | null;
+      if (!t?.closest?.('.ui-ctxmenu')) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  return (
+    <div className="ui-ctxmenu" style={{ left: x, top: y }} role="menu">
+      {items.map((it) => (
+        <button
+          key={it.key}
+          type="button"
+          role="menuitem"
+          className={`ui-ctxmenu-item${it.active ? ' is-active' : ''}`}
+          onClick={() => {
+            it.onPick();
+            onClose();
+          }}
+        >
+          <span className="ui-ctxmenu-check">{it.active ? '✓' : ''}</span>
+          {it.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function Dialog({
   open,
   onClose,

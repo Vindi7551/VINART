@@ -1,5 +1,7 @@
 import { IconRedo, IconRender, IconSave, IconUndo } from './icons';
-import { TOOLS, type ToolId } from './tools';
+import { TOOLS, SHAPE_KINDS, type ShapeKind, type ToolId } from './tools';
+import { ContextMenu } from './primitives';
+import { useState } from 'react';
 import type { HostSignal } from './types';
 
 /**
@@ -27,6 +29,8 @@ export function ToolBar({
   onSignal,
   onSave,
   onRender,
+  shapeKind,
+  onShapeKind,
 }: {
   tool: ToolId;
   onTool: (t: ToolId) => void;
@@ -34,7 +38,12 @@ export function ToolBar({
   onSignal: (sig: Omit<HostSignal, 'seq'>) => void;
   onSave: () => void;
   onRender: () => void;
+  /** ⭐ 形状工具当前种类（右键菜单要标出当前那一项） */
+  shapeKind: ShapeKind;
+  onShapeKind: (k: ShapeKind) => void;
 }) {
+  /** ⭐ 右键「形状」图标时弹出的形状候选（坐标 = 鼠标点） */
+  const [ctx, setCtx] = useState<{ x: number; y: number } | null>(null);
   return (
     <div className="toolbar">
       <div className="toolbar-group">
@@ -44,13 +53,37 @@ export function ToolBar({
             type="button"
             className={`tool-btn${tool === t.id ? ' active' : ''}`}
             onClick={() => onTool(t.id)}
-            title={`${t.label} —— ${t.hint}`}
+            // ⭐ **形状工具**：右键（PS 那种）弹候选 —— 改的和形状页里的枚举是**同一个 state**
+            onContextMenu={
+              t.id === 'shape'
+                ? (e) => {
+                    e.preventDefault();
+                    setCtx({ x: e.clientX, y: e.clientY });
+                  }
+                : undefined
+            }
+            title={
+              t.id === 'shape' ? `${t.label} —— ${t.hint}（右键选种类）` : `${t.label} —— ${t.hint}`
+            }
             aria-pressed={tool === t.id}
           >
             {t.icon}
           </button>
         ))}
       </div>
+      {ctx ? (
+        <ContextMenu
+          x={ctx.x}
+          y={ctx.y}
+          items={SHAPE_KINDS.map((k) => ({
+            key: k.id,
+            label: k.label,
+            active: k.id === shapeKind,
+            onPick: () => onShapeKind(k.id),
+          }))}
+          onClose={() => setCtx(null)}
+        />
+      ) : null}
 
       <div className="toolbar-sep" />
 

@@ -27,6 +27,15 @@ import {
   IconUp,
 } from './icons';
 import { fieldsOfTool, TOOLS, type ToolId } from './tools';
+import { SHAPE_KINDS } from './tools';
+
+/** 形状种类 → "在默认位置新增一个"的宿主信号（形状页只有一个新增按钮，靠它按种类分派） */
+const ADD_SIGNAL = {
+  rect: 'add-rect',
+  ellipse: 'add-ellipse',
+  polygon: 'add-polygon',
+  path: 'add-path',
+} as const;
 import type { PreviewData, HostSignal } from './types';
 
 /**
@@ -103,6 +112,9 @@ interface EditPanelProps {
    * 图层行用它画**阴影**（Procreate 那种"我在这层干活"的提示）。
    */
   currentLayerId: string | null;
+  /** ⭐ 形状工具当前选的种类（与工具栏右键菜单共用同一个 state） */
+  shapeKind: 'rect' | 'ellipse' | 'polygon' | 'path';
+  onShapeKind: (k: 'rect' | 'ellipse' | 'polygon' | 'path') => void;
   busy: boolean;
   /** ⭐ 文字选区快照（在画面上选了字才有）；驱动顶部那一栏"选中的字" */
   selection?: SelectionSnapshot | null;
@@ -121,6 +133,8 @@ export function EditPanel({
   layout,
   selectedLayer,
   currentLayerId,
+  shapeKind,
+  onShapeKind,
   busy,
   selection,
   tool,
@@ -226,6 +240,31 @@ export function EditPanel({
                   {a.icon} {a.label}
                 </Button>
               ))}
+            </Row>
+          </Section>
+        ) : null}
+
+        {/* ⭐ **形状页：先选种类**（与工具栏右键菜单改的是同一个 state）。
+            ⚠️ 这一行不是"元素的字段"，所以不进下面的字段网格 —— 它是**创建时**用的参数。 */}
+        {tool === 'shape' ? (
+          <Section
+            title={`形状 · 当前：${SHAPE_KINDS.find((k) => k.id === shapeKind)?.label ?? ''}`}
+            icon={<IconFrame />}
+            collapsible={false}
+          >
+            <Row>
+              {SHAPE_KINDS.map((k) => (
+                <Button key={k.id} disabled={busy} title={`画${k.label}`} onClick={() => onShapeKind(k.id)}>
+                  {k.id === shapeKind ? `● ${k.label}` : k.label}
+                </Button>
+              ))}
+            </Row>
+            {/* ⭐ 一个「新增」：用**当前种类**在默认位置放一个（另一条路是画布上拖画）。
+                ⚠️ 不摆 4 个按钮 —— 会变成两排一模一样的字。 */}
+            <Row>
+              <Button disabled={busy} title="在默认位置新增一个当前种类的形状" onClick={() => onSignal({ type: ADD_SIGNAL[shapeKind] })}>
+                ＋ 新增{SHAPE_KINDS.find((k) => k.id === shapeKind)?.label ?? ''}
+              </Button>
             </Row>
           </Section>
         ) : null}

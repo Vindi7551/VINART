@@ -444,6 +444,13 @@ export function App() {
   /** 选中的图层(检查器与 iframe 双向同步) */
   const [selectedLayer, setSelectedLayer] = useState<string | null>(null);
   /**
+   * ⭐ **形状工具当前选的种类**（矩形/椭圆/多边形/路径）。
+   *
+   * 工具栏**右键**弹出的菜单、和形状页里的**枚举**，改的都是**这一个 state**
+   * —— 右键只是快捷方式，不存在"两处不一致"。拖画时宿主用它决定建哪种节点。
+   */
+  const [shapeKind, setShapeKind] = useState<'rect' | 'ellipse' | 'polygon' | 'path'>('rect');
+  /**
    * ⭐ **文字选区快照**（在画面上拖选了几个字）。
    *
    * 由编辑器的 `onSelectionChange` 推上来（编辑器内部做了指纹比对，只在真变了时报）。
@@ -1204,6 +1211,8 @@ export function App() {
           }}
           onSave={handleSaveLayoutLive}
           onRender={handleRenderLayoutLive}
+          shapeKind={shapeKind}
+          onShapeKind={setShapeKind}
         />
         {/* 左侧对话列表:宽度可拖拽(localStorage 持久化),收起时 width→0,开关贴屏左缘;图标竖线靠左=侧栏在左 */}
         <button
@@ -1273,6 +1282,8 @@ export function App() {
                 layout={layout}
                 selectedLayer={selectedLayer}
                 currentLayerId={effectiveCurrentLayer}
+                shapeKind={shapeKind}
+                onShapeKind={setShapeKind}
                 selection={selection}
                 busy={layoutBusy}
                 tool={tool}

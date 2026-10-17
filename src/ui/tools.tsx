@@ -6,11 +6,8 @@ import {
   IconAddRect,
   IconAddText,
   IconCursor,
-  IconEllipse,
   IconImage,
   IconLayers,
-  IconPath,
-  IconPolygon,
   IconSwatch,
   IconType,
   IconVector,
@@ -36,7 +33,7 @@ import {
  *    需要编辑器先有 `setTool()` 这种 API —— **还没做**。
  */
 
-export type ToolId = 'select' | 'appearance' | 'text' | 'media' | 'vector' | 'layers';
+export type ToolId = 'select' | 'appearance' | 'shape' | 'text' | 'media' | 'vector' | 'layers';
 
 /** 这一页顶部的"新增"按钮（`signal` 直接进 `HostSignal`） */
 export interface ToolAdd {
@@ -55,6 +52,17 @@ export interface ToolDef {
   adds?: ToolAdd[];
 }
 
+/** ⭐ 形状工具能画的 4 种几何（和词汇表的 `ShapeNode.kind` 一一对应） */
+export type ShapeKind = 'rect' | 'ellipse' | 'polygon' | 'path';
+
+/** 形状种类的展示表（工具栏右键菜单与形状页的枚举**共用这一份**） */
+export const SHAPE_KINDS: Array<{ id: ShapeKind; label: string }> = [
+  { id: 'rect', label: '矩形' },
+  { id: 'ellipse', label: '椭圆' },
+  { id: 'polygon', label: '多边形' },
+  { id: 'path', label: '路径' },
+];
+
 export const TOOLS: ToolDef[] = [
   {
     id: 'select',
@@ -65,14 +73,27 @@ export const TOOLS: ToolDef[] = [
   {
     id: 'appearance',
     label: '外观',
-    hint: '填充 · 描边 · 圆角 · 新增形状',
+    hint: '填充 · 描边 · 圆角',
     icon: <IconSwatch />,
-    adds: [
-      { signal: 'add-rect', label: '矩形', icon: <IconAddRect /> },
-      { signal: 'add-ellipse', label: '椭圆', icon: <IconEllipse /> },
-      { signal: 'add-polygon', label: '多边形', icon: <IconPolygon /> },
-      { signal: 'add-path', label: '路径', icon: <IconPath /> },
-    ],
+  },
+  {
+    /**
+     * ⭐ **形状工具**（2026-10-17）：那 4 个"新增形状"从「外观」页**拆出来**独立成一页。
+     *
+     * 「外观」页的 hint 原来写着"…· 新增形状"，等于让一个属性页兼着"创建器"的活。
+     * 拆成独立工具以后：
+     * - 页内有**形状种类**（`shapeKind`，与右键菜单同一个 state）；
+     * - 在这个页激活时，画布上**拖一个框就直接画出形状**（`setDrawMode`，见 `vocab-editor`）；
+     * - 按钮那条老路还在（一键在默认位置放一个）。
+     */
+    id: 'shape',
+    label: '形状',
+    hint: '右键图标选种类 · 在画布上拖一个框就画出来 · 也可以一键新增',
+    icon: <IconAddRect />,
+    // ⚠️ **不在这里放 4 个 `adds`**：形状页有了「形状种类」枚举之后，
+    //    再摆 4 个"矩形/椭圆/多边形/路径"按钮就是**两排一模一样的字**（实测很容易看错）。
+    //    ⇒ 形状页自己渲染**一个**「新增」按钮，用的是**当前种类**
+    //      （见 `EditPanel` 里 `ADD_SIGNAL`）。
   },
   {
     id: 'text',
