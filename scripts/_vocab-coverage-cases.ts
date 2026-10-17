@@ -40,6 +40,8 @@ export type Case = {
 };
 
 const R = { x: 90, y: 60, w: 360, h: 180 };
+/** ⭐ 文字的框：**没有高度**（高度是排版结果 ✗ 见 `TextFrame`）*/
+const F = { x: R.x, y: R.y, w: R.w };
 
 /** 画布 901×601 —— 故意用非整数，`Math.round` 的口径也一起验了 */
 const CANVAS = { width: 901, height: 601, background: '#010203' };
@@ -115,63 +117,63 @@ export const CASES: Case[] = [
   },
 
   // ── 文字（元素级）─────────────────────────────────────────────────
-  { field: 'text.runs', node: { id: 'x', type: 'text', rect: R, runs: [{ text: '甲' }, { text: '乙' }] }, want: ['data-run="0"', 'data-run="1"'] },
-  { field: 'text.fontFamily', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], fontFamily: 'Fam-A' }, want: ['font-family:Fam-A'] },
-  { field: 'text.fontScale', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], fontSizePx: 69 }, want: ['font-size:69px'] },
-  { field: 'text.weight', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], weight: 733 }, want: ['font-weight:733'] },
-  { field: 'text.italic', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], italic: true }, want: ['font-style:italic'] },
-  { field: 'text.stretch', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], stretch: 0.87 }, want: ['font-stretch:87%'] },
-  { field: 'text.features', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], features: ['liga'] }, want: ['font-feature-settings:"liga" 1'] },
-  { field: 'text.variations', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], variations: { wght: 427 } }, want: ['font-variation-settings:"wght" 427'] },
-  { field: 'text.textTransform', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], textTransform: 'uppercase' }, want: ['text-transform:uppercase'] },
-  { field: 'text.smallCaps', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], smallCaps: true }, want: ['font-variant-caps:small-caps'] },
-  { field: 'text.underline', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], underline: true }, want: ['text-decoration-line:underline'] },
-  { field: 'text.strike', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], strike: true }, want: ['text-decoration-line:line-through'] },
+  { field: 'text.runs', node: { id: 'x', type: 'text', frame: F, runs: [{ text: '甲' }, { text: '乙' }] }, want: ['data-run="0"', 'data-run="1"'] },
+  { field: 'text.fontFamily', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], fontFamily: 'Fam-A' }, want: ['font-family:Fam-A'] },
+  { field: 'text.fontScale', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], fontSizePx: 69 }, want: ['font-size:69px'] },
+  { field: 'text.weight', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], weight: 733 }, want: ['font-weight:733'] },
+  { field: 'text.italic', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], italic: true }, want: ['font-style:italic'] },
+  { field: 'text.stretch', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], stretch: 0.87 }, want: ['font-stretch:87%'] },
+  { field: 'text.features', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], features: ['liga'] }, want: ['font-feature-settings:"liga" 1'] },
+  { field: 'text.variations', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], variations: { wght: 427 } }, want: ['font-variation-settings:"wght" 427'] },
+  { field: 'text.textTransform', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], textTransform: 'uppercase' }, want: ['text-transform:uppercase'] },
+  { field: 'text.smallCaps', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], smallCaps: true }, want: ['font-variant-caps:small-caps'] },
+  { field: 'text.underline', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], underline: true }, want: ['text-decoration-line:underline'] },
+  { field: 'text.strike', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], strike: true }, want: ['text-decoration-line:line-through'] },
   {
     field: 'text.decoration',
-    node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], underline: true, decoration: { color: '#123456', style: 'wavy', thickness: 7 } },
+    node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], underline: true, decoration: { color: '#123456', style: 'wavy', thickness: 7 } },
     want: ['text-decoration-color:#123456', 'text-decoration-style:wavy', 'text-decoration-thickness:7px'],
   },
-  { field: 'text.letterSpacing', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], letterSpacing: 0.044 }, want: ['letter-spacing:0.044em'] },
-  { field: 'text.wordSpacing', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], wordSpacing: 0.055 }, want: ['word-spacing:0.055em'] },
-  { field: 'text.lineHeight', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], lineHeight: 1.77 }, want: ['line-height:1.77'] },
-  { field: 'text.align', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], align: 'justify' }, want: ['text-align:justify'] },
-  { field: 'text.alignLast', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], alignLast: 'center' }, want: ['text-align-last:center'] },
-  { field: 'text.baselineShift', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], baselineShift: 0.31 }, want: ['vertical-align:0.31em'] },
-  { field: 'text.dropCap', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], dropCap: 3 }, want: ['initial-letter:3'] },
-  { field: 'text.writingMode', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], writingMode: 'vertical' }, want: ['writing-mode:vertical-rl'] },
-  { field: 'text.direction', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], direction: 'rtl' }, want: ['direction:rtl'] },
-  { field: 'text.wrap', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], wrap: 'normal' }, want: ['white-space:normal'] },
-  { field: 'text.curve', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], curve: 0.25 }, want: ['<textPath', 'Q0.5,0.5'] },
-  { field: 'text.path', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], path: 'M0,1 Q0.5,-0.3 1,1' }, want: ['d="M0,1 Q0.5,-0.3 1,1"'] },
+  { field: 'text.letterSpacing', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], letterSpacing: 0.044 }, want: ['letter-spacing:0.044em'] },
+  { field: 'text.wordSpacing', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], wordSpacing: 0.055 }, want: ['word-spacing:0.055em'] },
+  { field: 'text.lineHeight', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], lineHeight: 1.77 }, want: ['line-height:1.77'] },
+  { field: 'text.align', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], align: 'justify' }, want: ['text-align:justify'] },
+  { field: 'text.alignLast', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], alignLast: 'center' }, want: ['text-align-last:center'] },
+  { field: 'text.baselineShift', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], baselineShift: 0.31 }, want: ['vertical-align:0.31em'] },
+  { field: 'text.dropCap', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], dropCap: 3 }, want: ['initial-letter:3'] },
+  { field: 'text.writingMode', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], writingMode: 'vertical' }, want: ['writing-mode:vertical-rl'] },
+  { field: 'text.direction', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], direction: 'rtl' }, want: ['direction:rtl'] },
+  { field: 'text.wrap', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], wrap: 'normal' }, want: ['white-space:normal'] },
+  { field: 'text.curve', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], curve: 0.25 }, want: ['<textPath', 'Q0.5,0.5'] },
+  { field: 'text.path', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], path: 'M0,1 Q0.5,-0.3 1,1' }, want: ['d="M0,1 Q0.5,-0.3 1,1"'] },
 
   // ── 文字片段（TextRun）────────────────────────────────────────────
-  { field: 'run.fill（纯色）', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a', fill: '#abcdef' }] }, want: ['color:#abcdef'] },
+  { field: 'run.fill（纯色）', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a', fill: '#abcdef' }] }, want: ['color:#abcdef'] },
   {
     field: 'run.fill（渐变）',
-    node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a', fill: 'linear-gradient(90deg,#f00,#00f)' }] },
+    node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a', fill: 'linear-gradient(90deg,#f00,#00f)' }] },
     want: ['background-clip:text', 'linear-gradient(90deg,#f00,#00f)'],
   },
-  { field: 'run.fontFamily', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a', fontFamily: 'RunFam' }] }, want: ['font-family:RunFam'] },
-  { field: 'run.fontScale', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a', fontSizePx: 81 }] }, want: ['font-size:81px'] },
-  { field: 'run.weight', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a', weight: 311 }] }, want: ['font-weight:311'] },
-  { field: 'run.italic', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a', italic: true }] }, want: ['font-style:italic'] },
-  { field: 'run.stretch', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a', stretch: 0.66 }] }, want: ['font-stretch:66%'] },
-  { field: 'run.underline', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a', underline: true }] }, want: ['text-decoration-line:underline'] },
-  { field: 'run.strike', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a', strike: true }] }, want: ['text-decoration-line:line-through'] },
-  { field: 'run.decoration', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a', underline: true, decoration: { color: '#654321' } }] }, want: ['text-decoration-color:#654321'] },
-  { field: 'run.letterSpacing', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a', letterSpacing: 0.066 }] }, want: ['letter-spacing:0.066em'] },
-  { field: 'run.wordSpacing', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a', wordSpacing: 0.077 }] }, want: ['word-spacing:0.077em'] },
-  { field: 'run.baselineShift', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a', baselineShift: 0.44 }] }, want: ['vertical-align:0.44em'] },
-  { field: 'run.textTransform', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a', textTransform: 'lowercase' }] }, want: ['text-transform:lowercase'] },
-  { field: 'run.smallCaps', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a', smallCaps: true }] }, want: ['font-variant-caps:small-caps'] },
-  { field: 'run.features', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a', features: ['smcp'] }] }, want: ['font-feature-settings:"smcp" 1'] },
-  { field: 'run.variations', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a', variations: { wdth: 88 } }] }, want: ['font-variation-settings:"wdth" 88'] },
+  { field: 'run.fontFamily', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a', fontFamily: 'RunFam' }] }, want: ['font-family:RunFam'] },
+  { field: 'run.fontScale', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a', fontSizePx: 81 }] }, want: ['font-size:81px'] },
+  { field: 'run.weight', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a', weight: 311 }] }, want: ['font-weight:311'] },
+  { field: 'run.italic', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a', italic: true }] }, want: ['font-style:italic'] },
+  { field: 'run.stretch', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a', stretch: 0.66 }] }, want: ['font-stretch:66%'] },
+  { field: 'run.underline', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a', underline: true }] }, want: ['text-decoration-line:underline'] },
+  { field: 'run.strike', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a', strike: true }] }, want: ['text-decoration-line:line-through'] },
+  { field: 'run.decoration', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a', underline: true, decoration: { color: '#654321' } }] }, want: ['text-decoration-color:#654321'] },
+  { field: 'run.letterSpacing', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a', letterSpacing: 0.066 }] }, want: ['letter-spacing:0.066em'] },
+  { field: 'run.wordSpacing', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a', wordSpacing: 0.077 }] }, want: ['word-spacing:0.077em'] },
+  { field: 'run.baselineShift', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a', baselineShift: 0.44 }] }, want: ['vertical-align:0.44em'] },
+  { field: 'run.textTransform', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a', textTransform: 'lowercase' }] }, want: ['text-transform:lowercase'] },
+  { field: 'run.smallCaps', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a', smallCaps: true }] }, want: ['font-variant-caps:small-caps'] },
+  { field: 'run.features', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a', features: ['smcp'] }] }, want: ['font-feature-settings:"smcp" 1'] },
+  { field: 'run.variations', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a', variations: { wdth: 88 } }] }, want: ['font-variation-settings:"wdth" 88'] },
 
   // ── 文字填充 / 描边（元素级）──────────────────────────────────────
-  { field: 'text.fill（纯色）', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], fill: '#0f0f0f' }, want: ['color:#0f0f0f'] },
-  { field: 'text.fill（渐变）', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], fill: 'linear-gradient(#111,#222)' }, want: ['background-clip:text'] },
-  { field: 'text.stroke', node: { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], stroke: { paint: '#ff0000', width: 5 } }, want: ['-webkit-text-stroke:5px #ff0000'] },
+  { field: 'text.fill（纯色）', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], fill: '#0f0f0f' }, want: ['color:#0f0f0f'] },
+  { field: 'text.fill（渐变）', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], fill: 'linear-gradient(#111,#222)' }, want: ['background-clip:text'] },
+  { field: 'text.stroke', node: { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], stroke: { paint: '#ff0000', width: 5 } }, want: ['-webkit-text-stroke:5px #ff0000'] },
 
   // ── image ─────────────────────────────────────────────────────────
   { field: 'image.asset', node: { id: 'x', type: 'image', rect: R, asset: 'a.png' }, want: ['src="DATA:a.png"'] },
@@ -311,7 +313,7 @@ const STROKE_PROBES: StrokeProbe[] = [
 /** 三种落点各给一个元素（骨架相同，只换 type） */
 function strokeNodeFor(kind: 'shape' | 'text' | 'image', stroke: Record<string, unknown>): ElementNode {
   if (kind === 'shape') return { id: 'x', type: 'shape', kind: 'rect', rect: R, stroke } as ElementNode;
-  if (kind === 'text') return { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], stroke } as ElementNode;
+  if (kind === 'text') return { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], stroke } as ElementNode;
   return { id: 'x', type: 'image', rect: R, asset: 'a.png', stroke } as ElementNode;
 }
 
@@ -374,7 +376,7 @@ const FILLS: Array<{ field: string; value: Record<string, unknown>; marker: RegE
 
 function nodeFor(kind: 'shape' | 'text' | 'image' | 'svg', extra: Record<string, unknown>): ElementNode {
   if (kind === 'shape') return { id: 'x', type: 'shape', kind: 'rect', rect: R, ...extra } as ElementNode;
-  if (kind === 'text') return { id: 'x', type: 'text', rect: R, runs: [{ text: 'a' }], ...extra } as ElementNode;
+  if (kind === 'text') return { id: 'x', type: 'text', frame: F, runs: [{ text: 'a' }], ...extra } as ElementNode;
   if (kind === 'image') return { id: 'x', type: 'image', rect: R, asset: 'a.png', ...extra } as ElementNode;
   return { id: 'x', type: 'svg', rect: R, asset: 'i.svg', ...extra } as ElementNode;
 }
@@ -430,7 +432,7 @@ export function runSemanticChecks(): Array<{ name: string; ok: boolean; detail: 
   // ① 文字渐变填色：内层有没有把"自己的背景"关掉
   {
     const res = emitDocument(
-      { canvas: { ...CANVAS }, layers: [wrapInLayer({ id: 't', type: 'text', rect: R, runs: [{ text: 'a' }], fill: 'linear-gradient(#111,#222)' })] },
+      { canvas: { ...CANVAS }, layers: [wrapInLayer({ id: 't', type: 'text', frame: F, runs: [{ text: 'a' }], fill: 'linear-gradient(#111,#222)' })] },
       {},
     );
     // 内层那个 div 的 style 里，`background-clip:text` 必须配一个"不铺满盒"的兜底
@@ -503,17 +505,17 @@ export function nestedTextFitGap(): { nested: string[]; listed: string[]; missin
       {
         id: 'L',
         elements: [
-          { id: 'top-text', type: 'text', rect: { x: 45, y: 30, w: 360, h: 60 }, runs: [{ text: '顶层' }] },
+          { id: 'top-text', type: 'text', frame: { x: 45, y: 30, w: 360 }, runs: [{ text: '顶层' }] },
           {
             id: 'grp',
             type: 'group',
             opacity: 0.9,
             elements: [
-              { id: 'in-group-text', type: 'text', rect: { x: 90, y: 240, w: 360, h: 60 }, runs: [{ text: '组内' }] },
+              { id: 'in-group-text', type: 'text', frame: { x: 90, y: 240, w: 360 }, runs: [{ text: '组内' }] },
               {
                 id: 'inner-grp',
                 type: 'group',
-                elements: [{ id: 'deep-text', type: 'text', rect: { x: 90, y: 361, w: 360, h: 60 }, runs: [{ text: '深层' }] }],
+                elements: [{ id: 'deep-text', type: 'text', frame: { x: 90, y: 361, w: 360 }, runs: [{ text: '深层' }] }],
               },
             ],
           },

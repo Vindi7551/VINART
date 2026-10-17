@@ -543,7 +543,7 @@ function paintLayers() {
     ['+ 文字', {
       id: `t${Date.now()}`,
       type: 'text',
-      rect: { x: 270, y: 180, w: 360, h: 72 },
+      frame: { x: 270, y: 180, w: 360 },
       runs: [{ text: '双击编辑文字' }],
       fontSizePx: 36,
       fill: '#2B2B2B',

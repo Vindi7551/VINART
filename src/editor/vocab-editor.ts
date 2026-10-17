@@ -107,7 +107,7 @@ import {
   replaceRunText,
 } from './text-edit';
 import { effectiveTransform, groupContentBox, groupTransformCss, transformCss } from '../render/vocabulary/emit';
-import { containerOf, findElement, findLayer, iterElements } from '../document/vocabulary';
+import { containerOf, findElement, findLayer, iterElements, type LeafNode, type TextNode } from '../document/vocabulary';
 import type {
   DesignDocument,
   ElementNode,
@@ -145,6 +145,15 @@ function isGroupContainer(c: Layer | GroupNode | null): c is GroupNode {
 
 export interface VocabEditorOptions {
   doc: DesignDocument;
+  /**
+   * ⭐ **初始「当前图层」**（宿主的图层面板高亮那一层）。
+   *
+   * 编辑器自己存一份 `currentLayerId`，缺省 = 最上层可用图层。但**重渲会换新实例**
+   * （宿主 `bind()` 每次 iframe load 都 `createVocabEditor`）⇒ 新实例会把当前图层
+   * 打回最上层，而面板还高亮着旧的那层 ⇒ 画布上那层的元素被门禁**静默忽略**。
+   * ⇒ 宿主必须把它手里那份传进来（不传 = 走旧的"最上层"兜底）。
+   */
+  currentLayerId?: string;
   /**
    * ⭐ **外部注入的撤销栈**（宿主按产物名持有，2026-10-17）。
    *
@@ -224,6 +233,14 @@ export interface VocabEditorHandle {
   readonly editable: boolean;
   /** 正在**选字**的那个文字节点（`null` = 不在文字态） */
   readonly textEditId: string | null;
+  /**
+   * ⭐ **重绑之后把文字态接回去**（宿主在「摊平重渲」的 iframe load 之后调）。
+   *
+   * 为什么需要它：弧形/路径文字的摊平会换一份 HTML ⇒ `bind()` 新建编辑器实例
+   * ⇒ `textEditId` 没了。宿主记着"刚才在编辑哪个"，重绑后调这里把 `contentEditable`
+   * 和光标接回去（DOM 已经是摊平版 ⇒ **不会再请求重渲**）。
+   */
+  beginTextEdit(id: string): void;
   /** 退出文字态（宿主也能调：例如点了个"完成"按钮） */
   endTextEdit(): void;
   /**
@@ -480,12 +497,6 @@ export function createVocabEditor(
     },
     canvasWidth: () => doc.canvas.width,
     commit: (label) => commitTyping(textEditId, label),
-    requestRender: () => {
-      // ⚠️ 结构变了（段数变了）⇒ 必须重建节点。编辑器不 emit、不碰 iframe，
-      //    只把"该重渲了"这件事说出去；宿主渲完会调 `attachRoot`，届时 `reattach()`。
-      if (textEditId) opts.onChange?.(textEditId, doc, '改文字结构');
-      else opts.onChange?.(selectedId, doc, '改文字结构');
-    },
     onEscape: () => exitTextEdit(),
     onUndo: () => {
       undo();
@@ -494,6 +505,9 @@ export function createVocabEditor(
       redo();
     },
     onSelectionChange: () => {
+      // ⚠️ 文字的**高度是排版结果**（`height:auto`）⇒ 打着字框就在长 / 缩。
+      //    这里顺手重量一次，否则选中框会停在打字前的高度（也顺带覆盖光标移动）。
+      syncOverlay();
       opts.onSelectionChange?.(buildSelectionSnapshot());
     },
   });
@@ -668,12 +682,47 @@ export function createVocabEditor(
   }
 
   /**
+   * **文字的框 = 测量出来的**（2026-10-17）。
+   *
+   * ⚠️ 文字没有 `rect` 了：高度是**排版结果** ✗ 存不了 ⇒ 只能量 ✓
+   * ⚠️ 用 `offsetHeight`（**不受父级 `transform` / zoom 影响** ✓）而不是
+   *    `getBoundingClientRect()`（它带着缩放 ✗ 还得除掉 zoom ✗）
+   * ⚠️ 量不到（还没进 DOM）⇒ 高度按 0（普通文字）；路径文字读 `frame.h` 输入
+   */
+  function measureText(t: TextNode): LocalBox {
+    // 路径文字（`path` / `curve`）：`frame.h` 是 **viewBox 的长宽比**（输入）⇒ 不用量
+    if (t.frame.h !== undefined) {
+      return { left: t.frame.x, top: t.frame.y, width: t.frame.w, height: t.frame.h };
+    }
+    // ⚠️ **量文字本体 `[data-fit]`，不是外层 `[data-layer]`** ——
+    //    外层只有 `left/top/width`（`height:auto`），它自己不是"排出来的框"；
+    //    `data-fit` 是渲染器给文字本体留的锚点（`text-session` / `fit.ts` 用的是同一个）。
+    //    曾经这里量外层（而且用了 `CSS.escape` —— 编辑器不该碰全局对象）⇒ 框高 0。
+    const el = root?.querySelector?.(`[data-layer="${cssEscape(t.id)}"]`) as HTMLElement | null;
+    const body = el?.querySelector?.('[data-fit]') as HTMLElement | null;
+    const h = body?.offsetHeight ?? el?.offsetHeight ?? 0;
+    return { left: t.frame.x, top: t.frame.y, width: t.frame.w, height: h };
+  }
+
+  /**
+   * **手势快照**（移动/缩放开始前记下的框）。
+   * ⚠️ 文字取 `frame`（它没有 `rect`；高度可能没有 ⇒ 按 0），其余取 `rect` ✓
+   */
+  function rect0Of(k: LeafNode): { x: number; y: number; w: number; h: number } {
+    return k.type === 'text'
+      ? { x: k.frame.x, y: k.frame.y, w: k.frame.w, h: k.frame.h ?? 0 }
+      : { ...k.rect };
+  }
+
+  /**
    * 节点的盒子（**画布 local px**）。
    *
    * ⚠️ `rect` 本身就是画布 px（见 `vocabulary.ts` 的 `Rect`）⇒ **不乘画布**。
    * 曾经这里是 `l.rect.x * doc.canvas.width` —— 那层换算已经消失。
+   * ⚠️ 文字没有 `rect` ⇒ 走 `measureText()`（高度是排版结果，只能量）。
    */
   function boxOf(l: Positioned): LocalBox {
+    if (l.type === 'text') return measureText(l);
     return { left: l.rect.x, top: l.rect.y, width: l.rect.w, height: l.rect.h };
   }
 
@@ -790,7 +839,14 @@ export function createVocabEditor(
           continue;
         }
         // `rect` 就是画布 px ⇒ 命中判定直接用它的四个数
-        const b = l.rect;
+        // ⚠️ 文字没有 `rect` 了 ⇒ **测量**（不然命中区会是一条 0 高的线 ✗ 点不中）
+        const b =
+          l.type === 'text'
+            ? (() => {
+                const m = measureText(l);
+                return { x: m.left, y: m.top, w: m.width, h: m.height };
+              })()
+            : l.rect;
         if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return true;
       }
       return false;
@@ -1210,7 +1266,7 @@ export function createVocabEditor(
    * ⚠️ 为什么要有它：图层上挂着 `opacity` / `blend` / `mask` ⇒ **元素进错层外观会变**，
    *    归属必须由用户显式掌握，不能靠猜（例如"跟随选中元素"就不可预测）。
    */
-  let currentLayerId: string | null = null;
+  let currentLayerId: string | null = opts.currentLayerId ?? null;
 
   /** 最上层的**可见未锁**图层；都没有 ⇒ 退回最上层；空文档 ⇒ null */
   function topmostUsableLayerId(d: DesignDocument): string | null {
@@ -1244,23 +1300,26 @@ export function createVocabEditor(
     return false;
   }
 
-  function select(id: string | null, notify = true) {
+  function select(id: string | null, notify = true): boolean {
     // ⭐ **当前图层是唯一的编辑作用域**（规则见 `currentLayerId` 的注释）：
     //    - 选中的是**图层** ⇒ 顺带把它设为当前图层（点图层行 = 选中 + 设当前）
     //    - 选中的是**元素** ⇒ 只有它在当前图层里才允许；否则**静默忽略**
     //      （用户明确要求静默：图层列表就在旁边，能切 —— 不需要弹提示）
+    //    ⚠️ 返回 `false` = 被门禁挡下。调用方（双击进文字态）**必须**看这个返回值，
+    //       否则会出现"进了文字态、但没有选中框/没有检查器"的半截状态。
     if (id) {
       const asLayer = findLayer(doc, id);
       if (asLayer) {
         currentLayerId = asLayer.id;
       } else if (!inCurrentLayer(id)) {
-        return;
+        return false;
       }
     }
     selectedId = id;
     outline(id);
     syncOverlay();
     if (notify) opts.onSelect?.(id);
+    return true;
   }
 
   // ── 命中 ─────────────────────────────────────────────────────────
@@ -1400,7 +1459,7 @@ export function createVocabEditor(
       if (deco.kind === 'handle') {
         const start = isGrp ? groupContentBox(node, doc.canvas) : boxOf(node);
         const kids = isGrp
-          ? collectLeaves(node).map((k) => ({ node: k, rect0: { ...k.rect } }))
+          ? collectLeaves(node).map((k) => ({ node: k, rect0: rect0Of(k) }))
           : undefined;
         if (isGrp && !kids?.length) return; // 空组，没什么可缩
         session = { kind: 'resize', dir: deco.dir, start, origin: p, kids };
@@ -1438,7 +1497,7 @@ export function createVocabEditor(
     //    而"拖整组"没有这个问题 —— 平移按屏幕方向算，组转了多少都不影响。
     if (onSelected && node && !edgeUnder(p) && !ancestorTransform(id)) {
       const kids =
-        node.type === 'group' ? collectLeaves(node).map((k) => ({ node: k, rect0: { ...k.rect } })) : undefined;
+        node.type === 'group' ? collectLeaves(node).map((k) => ({ node: k, rect0: rect0Of(k) })) : undefined;
       if (node.type === 'group' && !kids?.length) return; // 空组，没什么可搬
       const start = boxOfAny(node);
       session = { kind: 'move', start, origin: p, kids };
@@ -1596,17 +1655,42 @@ export function createVocabEditor(
         const sx = s.start.width ? box.width / s.start.width : 1;
         const sy = s.start.height ? box.height / s.start.height : 1;
         for (const k of kids) {
-          k.node.rect = {
+          const next = {
             x: r4(box.left + (k.rect0.x - s.start.left) * sx),
             y: r4(box.top + (k.rect0.y - s.start.top) * sy),
             w: r4(Math.max(1, k.rect0.w * sx)),
             h: r4(Math.max(1, k.rect0.h * sy)),
           };
+          // ⚠️ 文字写 `frame`（宽度 = 换行宽 ✓），**高度改不了**（排版结果 ✗）；
+          //    路径文字带着 `h`（viewBox 长宽比）⇒ 有就一起改 ✓
+          if (k.node.type === 'text') {
+            k.node.frame = {
+              x: next.x,
+              y: next.y,
+              w: next.w,
+              ...(k.node.frame.h !== undefined ? { h: next.h } : {}),
+            };
+          } else {
+            k.node.rect = next;
+          }
         }
       } else {
         const l = elementById(id);
         // ⚠️ `box` 与 `rect` 现在**同一单位**（画布 px）⇒ 直接搬四个数，没有换算函数
-        if (l && l.type !== 'group') l.rect = { x: box.left, y: box.top, w: box.width, h: box.height };
+        if (l && l.type !== 'group') {
+          if (l.type === 'text') {
+            // ⚠️ 文字：宽度可改（换行宽 ✓），**高度改不了**（它是排版结果 ✗）；
+            //    路径文字带着 `h`（viewBox 的长宽比）⇒ 有就一起改 ✓
+            l.frame = {
+              x: box.left,
+              y: box.top,
+              w: box.width,
+              ...(l.frame.h !== undefined ? { h: box.height } : {}),
+            };
+          } else {
+            l.rect = { x: box.left, y: box.top, w: box.width, h: box.height };
+          }
+        }
       }
       submit(id, s.kind === 'move' ? (s.kids ? '移动组' : '移动') : '缩放');
     } else if (!commit) {
@@ -1753,8 +1837,10 @@ export function createVocabEditor(
     const id = hitLayer(root, p);
     const n = elementById(id);
     if (n && n.type === 'text') {
-      select(n.id);
-      enterTextEdit(n.id);
+      // ⚠️ **选中成功才进文字态**：`select()` 有"当前图层"门禁（不在当前图层的元素
+      //    静默忽略）。以前这里不看返回值 ⇒ 文字态起来了、但 selectedId 没变 ⇒
+      //    没有选中框、检查器空着、iframe 却开始吃指针 —— 看起来就是"编辑没接好"。
+      if (select(n.id)) enterTextEdit(n.id);
     }
   }
 
@@ -1895,6 +1981,11 @@ export function createVocabEditor(
     },
 
     patch(id, path, value) {
+      // ⚠️ 正在就地编辑这个文字节点、却从面板改它的**节点级**字段 ⇒ 宿主会
+      //    `emitElementHtml` 整个换掉那个节点（`pendingPatch`）⇒ `contentEditable`
+      //    跟着没了，但宿主 `editingText` 还是 true ⇒ iframe 吃指针、画布卡死。
+      //    ⇒ 先干净退出文字态（用户再双击就能继续编辑）。片段级样式不走这条路。
+      if (textEditId && textEditId === id) exitTextEdit();
       // ⭐ 先按**元素**找；找不到再看它是不是**图层**（图层有自己的字段：底色 / 旋转 / 不透明度）
       const l = elementById(id);
       if (!l) {
@@ -1927,6 +2018,16 @@ export function createVocabEditor(
       return textEditId;
     },
 
+    beginTextEdit(id) {
+      if (textEditId === id) return;
+      // 重渲后宿主的当前图层已经传进来；这里能选中就说明同层（能画框）
+      select(id);
+      textEditId = id;
+      textSession.enter(id);
+      // ⚠️ `flatten: true` = "这块还是摊平版，别还原成弧线"；宿主会再 applyFlatten
+      //    一次，产出的 HTML 与刚渲的**逐字相同** ⇒ `srcdoc` 不变 ⇒ 不会再次重载。
+      opts.onTextEditChange?.(id, true);
+    },
     endTextEdit: exitTextEdit,
 
     /** ⭐ 撤销：把栈顶命令的 `before` 装回（重渲由宿主的 `onChange` 完成） */

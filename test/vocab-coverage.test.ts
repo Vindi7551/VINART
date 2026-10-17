@@ -83,7 +83,8 @@ describe('词汇 → 编译器 逐字段覆盖对账', () => {
     const text = (id: string) => ({
       id,
       type: 'text' as const,
-      rect: { x: 0, y: 0, w: 100, h: 20 },
+      // ⚠️ 文字只有 `frame`（没有高度 —— 高度是排版结果，见 `TextFrame`）
+      frame: { x: 0, y: 0, w: 100 },
       runs: [{ text: 'x' }],
     });
     const canvas = { width: 900, height: 600 };

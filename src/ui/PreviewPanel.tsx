@@ -29,6 +29,14 @@ interface PreviewPanelProps {
   /** 宿主信号：参数面板/图层清单发起的选中 / 单字段 patch / 撤销 / 重做 */
   hostSignal?: HostSignal | null;
   /**
+   * ⭐ **宿主的当前图层**（图层面板高亮的那一层）。
+   *
+   * 编辑器自己存一份 `currentLayerId`，但**重渲会换新实例**（`bind()`）⇒ 新实例
+   * 默认回到"最上层可用图层"，而面板还高亮着旧的那层 ⇒ 画布上那层的元素被门禁
+   * 静默忽略（"明明选了图层却点不动"）。⇒ 建编辑器时把宿主这一份传进去。
+   */
+  currentLayerId?: string | null;
+  /**
    * ⭐ **形状工具的绘制模式**（工具页 = 形状时为 true）。
    *
    * 打开时在画布上盖一层透明"绘制层"：拖一个框就画出一个形状。
@@ -123,6 +131,7 @@ export function PreviewPanel({
   onLayerSelect,
   onSelectionChange,
   hostSignal,
+  currentLayerId,
   drawMode,
   shapeKind,
   getStack,
@@ -130,6 +139,19 @@ export function PreviewPanel({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   /** ⭐ 面板刚 patch 过哪个节点 —— 等新文档到了（`onChange`）再重发它的 DOM */
   const pendingPatchRef = useRef<string | null>(null);
+  /**
+   * ⭐ **重渲之后要自动回去的那个文字节点**（弧形/路径文字摊平会换一份 HTML）。
+   *
+   * 摊平流程：双击 → `onTextEditChange(id, flatten=true)` → 宿主 emit 一份"摊平版"
+   * → 换 srcdoc → `bind()` **新建编辑器**。新实例没有 `textEditId` ⇒ 必须在这里记着，
+   * 重绑后调 `beginTextEdit(id)` 把文字态接回去；否则就是"改完/摊平后直接没了"。
+   *
+   * ⚠️ 只在**退出文字态**（`onTextEditChange(null)`）时清空；普通重渲（没在编辑）留 null。
+   */
+  const pendingTextEditRef = useRef<string | null>(null);
+  /** 宿主的当前图层 —— `bind()` 是稳定回调，只能从 ref 现取 */
+  const currentLayerRef = useRef<string | null>(null);
+  currentLayerRef.current = currentLayerId ?? null;
   const canvasRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<VocabEditorHandle | null>(null);
@@ -346,6 +368,9 @@ export function PreviewPanel({
     const ed = createVocabEditor(document, wrap, root, {
       doc,
       stack: st,
+      // ⚠️ 重渲会新建实例 ⇒ 必须把**宿主**的当前图层带过去，否则新实例默认回最上层，
+      //    而面板还高亮着旧那层 → 画布上那层的东西被门禁静默忽略。
+      currentLayerId: currentLayerRef.current ?? undefined,
       onSelect: (id) => {
         if (id) cbRef.current.onLayerSelect?.(id);
       },
@@ -417,6 +442,10 @@ export function PreviewPanel({
        * 其余全在编辑器里：`contentEditable`、`beforeinput`、光标/选区、就地补 DOM。
        */
       onTextEditChange: (id, flatten) => {
+        // ⭐ **记着"重渲后要接回哪个文字态"**（只对摊平重渲有意义）。
+        //    ⚠️ 别在 `beginTextEdit` 的 `(id, false)` 回调里清 —— 退出（id=null）才清。
+        if (!id) pendingTextEditRef.current = null;
+        else if (flatten) pendingTextEditRef.current = id;
         setEditingText(!!id);
         if (flatten) {
           // 进：摊平重渲；出：还原回弧线。两边都走同一条路。
@@ -432,6 +461,13 @@ export function PreviewPanel({
       onSelectionChange: (snap) => cbRef.current.onSelectionChange?.(snap),
     });
     editorRef.current = ed;
+
+    // ⭐ **重绑之后把文字态接回去**（摊平重渲换了 HTML ⇒ 这是新编辑器实例）。
+    //    ⚠️ 没有 pending 就必须把 editingText 归 false：不然 iframe 一直吃指针，
+    //       父侧编辑器收不到双击 = 整个画布"点不动/进不了编辑态"（实测踩过）。
+    const pendingEdit = pendingTextEditRef.current;
+    if (pendingEdit) ed.beginTextEdit(pendingEdit);
+    else setEditingText(false);
   }, []);
 
   // 换版式（srcdoc 变）→ 拆掉旧绑定；新绑定交给 onLoad
@@ -614,7 +650,8 @@ export function PreviewPanel({
         ed.addElement({
           id: `t${Date.now()}`,
           type: 'text',
-          rect: { x: 270, y: 192, w: 360, h: 72 },
+          // ⚠️ 文字只有 `frame`（x/y/换行宽），**没有高度**（高度是排版结果）
+          frame: { x: 270, y: 192, w: 360 },
           runs: [{ text: '双击编辑文字' }],
           fontSizePx: 36,
           fill: '#2B2B2B',

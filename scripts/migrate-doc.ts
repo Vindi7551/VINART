@@ -53,6 +53,30 @@ function renameChildren(n: Record<string, unknown>): void {
   }
 }
 
+/**
+ * ⭐ **文字：`rect` → `frame`**（2026-10-17）。
+ *
+ * - **丢掉 `h`** —— 文字的高度是**排版结果** ✗ 存了必然漂（见 `TextFrame` 的注释）
+ * - **路径文字（`path` / `curve`）保留 `h`** —— 它是 SVG `viewBox` 的长宽比，是**输入** ✓
+ *
+ * ⚠️ 这条迁移**与层级结构无关** ⇒ 必须跑在 `alreadyNew` 的提前 `continue` **之前**
+ *    （现有文档全是新结构，否则永远跑不到 ✗）
+ */
+function migrateText(n: unknown): void {
+  if (!n || typeof n !== 'object') return;
+  if (Array.isArray(n)) {
+    for (const c of n) migrateText(c);
+    return;
+  }
+  const o = n as Record<string, unknown> & { type?: unknown; rect?: Record<string, number>; path?: unknown; curve?: unknown };
+  if (o.type === 'text' && o.rect) {
+    const { x, y, w, h } = o.rect;
+    o.frame = { x, y, w, ...(o.path || o.curve ? { h } : {}) };
+    delete o.rect;
+  }
+  for (const k of Object.keys(o)) migrateText(o[k]);
+}
+
 let changed = 0;
 for (const p of paths) {
   const raw = JSON.parse(readFileSync(p, 'utf8')) as {
@@ -61,8 +85,26 @@ for (const p of paths) {
   };
   const first = raw.layers[0] as { type?: unknown; elements?: unknown } | undefined;
   const alreadyNew = !!first && first.type === undefined && Array.isArray(first.elements);
+
+  // ⭐ **文字迁移与层级结构无关** ⇒ 先跑（见 `migrateText` 的注释）
+  const beforeText = JSON.stringify(raw);
+  migrateText(raw);
+  const textChanged = beforeText !== JSON.stringify(raw);
+
+  if (alreadyNew && !textChanged) {
+    console.log(`  跳过（已经是新结构、文字也已迁移）：${p}`);
+    continue;
+  }
   if (alreadyNew) {
-    console.log(`  跳过（已经是新结构）：${p}`);
+    // 只落了文字迁移 ⇒ **不要再 `wrapIntoLayers`**（那会把图层拍平 ✗）
+    console.log(`  ${p}`);
+    console.log('    只做文字迁移：rect → frame（路径文字保留 h）');
+    if (write) {
+      copyFileSync(p, `${p}.bak`);
+      writeFileSync(p, `${JSON.stringify(raw, null, 2)}\n`, 'utf8');
+      console.log(`    已写入（备份：${p}.bak）`);
+    }
+    changed += 1;
     continue;
   }
 

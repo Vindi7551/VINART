@@ -1298,6 +1298,9 @@ export function App() {
           onLayerSelect={handleLayerSelect}
           onSelectionChange={setSelection}
           hostSignal={hostSignal}
+          // ⭐ 面板高亮的那层 = 编辑器的当前图层。**必须传**：iframe 重渲会新建编辑器，
+          //    不带过去的话新实例默认回最上层，而面板还高亮着旧那层（"选了图层点不动"）。
+          currentLayerId={effectiveCurrentLayer}
           // ⭐ 形状工具 = **绘制模式**（工具即模式，PS 同款）：画布上盖一层绘制层，
           //    拖一个框就画出来；这一层同时挡住"选元素/拖元素"（故意的，避免误触）。
           // ⚠️ **当前图层被锁定 ⇒ 不挂载绘制层**：变成"画布上没有十字光标、拖不动"，

@@ -422,6 +422,26 @@ function runCss(run: TextRun, node: TextNode, fit: number): string {
 }
 
 /**
+ * **一段文字的 `runs` → 内层 `<span data-run>` HTML** —— 就地补 DOM 用的**同一份**拼法。
+ *
+ * ⭐ 编辑器的"双写"缺的这一半：改片段样式时，文档里的 `runs` 变了，但页面上的
+ * `<span>` 还是旧的 inline style ⇒ 要么画布不跟（同段数），要么整页重渲（切段）。
+ * 把这段抽出来，`text-session` 就能**直接用同一套 `runCss` 重写 `.vt` 的 innerHTML**，
+ * 不需要宿主 emit 整份文档。
+ *
+ * ⚠️ 必须与 `emitText` 里那一行**逐字一致**（`data-run` / `runCss` / `escText` / `<br>`），
+ * 否则"就地写完"和"重渲"会得到两种 DOM（编辑器测量 / 选区换算会跟着漂）。
+ */
+export function emitRunsHtml(node: TextNode, fit = 1): string {
+  return node.runs
+    .map(
+      (r, i) =>
+        `<span data-run="${i}" style="${runCss(r, node, fit)}">${escText(r.text).split('\n').join('<br>')}</span>`,
+    )
+    .join('');
+}
+
+/**
  * 文字 → **内层**那一块「文字本体」。
  *
  * 外层容器（`rect` / 变换 / 效果）由主入口统一生成，这里只出内层。
@@ -451,9 +471,7 @@ function emitText(
   }
   if (node.baselineShift) note('baselineShift', '基线的基准词汇里没写，这里按"字号倍数（em）"算');
 
-  const runs = node.runs.map((r, i) => {
-    return `<span data-run="${i}" style="${runCss(r, node, fit)}">${escText(r.text).split('\n').join('<br>')}</span>`;
-  });
+  const runs = emitRunsHtml(node, fit);
 
   // 整块渐变填字（片段级的那条在 `runCss` 里）
   const gradFill = node.fill !== undefined && (typeof node.fill !== 'string' || !isPlainColor(node.fill));
@@ -483,12 +501,13 @@ function emitText(
     );
   }
 
+  // ⚠️ **文字本体必须在文档流里**（`position:absolute` 不行 —— 那会让外层容器
+  //    只有一个"绝对定位的子元素" ⇒ `height:auto` 量出来是 **0** ⇒ 选中框塌成一条线）。
+  //    0 高度曾经靠 `top:50%;translateY(-50%)` 把文字居中在**框的顶部**上，
+  //    于是文字一半跑到框上面去；现在框高由文字撑开、文字从 `frame.y` 往下排。
   const inner = css([
-    'position:absolute',
-    'left:0',
-    'right:0',
-    'top:50%',
-    'transform:translateY(-50%)',
+    'position:relative',
+    'width:100%',
     node.align && `text-align:${node.align}`,
     node.alignLast && `text-align-last:${node.alignLast}`,
     node.writingMode && `writing-mode:${node.writingMode === 'vertical' ? 'vertical-rl' : 'horizontal-tb'}`,
@@ -499,6 +518,10 @@ function emitText(
     node.stretch !== undefined && `font-stretch:${node.stretch * 100}%`,
     `font-size:${textFontSize(node.fontSizePx, fit)}px`,
     `line-height:${node.lineHeight ?? 1.15}`,
+    // ⚠️ **空文字也要占一行**：`runs` 里的文字被删光后 `span` 是空的 ⇒ 没有行盒
+    //    ⇒ 外层 `height:auto` 量出 0 ⇒ 选中框又成一条线、而且那个节点**再也点不中**。
+    //    `em` 取的是这一层的字号，与 `line-height` 同一口径 ⇒ 一行的高度。
+    `min-height:${node.lineHeight ?? 1.15}em`,
     node.letterSpacing !== undefined && `letter-spacing:${node.letterSpacing}em`,
     node.wordSpacing !== undefined && `word-spacing:${node.wordSpacing}em`,
     node.wrap === 'normal' ? 'white-space:normal' : 'white-space:nowrap',
@@ -512,7 +535,7 @@ function emitText(
     strokeInline,
   ]);
 
-  return `<div class="${cls}" data-fit="${escAttr(node.id)}" style="${inner}">${runs.join('')}</div>`;
+  return `<div class="${cls}" data-fit="${escAttr(node.id)}" style="${inner}">${runs}</div>`;
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -598,7 +621,9 @@ function emitPathText(
   // ⚠️ 这是 SVG 的规矩，不是 bug：文字比路径长时，超出那段**根本不渲染**
   note('path', '文字比路径长时，超出路径的那部分**不会显示**（SVG 的规矩）—— 路径给长一点、或字号小一点');
 
-  const b = boxOf(node.rect);
+  // ⚠️ 路径文字必须有 `h`（校验保证）—— 它是 viewBox 的长宽比，**不是排版结果**，
+  //    所以 `frame.h` 对它来说是**输入**（普通文字才没有它）。
+  const b = { width: node.frame.w, height: node.frame.h ?? 0 };
   const W = Math.max(1, b.width);
   const H = Math.max(1, b.height);
   const d = node.path ?? curveToPath(node.curve ?? 0);
@@ -757,7 +782,12 @@ export function contentBoxOf(els: readonly ElementNode[]): Box | null {
         walk(l.elements);
         continue;
       }
-      const b = boxOf(l.rect);
+      // ⚠️ 文字没有 `rect` 了 ⇒ 按 `frame` 计入；**高度未知**（排版结果）⇒ 按 0 算
+      //    ⇒ 含文字的**组框会偏小**（少算文字高度）✓ 已知缺陷，见 `TextFrame` 的注释
+      const b =
+        l.type === 'text'
+          ? { left: l.frame.x, top: l.frame.y, width: l.frame.w, height: l.frame.h ?? 0 }
+          : boxOf(l.rect);
       minX = Math.min(minX, b.left);
       minY = Math.min(minY, b.top);
       maxX = Math.max(maxX, b.left + b.width);
@@ -1168,8 +1198,16 @@ function emitElement(node: ElementNode, ctx: EmitCtx): string {
   // 组：本身不画东西，只有容器 + 子元素
   if (node.type === 'group') return emitGroup(node, ctx);
 
-  const b = boxOf(node.rect);
   const isText = node.type === 'text';
+  /**
+   * 外框。
+   * ⚠️ **文字没有 `rect` 了**（2026-10-17）：它的高度是**排版结果** ✗
+   *    ⇒ 普通文字只写 `left/top/width`（`height:auto`，框自动贴合 ✓）
+   *    ⇒ **路径文字**例外：它带着 `frame.h`（viewBox 的长宽比 ✗ 是输入）⇒ 照旧写死
+   */
+  const b = isText
+    ? { left: node.frame.x, top: node.frame.y, width: node.frame.w, height: node.frame.h ?? 0 }
+    : boxOf(node.rect);
   // ⚠️ **文字不许被 `transform` 缩放** —— 大小归 `fontSizePx`、形状归字体文件。
   //    丢掉它（产物里不再压扁）+ 报出来（进模型的反馈回路）。见 `effectiveTransform`。
   const nodeTransform = effectiveTransform(node);
@@ -1221,7 +1259,10 @@ function emitElement(node: ElementNode, ctx: EmitCtx): string {
   if (shadowDecl.startsWith('filter:')) visual = visual.filter((x) => !x.startsWith('filter:'));
   const style = css([
     'position:absolute',
-    boxCss(b),
+    // ⭐ 普通文字**不写 height** ⇒ `auto` ⇒ 框贴着字 ✓（路径文字带着 frame.h，照旧）
+    isText && node.frame.h === undefined
+      ? `left:${b.left}px;top:${b.top}px;width:${b.width}px`
+      : boxCss(b),
     radiusCss(isShape ? undefined : node.radius, b),
     fill,
     fillArr,
@@ -1376,7 +1417,7 @@ html,body{margin:0;padding:0;background:transparent}
 *,*::before,*::after{box-sizing:border-box}
 body{font-family:Georgia,"Times New Roman",serif}
 .vc{position:relative;overflow:hidden}
-.vt{position:absolute}
+.vt{position:relative}
 .vg{pointer-events:none}
 .vg .vl{pointer-events:auto}
 .vg .vg .vl{pointer-events:auto}

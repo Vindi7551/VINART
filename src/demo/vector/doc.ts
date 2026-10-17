@@ -70,7 +70,7 @@ export const DEMO_DOC: DesignDocument = {
         {
           id: 'title',
           type: 'text',
-          rect: { x: 54, y: 516, w: 792, h: 60 },
+          frame: { x: 54, y: 516, w: 792 },
           runs: [{ text: 'Akazienholz Schneidebrett' }],
           fontSizePx: 50,
           fill: '#2B2B2B',
@@ -82,7 +82,8 @@ export const DEMO_DOC: DesignDocument = {
         {
           id: 'arc',
           type: 'text',
-          rect: { x: 36, y: 12, w: 450, h: 54 },
+          // ⚠️ 路径文字（`curve`）**必须有 `h`** —— viewBox 的长宽比是输入，不是排版结果
+          frame: { x: 36, y: 12, w: 450, h: 54 },
           runs: [{ text: 'handgefertigt · mit Liebe' }],
           fontSizePx: 29,
           fill: '#B8722F',

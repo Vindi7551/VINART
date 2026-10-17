@@ -34,6 +34,7 @@
  */
 
 import type { TextNode, TextRun } from '../document/vocabulary';
+import { emitRunsHtml } from '../render/vocabulary/emit';
 import { selPatchOf } from './inspector';
 import { deleteRange as deleteRunRange, insertText as insertRunText, replaceRunText } from './text-edit';
 import { applyToRange, pointToAbs, rangeFromAbs, sliceText, type RunPatch, type RunRange } from './text-runs';
@@ -66,8 +67,6 @@ export interface TextHost {
   canvasWidth(): number;
   /** 数据改完之后的落地（`vocab-editor` 传自己的 `onChange` / `onTyping`） */
   commit(label: string): void;
-  /** 结构变了要宿主重渲（编辑器不 emit、不碰 iframe） */
-  requestRender(): void;
   /** Esc（退文字态）与文字态里的撤销 / 重做 */
   onEscape(): void;
   onUndo(): void;
@@ -155,6 +154,15 @@ export function createTextSession(host: TextHost): TextSession {
    * （面板上是输入框，重画会把用户正在输的内容打断）。
    */
   let lastSelKey = '∅';
+  /**
+   * **一次编辑收尾期间压掉 `selectionchange`**。
+   *
+   * 重建 spans / `focus()` / 面板输入框拿焦点都会产生一串 selectionchange，
+   * 读到的是浏览器**临时折起来**的选区 ⇒ `trackSel()` 会把 `selAbs`/`selRange`
+   * 冲成折叠光标（实测：改完字号，选中的 3 个字就没了）。
+   * ⇒ 压到**用户下一次真的按下鼠标 / 敲键**再放行（定时器挡不住那一两个宏任务的延迟）。
+   */
+  let suppressSel = false;
   function notifySelection(): void {
     const key = selAbs ? `${selAbs.start}:${selAbs.end}:${selRange ? 'r' : 'c'}` : '∅';
     if (key === lastSelKey) return;
@@ -256,40 +264,96 @@ export function createTextSession(host: TextHost): TextSession {
   // ══════════════════════════════════════════════════════════════════
 
   /**
-   * 把某层的文字**就地**补进 DOM（不动节点结构 ⇒ 光标不闪）。
+   * 把某层的文字**就地**补进 DOM。
    *
-   * ⚠️ 只**按位置**对齐已存在的 `data-run` span：片段数变了就不是"补文字"，
-   * 必须重渲（多出来的段没有 span 可补）。
+   * 两条路：
+   * - `rebuild=false`：段数没变、只是**文字**变了 ⇒ 按位置补每个 `<span>` 的 innerHTML
+   *   （快，而且不会打断浏览器的选区）。
+   * - `rebuild=true`：**段数 / 片段样式变了** ⇒ 用 `emitRunsHtml()` 把 `.vt` 的
+   *   innerHTML 整个重写一遍（与渲染器**同一套 `runCss`**）⇒ 不需要宿主 emit 整份文档、
+   *   更不需要换 `srcdoc` 重载 iframe ⇒ `contentEditable` 和文字态都还在。
+   *
+   * ⚠️ 这段以前缺了：改片段样式只改 doc、不写 DOM ⇒ 整段改样式时画布不跟；
+   *    切段时又走"宿主重渲" ⇒ 编辑器新建实例、文字态直接没了。
    */
-  function patchTextDom(layerId: string, runs: readonly { text: string }[]): void {
+  function patchTextDom(layerId: string, n: TextNode, rebuild: boolean): void {
+    const body = textBody(layerId);
+    if (!body) return;
+    if (rebuild) {
+      body.innerHTML = emitRunsHtml(n);
+      return;
+    }
     const spans = sub().querySelectorAll(`[data-layer="${attrEsc(layerId)}"] [data-run]`);
-    for (let i = 0; i < spans.length && i < runs.length; i++) {
+    for (let i = 0; i < spans.length && i < n.runs.length; i++) {
       const el = spans[i] as HTMLElement;
-      const html = esc(runs[i].text).split('\n').join('<br>');
-      if (el.innerHTML !== html) el.innerHTML = html;
+      const text = n.runs[i].text;
+      const html = esc(text).split('\n').join('<br>');
+      if (el.innerHTML === html) continue;
+      // ⚠️ **单行文字改 `textNode.nodeValue`，不要 `innerHTML =`**。
+      //    换 innerHTML 会把光标所在的那个文本节点整个换掉 ⇒ 紧接着的
+      //    `beforeinput` 里浏览器把焦点丢到 BODY，**第二个字就打不进去了**（实测）。
+      //    `nodeValue` 是就地改内容，文本节点和焦点都还活着。
+      const only = el.childNodes.length === 1 ? el.firstChild : null;
+      if (!text.includes('\n') && only && only.nodeType === 3) {
+        (only as CharacterData).nodeValue = text;
+      } else {
+        el.innerHTML = html;
+      }
     }
   }
 
   /**
-   * 一次文字编辑之后的收尾：**段数没变就地补 DOM（快），变了就重渲（结构变了，必须重建节点）**。
+   * 一次文字编辑之后的收尾：**改 doc + 就地补 DOM，永远不请求宿主重渲**。
    *
    * 为什么不能每敲一个字都重渲：重渲 = emit + 换掉整个子文档 ⇒ 光标没了、
-   * `contentEditable` 没了、布局重排。打字是高频操作，这么干会光标闪、页面卡。
+   * `contentEditable` 没了、编辑器还是**新实例**（文字态/当前图层全归零）。
+   * 打字是高频操作，这么干会光标闪、页面卡，而且一改样式就"整个文字态消失"。
    */
-  function afterEdit(layerId: string, label: string, forceRender = false): void {
+  function afterEdit(layerId: string, label: string, rebuild = false, refocus = true): void {
     const n = node();
     if (!n) return;
-    const structureChanged = forceRender || n.runs.length !== lastRunCount;
+    // ⚠️ 先**抄一份**绝对选区：重建 spans / 面板拿焦点都会让浏览器把 DOM 选区
+    //    折到某个 offset 上，`selectionchange` 又会把它写回 `selAbs` ⇒ 选区被吃。
+    const keepAbs = selAbs ? { ...selAbs } : null;
+    // 段数变了（切段 / 合并）必须重写 spans；只是文字变了就按位置补
+    const needRebuild = rebuild || n.runs.length !== lastRunCount;
     lastRunCount = n.runs.length;
 
+    // ⚠️ **不立刻放行**：重建 spans / 面板拿焦点产生的 selectionchange 是
+    //    "下一两个宏任务"才到的，定时器挡不住。这里一直压到**用户下一次真的
+    //    按下鼠标 / 敲键**（见 `onSubPointerDown` / `onSubKeyDown`）——
+    //    期间 `selAbs` / `selRange` 才是真源，面板上的"选中的字"不会消失。
+    suppressSel = true;
     host.commit(label);
-    if (structureChanged) {
-      // 宿主存 + 重渲；重渲完由编辑器调 `reattach()` 把可编辑态与光标重新摆好
-      host.requestRender();
-      return;
+    patchTextDom(layerId, n, needRebuild);
+    if (keepAbs) {
+      selAbs = { ...keepAbs };
+      const rr = keepAbs.start === keepAbs.end ? null : rangeFromAbs(n.runs, keepAbs.start, keepAbs.end);
+      selRange = rr;
     }
-    patchTextDom(layerId, n.runs);
     restoreCaret();
+    if (keepAbs) selAbs = { ...keepAbs };
+
+    /**
+     * ⚠️ **改完 DOM 要补一次焦点**。
+     *
+     * Chromium 在 `beforeinput` 里被我们改了光标所在文本节点之后，会在事件收尾时
+     * 把 contentEditable 的焦点丢到 BODY（实测 `+0ms` 就没了）——于是**第二个字
+     * 就再也打不进去**（第一次打字看起来正常，其实已经失焦）。
+     * 同步 `focus()` 没用（丢焦点发生在这之后）⇒ 挪到下一个任务里补；`hasFocus()`
+     * 为 false 说明用户已经点到面板输入框了，**别抢**。
+     */
+    if (refocus) {
+      setTimeout(() => {
+        if (id !== layerId) return;
+        const w = sub().defaultView as (Window & { document?: Document }) | null;
+        if (w?.document && typeof w.document.hasFocus === 'function' && !w.document.hasFocus()) return;
+        const el = textBody(layerId);
+        if (!el) return;
+        el.focus();
+        restoreCaret();
+      }, 0);
+    }
   }
 
   /** 在光标处插一段文字（**有选区就先替换掉它** —— "打字即替换"） */
@@ -425,6 +489,7 @@ export function createTextSession(host: TextHost): TextSession {
    * 会把真源（文档）搞乱 —— 它对我们那份 `runs` 一无所知。
    */
   const onSubKeyDown: EventListener = (e) => {
+    suppressSel = false; // 用户真的在敲键 ⇒ 放开 selectionchange 记账
     const ke = e as KeyboardEvent;
     if (ke.key === 'Escape') {
       host.onEscape();
@@ -438,7 +503,12 @@ export function createTextSession(host: TextHost): TextSession {
   };
 
   const onSelMaybeChanged: EventListener = () => {
-    if (id) trackSel();
+    if (id && !suppressSel) trackSel();
+  };
+
+  /** 用户下一次按下鼠标 ⇒ 放开"程序化重建期间"的选区冻结 */
+  const onSubPointerDown: EventListener = () => {
+    suppressSel = false;
   };
 
   const SUB_EVENTS: Array<[string, EventListener]> = [
@@ -448,6 +518,7 @@ export function createTextSession(host: TextHost): TextSession {
     ['cut', onCut],
     ['drop', onDrop],
     ['keydown', onSubKeyDown],
+    ['pointerdown', onSubPointerDown],
     ['keyup', onSelMaybeChanged],
     ['mouseup', onSelMaybeChanged],
     ['selectionchange', onSelMaybeChanged],
@@ -489,6 +560,7 @@ export function createTextSession(host: TextHost): TextSession {
 
     enter(layerId) {
       id = layerId;
+      suppressSel = false;
       const n = node();
       lastRunCount = n ? n.runs.length : 0;
       // 光标先落在**末尾**；随后用户点哪就在哪（那是浏览器在 contentEditable 里的活）
@@ -500,12 +572,16 @@ export function createTextSession(host: TextHost): TextSession {
       selRange = null;
       bind();
       setEditable(layerId);
+      // ⚠️ **必须把选区写回 DOM**：`focus()` 会把光标丢在 **0 号位**，而 `selAbs`
+      //    记的是末尾 ⇒ 不写回的话，第一次打字会**插到最前面**（实测）。
+      restoreCaret();
       notifySelection();
     },
 
     exit() {
       setEditable(null);
       unbind();
+      suppressSel = false;
       id = null;
       selAbs = null;
       selRange = null;
@@ -533,15 +609,14 @@ export function createTextSession(host: TextHost): TextSession {
       if (!id || !n || !selRange) return false;
       const patch = selPatchOf(path, value, { width: host.canvasWidth() });
       if (!patch) return false;
-      const before = n.runs.length;
       n.runs = applyToRange(n.runs, selRange, mergeDecoration(n, selRange, patch));
-      afterEdit(id, '改选区样式', n.runs.length !== before);
+      // ⚠️ **样式一定变了**（哪怕段数没变）⇒ 必须重建 spans 的 inline style。
+      //    以前传的是"段数变没变" ⇒ 整段选中时 DOM 不更新；切段时又走宿主重渲。
+      afterEdit(id, '改选区样式', true, false);
       // 值变了 ⇒ 面板上的显示要跟着走（指纹里带了选区，但样式变了值也变，
       // 所以这里强制报一次：把指纹清掉再报）
       lastSelKey = '∅';
       notifySelection();
-      // 段数不变时 `afterEdit` 里的 `restoreCaret()` 已把选区画回去；
-      // 变了的走重渲 + `reattach()`
       return true;
     },
 

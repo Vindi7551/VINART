@@ -492,8 +492,38 @@ export interface TextRun {
 }
 
 /** 文字 */
-export interface TextNode extends ElementBase {
+/**
+ * ⭐ **文字的位置框 —— 没有高度**（2026-10-17 用户定）。
+ *
+ * 文字只有两个"输入"：**放哪儿** 和 **多宽换行**（`w`；`wrap !== 'normal'` 时无效）。
+ * **高度是排版结果** ✗ 不是你能决定的 ⇒ 存了必然漂
+ * （发生过：`tx-full` 存 `h:208`，实际只有 ~30，于是选中框比字大一圈 ✗）。
+ *
+ * ⇒ 高度由 `emit` 的 `height:auto` + 编辑器**测量 DOM** 得到 ⇒ 框永远贴着字 ✓
+ * ⇒ `fit.ts`（"缩字号直到装进框"）的前提就此消失，已删除 ✓
+ */
+export interface TextFrame {
+  x: number;
+  y: number;
+  /** 换行宽度（`wrap === 'normal'` 才用；否则单行不换行） */
+  w: number;
+  /**
+   * ⚠️ **只有"路径文字"（`path` / `curve`）才需要它，普通文字不许有**。
+   *
+   * 对路径文字来说 `h` **不是排版结果**，而是 **SVG `viewBox` 的长宽比的一半** ——
+   * `viewBox="0 0 w h"` 而 `path.d` 是 **0–1 归一化**的 ⇒ `w`/`h` 一起决定了
+   * **曲线被拉伸成什么形状** ✗ 删掉它曲线就会变形 ✗
+   *
+   * ⇒ 校验规则：`path` 或 `curve` 存在 ⇒ 必须有 `h`；否则必须没有 ✓
+   */
+  h?: number;
+}
+
+export interface TextNode extends Omit<ElementBase, 'rect'> {
   type: 'text';
+
+  /** ⭐ 位置 + 换行宽度（**没有高度**，见 `TextFrame`） */
+  frame: TextFrame;
 
   /**
    * 文字内容 —— **按片段排，至少一段**。
