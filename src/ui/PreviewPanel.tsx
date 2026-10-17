@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { createVocabEditor, type VocabEditorHandle } from '../editor/vocab-editor';
 import type { SelectionSnapshot } from '../editor/inspector';
-import { emitDocument, emitElementHtml, emitLayerHtml } from '../render/vocabulary/emit';
+import { emitElementHtml, emitLayerHtml } from '../render/vocabulary/emit';
 import { findElement, findLayer, type ElementNode, type Rect } from '../document/vocabulary';
 import { createEditorStack, type EditorStack } from '../editor/editor-stack';
 import type { PreviewData, HostSignal } from './types';
@@ -114,14 +114,6 @@ function makeShapeNode(
 const DEFAULT_WIDTH = 800;
 const DEFAULT_HEIGHT = 1200;
 
-/**
- * 编辑器在"文字结构变了（段数变了）"时用的 label（见 `text-session.ts` 的 `afterEdit`）。
- *
- * ⚠️ 这个字符串是**约定**：编辑器说"该重建节点了"，宿主就得重渲。
- *    改一边不改另一边 ⇒ 打字切开 runs 之后画面与文档脱节。
- */
-const STRUCT_LABEL = '改文字结构';
-
 export function PreviewPanel({
   previewUrl,
   layoutData,
@@ -220,61 +212,45 @@ export function PreviewPanel({
    * ⭐ **正在编辑「沿路径排字」的节点**（`curve` / `path`）。
    *
    * 那种文字的产物是 SVG `<textPath>` —— 页面上**没有 `.vt`**、也挂不上
-   * `contentEditable`（SVG 元素没有这个能力，实测）。⇒ 编辑期间必须把它
-   * **降级成普通文字**再送去渲染，退出后回到弧线。
+   * `contentEditable`（SVG 元素没有这个能力，实测）。⇒ 编辑期间把它**只在这一个
+   * 节点的 DOM 上**降级成普通文字，退出时换回弧线。
    *
-   * 两个 ref 分工不同，别混：
-   * - `renderDocRef` = 已经**送进渲染器**的那一份（原始，或摊平后的副本）
-   * - `flatDocRef`   = 摊平后的那份（退出时用它判断"要不要还原"）
+   * ⚠️ **不是文档修改、不进撤销栈**：`swapNodeDom` 只换 DOM；文档里的 `path`/`curve`
+   *    一个字节都不动（"平铺版"写回文档的话，退出就再也回不去弧线了）。
+   *    用户打的字仍然走 `onTyping` → `commitTyping`，那才是撤销步。
    */
-  const renderDocRef = useRef<PreviewData['doc'] | null>(null);
-  const flatDocRef = useRef<PreviewData['doc'] | null>(null);
+  const flatDomIdRef = useRef<string | null>(null);
 
   /**
-   * 送进渲染器的那一份文档。
+   * 把**某一个节点**换成"摊平版 / 原版"的 DOM（就地 `insertAdjacentHTML + remove`）。
    *
-   * ⚠️ 关键是**深拷贝**：降级只发生在"渲染输入"上，文档本身**一个字节都不改** ——
-   * 否则"平铺版"会被写进文档，退出编辑就再也回不去弧线了（这条是 demo 踩实的）。
+   * - `flat=true`：深拷贝节点、删掉 `path`/`curve`（保留 `frame.h`，沿用原来的摊平口径），
+   *   用 `emitElementHtml` 生成**摊平版**；
+   * - `flat=false`：从**当前文档**（已经包含用户刚打的字）重新 emit 原版（弧线）。
+   *
+   * ⚠️ 只换节点、不换 `srcdoc` ⇒ 不重载 iframe、编辑器实例/文字态/当前图层都不丢。
+   * ⚠️ 不进撤销栈：这里没有 `submit` / `commit`。
    */
-  const docForRender = useCallback((doc: PreviewData['doc'], flattenId: string | null): PreviewData['doc'] => {
-    if (!flattenId) return doc;
-    // ⚠️ 找的是**元素**（含嵌套）：`doc.layers` 现在是图层，元素在 `Layer.elements` 里
-    const node = findElement(doc, flattenId);
-    if (!node || node.type !== 'text' || (!node.path && !node.curve)) return doc;
-    const copy = structuredClone(doc) as PreviewData['doc'];
-    const flat = findElement(copy, flattenId);
-    if (flat && flat.type === 'text') {
-      delete flat.path;
-      delete flat.curve;
+  const swapNodeDom = useCallback((id: string, flat: boolean) => {
+    const realm = iframeRef.current?.contentDocument;
+    const doc = lastEmitted.current ?? docRef.current;
+    if (!realm || !doc) return;
+    const node = findElement(doc, id);
+    const old = realm.querySelector(`[data-layer="${CSS.escape(id)}"]`);
+    if (!node || !old) return;
+    let emitNode: ElementNode = node;
+    if (flat && node.type === 'text' && (node.path || node.curve)) {
+      const copy = structuredClone(node);
+      delete copy.path;
+      delete copy.curve;
+      emitNode = copy;
     }
-    return copy;
+    const html = emitElementHtml(emitNode, doc.canvas, { assets: assetRef.current }).html;
+    old.insertAdjacentHTML('beforebegin', html);
+    old.remove();
+    // 新节点 = 新 DOM：描边 / 选中框按新的量一次（文字的高度是排版结果）
+    editorRef.current?.refreshDom();
   }, []);
-
-  /**
-   * 摊平 / 还原：重算 HTML 换掉 iframe 内容（编辑器会在 onLoad 之后重新接管）。
-   *
-   * ⚠️ **依赖数组必须为空**：`bind()` 的依赖也是空的（它只在 srcdoc 变时重挂），
-   *    而 `bind` 里要调它。若这里依赖 `layoutData`，`bind` 抓到的就是**旧的**
-   *    `applyFlatten`（旧 layoutData）⇒ 摊平时用的文档是陈旧的。
-   *    所以一律从 ref 现取（`docRef` / `assetRef`），不闭包任何 props。
-   */
-  const applyFlatten = useCallback(
-    (flattenId: string | null) => {
-      // ⚠️ 优先用"编辑器刚交出来的那一份"：`onChange` 里 App 的 setState 还没冲刷，
-      //    `docRef.current` 可能还是上一版（摊平用的文档就旧了）。
-      const doc = lastEmitted.current ?? docRef.current;
-      const name = nameRef.current;
-      if (!doc || !name) return;
-      const next = docForRender(doc, flattenId);
-      flatDocRef.current = next === doc ? null : next;
-      renderDocRef.current = next;
-      // ⚠️ 只换 `base.html`（**原始** HTML）：`<base>` 由 `srcdoc` 那一步统一插，
-      //    这里再插一次会变成两个 base。
-      const { html } = emitDocument(next, { assets: assetRef.current });
-      setBase({ name, html });
-    },
-    [docForRender],
-  );
 
   /**
    * ⚠️ 这里**只**插一个 `<base>` 标签，不再注入任何 `<script>`。
@@ -427,10 +403,6 @@ export function PreviewPanel({
         //    于是只有"显隐/不透明度"能生效、"顺序/删除"不能 —— 就是这个原因。
         //    收方 `handleLayerChanged` 本来就忽略这个 id（只取 doc + label）⇒ 安全。
         cbRef.current.onLayerChange?.(id ?? '', next, label);
-        // ⚠️ 文字结构变了（段数变了）⇒ 编辑器说"该重建节点了"。
-        //    重渲时**必须沿用摊平状态**：正在编辑弧形文字的话，
-        //    重渲出来的还得是摊平版（不然 `.vt` 又没了、光标进不去）。
-        if (label === STRUCT_LABEL) applyFlatten(editorRef.current?.textEditId ?? null);
       },
       onTyping: (id, next) => {
         lastEmitted.current = next;
@@ -440,27 +412,31 @@ export function PreviewPanel({
        * ⭐ 进 / 出文字态。宿主在这里做**两件**自己才知道的事：
        *
        * ① 放开 iframe 的 `pointer-events` —— 让它真的能收到鼠标（拖选 / 点光标）。
-       *    这是编辑器按"不引用全局网页对象"的不变量**碰不到**的：iframe 是宿主的 DOM。
        * ② `flatten` = 这块文字是「沿路径排字」（`curve` / `path`）⇒ 它的产物是 SVG
-       *    `<textPath>`，**没有 `.vt`、挂不上 `contentEditable`** ⇒ 必须降级成普通文字
-       *    再重渲一份（**只改送进渲染器的那一份，文档不动**），退出时还原回弧线。
+       *    `<textPath>`，**没有 `.vt`、挂不上 `contentEditable`** ⇒ 只把**这一个节点**
+       *    换成"摊平版 / 原版"的 DOM（`swapNodeDom`），退出时换回弧线。
        *
+       * ⚠️ 摊平/还原只是**显示用的 DOM 替换**：文档里的 `path`/`curve` 不动，
+       *    **不进撤销栈**（只有用户真的改字/改样式才 `commitTyping`）。
        * 其余全在编辑器里：`contentEditable`、`beforeinput`、光标/选区、就地补 DOM。
        */
       onTextEditChange: (id, flatten) => {
-        // ⭐ **记着"重渲后要接回哪个文字态"**（只对摊平重渲有意义）。
-        //    ⚠️ 别在 `beginTextEdit` 的 `(id, false)` 回调里清 —— 退出（id=null）才清。
+        if (flatten) {
+          if (id) {
+            // 进：把这个节点换成摊平版（没有 .vt 就挂不上 contentEditable）
+            flatDomIdRef.current = id;
+            swapNodeDom(id, true);
+          } else {
+            // 出：用原版（从当前文档 emit ⇒ 用户刚打的字已经在里面）换回弧线
+            const fid = flatDomIdRef.current;
+            flatDomIdRef.current = null;
+            if (fid) swapNodeDom(fid, false);
+          }
+        }
+        // ⭐ 记着"重渲后要接回哪个文字态"（只对外部重渲有意义；摊平已经不重渲了）
         if (!id) pendingTextEditRef.current = null;
         else if (flatten) pendingTextEditRef.current = id;
         setEditingText(!!id);
-        if (flatten) {
-          // 进：摊平重渲；出：还原回弧线。两边都走同一条路。
-          applyFlatten(id);
-        } else if (flatDocRef.current) {
-          // 退出且之前确实摊平过 ⇒ 还原
-          applyFlatten(null);
-        }
-        // 退出文字态 ⇒ 面板那一栏要收起来（编辑器那边不会再来通知了）
         if (!id) cbRef.current.onSelectionChange?.(null);
       },
       /** ⭐ 文字选区变了 ⇒ 交给 App 驱动样式面板（面板是右栏，不在本组件里） */
@@ -468,9 +444,10 @@ export function PreviewPanel({
     });
     editorRef.current = ed;
 
-    // ⭐ **重绑之后把文字态接回去**（摊平重渲换了 HTML ⇒ 这是新编辑器实例）。
+    // ⭐ **重绑之后把文字态接回去**（只有"外部重渲"才会换 iframe；编辑动作不再换）。
     //    ⚠️ 没有 pending 就必须把 editingText 归 false：不然 iframe 一直吃指针，
     //       父侧编辑器收不到双击 = 整个画布"点不动/进不了编辑态"（实测踩过）。
+    flatDomIdRef.current = null; // 新 document 里没有摊平过的节点
     const pendingEdit = pendingTextEditRef.current;
     if (pendingEdit) ed.beginTextEdit(pendingEdit);
     else setEditingText(false);

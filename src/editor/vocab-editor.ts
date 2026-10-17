@@ -1396,15 +1396,17 @@ export function createVocabEditor(
     textEditId = id;
     // 沿路径排字的（`curve` / `path`）编辑期间要**降级成普通文字**才能打字 ——
     // 它的产物是 SVG `<textPath>`，没有 `.vt`、也挂不上 `contentEditable`。
-    // ⇒ 把这件事报给宿主，由它重渲一份"摊平版"（**文档一个字节都不改**）。
+    // ⚠️ **先让宿主把"这一个节点"的 DOM 换成摊平版**（同步；不换 srcdoc、
+    //    不改文档、不进撤销栈），换完 `.vt` 才存在，`textSession.enter` 才能挂上。
     const n = elementById(id);
     const flatten = !!(n && n.type === 'text' && (n.path || n.curve));
+    if (flatten) opts.onTextEditChange?.(id, true);
     // ⭐ **让那块文字真的能编辑**（`contentEditable` + 聚焦 + 挂子文档监听）。
     //    这件事归**编辑器**：双击进文字态本来就是它做的，让文字可编辑是同一件事的后半段。
     //    ⚠️ 老链把它放在宿主侧适配器（`target.ts`）里，编辑器换新时整条掉了 ——
     //       于是"双击能打字"在生产界面上一度直接不存在（见 `text-session.ts` 的文件头）。
     textSession.enter(id);
-    opts.onTextEditChange?.(id, flatten);
+    if (!flatten) opts.onTextEditChange?.(id, false);
   }
 
   function exitTextEdit() {
@@ -2037,11 +2039,8 @@ export function createVocabEditor(
       if (textEditId === id) return;
       // 重渲后宿主的当前图层已经传进来；这里能选中就说明同层（能画框）
       select(id);
-      textEditId = id;
-      textSession.enter(id);
-      // ⚠️ `flatten: true` = "这块还是摊平版，别还原成弧线"；宿主会再 applyFlatten
-      //    一次，产出的 HTML 与刚渲的**逐字相同** ⇒ `srcdoc` 不变 ⇒ 不会再次重载。
-      opts.onTextEditChange?.(id, true);
+      // 走和双击同一条路：路径文字会先让宿主换**这一个节点**的 DOM（不重渲）
+      enterTextEdit(id);
     },
     endTextEdit: exitTextEdit,
 
