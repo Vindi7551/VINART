@@ -631,6 +631,16 @@ export function App() {
     return doc.layers.length ? doc.layers[doc.layers.length - 1].id : null;
   })();
 
+  /**
+   * 当前图层是否**被锁定** —— 新增（拖画 / 按钮）要**提前**反映它，
+   * 否则就是"画了/点了但什么都没发生"那种静默失败（锁定的意思就是别改它）。
+   */
+  const currentLayerLocked = !!(
+    layout?.doc &&
+    effectiveCurrentLayer &&
+    findLayer(layout.doc, effectiveCurrentLayer)?.locked === true
+  );
+
   /** 打开产物:fetch data(会话工作目录模式带 session query) */
   const handleOpenArtifact = useCallback(
     async (url: string, name: string, _dir: string) => {
@@ -1259,7 +1269,9 @@ export function App() {
           hostSignal={hostSignal}
           // ⭐ 形状工具 = **绘制模式**（工具即模式，PS 同款）：画布上盖一层绘制层，
           //    拖一个框就画出来；这一层同时挡住"选元素/拖元素"（故意的，避免误触）。
-          drawMode={tool === 'shape'}
+          // ⚠️ **当前图层被锁定 ⇒ 不挂载绘制层**：变成"画布上没有十字光标、拖不动"，
+          //    而不是"能拖、松手后什么都没有"（后者最迷惑）。
+          drawMode={tool === 'shape' && !currentLayerLocked}
           shapeKind={shapeKind}
         />
         {/* 检查器栏（版式编辑器）—— **独立一栏**，贴画布右侧；无版式时不占位。

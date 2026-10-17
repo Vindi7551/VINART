@@ -143,6 +143,12 @@ export function EditPanel({
   //    再在属性页里放一遍会让人以为"有两处开关"。字段表里之所以保留它们，
   //    是因为编辑器的 `patch` 要靠 `findLayerField('visible'|'locked')` 拿到 setter。
   const layerFields = layer ? fieldsForLayer().filter((f) => f.path !== 'visible' && f.path !== 'locked') : [];
+  /**
+   * **当前图层被锁定了吗** —— 用来把"新增"入口**提前置灰**。
+   * ⚠️ 与 `selectedLayer` 不是一回事：选中的可能是元素，当前图层是另一层。
+   * ⚠️ 不看它的话就是"点了没反应"（编辑器 `addElement` 会拒绝写入）—— 静默失败。
+   */
+  const currentLayerLocked = findLayer(layout.doc, currentLayerId)?.locked === true;
   const allFields = node ? fieldsFor(node, layout.doc.canvas) : [];
   const shown = fieldsOfTool(allFields, tool);
   const toolDef = TOOLS.find((t) => t.id === tool);
@@ -225,9 +231,13 @@ export function EditPanel({
               {toolDef.adds.map((a) => (
                 <Button
                   key={a.signal}
-                  disabled={busy}
+                  disabled={busy || currentLayerLocked}
+                  title={
+                    currentLayerLocked
+                      ? `当前图层「${currentLayerId ?? ''}」已锁定 —— 先在图层面板解锁`
+                      : `新增${a.label}`
+                  }
                   onClick={() => onSignal({ type: a.signal })}
-                  title={`新增${a.label}`}
                 >
                   {a.icon} {a.label}
                 </Button>
@@ -251,6 +261,11 @@ export function EditPanel({
                 </Button>
               ))}
             </Row>
+            {currentLayerLocked ? (
+              <Hint>
+                当前图层「{currentLayerId ?? ''}」已锁定 ⇒ 画布上拖不出东西。先在图层面板点亮 🔒 解锁。
+              </Hint>
+            ) : null}
             {/* ⚠️ 这里**不再有「新增」按钮**（2026-10-17 用户定）：形状一律**拖画**出来。
                 那个按钮用的是写死坐标（当年给 900×600 试的），在别的画布尺寸下位置都不对，
                 而且和拖画是**两条做同一件事的路** ⇒ 删掉。 */}
