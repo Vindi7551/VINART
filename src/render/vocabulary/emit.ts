@@ -1249,6 +1249,87 @@ function emitElement(node: ElementNode, ctx: EmitCtx): string {
  * ⚠️ **子文档里 `<script>` 数恒为 0** —— 这是可机器断言的不变量
  * （iframe 用 `sandbox="allow-same-origin"`，**故意不给** `allow-scripts`）。
  */
+// ══════════════════════════════════════════════════════════════════════
+// 【单发射】—— 给宿主的"双写"用（插入 iframe 而不重渲整页）
+// ══════════════════════════════════════════════════════════════════════
+
+/**
+ * **单发射**：把一个元素 / 一个图层渲染成一段**自包含**的 HTML。
+ *
+ * ## 为什么必须"自包含"
+ *
+ * `emitElement` / `emitLayer` 把 clip-path / mask 要用的 `<defs>`、以及个别 `@font-face`
+ * 之类的东西塞进 `ctx.defs` / `ctx.extraCss`（**整份文档共用的侧信道**）。
+ * 单独发一块出来时，目标文档里**没有那份 defs** ⇒ clip / mask 会**静默失效**
+ * （不报错、就是没效果 —— 最难查的那一类）。
+ *
+ * ⇒ 这里把这段产出需要的东西**一并内联**返回：
+ *   - `defs` → 一段 `width:0;height:0` 的隐藏 `<svg>`
+ *   - `extraCss` → 一段 `<style>`
+ * 放在元素前面一起返回，宿主整段 `insertAdjacentHTML` 进去就是对的。
+ *
+ * ## 为什么需要它（而不是让宿主自己拼 HTML）
+ *
+ * 宿主"双写"时如果**手写**节点，和 `emitDocument` 的输出必然逐渐漂开
+ * （差一个 `transform-origin`、一个 `data-fit`，出图就和画布不一样）。
+ * 用这个函数发出来的那一块，和整份渲染**是同一段代码产的** ⇒ 不可能漂。
+ *
+ * ⚠️ 单发射只对 **clip/mask 的 defs 与 extraCss** 自包含；它**不**负责
+ *    父子关系（插到哪个容器、第几个位置）—— 那是调用方的事。
+ */
+function singleCtx(canvas: DesignDocument['canvas'], opts: EmitOptions, unsupported: EmitIssue[], notes: EmitIssue[]): EmitCtx {
+  return {
+    C: canvas,
+    opts,
+    extraCss: [],
+    defs: [],
+    no: (id, field, reason) => unsupported.push({ id, field, reason }),
+    note: (id, field, reason) => notes.push({ id, field, reason }),
+  };
+}
+
+/** 把 ctx 收集到的 defs / extraCss 拼到产物前面，让它自包含 */
+function selfContained(body: string, ctx: EmitCtx): string {
+  const style = ctx.extraCss.length ? `<style>${ctx.extraCss.join('\n')}</style>` : '';
+  const defs = ctx.defs.length
+    ? `<svg width="0" height="0" style="position:absolute;left:-9999px" aria-hidden="true">${ctx.defs.join('')}</svg>`
+    : '';
+  return `${style}${defs}${body}`;
+}
+
+export interface EmitSingleResult {
+  /** 自包含的一段 HTML（含它自己需要的 defs / style） */
+  html: string;
+  unsupported: EmitIssue[];
+  notes: EmitIssue[];
+}
+
+/** 单发射一个**元素**（见上面 `singleCtx` 的说明） */
+export function emitElementHtml(
+  node: ElementNode,
+  canvas: DesignDocument['canvas'],
+  opts: EmitOptions = {},
+): EmitSingleResult {
+  const unsupported: EmitIssue[] = [];
+  const notes: EmitIssue[] = [];
+  const ctx = singleCtx(canvas, opts, unsupported, notes);
+  const body = emitElement(node, ctx);
+  return { html: selfContained(body, ctx), unsupported, notes };
+}
+
+/** 单发射一个**图层**（整块容器 + 它的元素；图层容器还没插进文档时用这个） */
+export function emitLayerHtml(
+  layer: Layer,
+  canvas: DesignDocument['canvas'],
+  opts: EmitOptions = {},
+): EmitSingleResult {
+  const unsupported: EmitIssue[] = [];
+  const notes: EmitIssue[] = [];
+  const ctx = singleCtx(canvas, opts, unsupported, notes);
+  const body = emitLayer(layer, ctx);
+  return { html: selfContained(body, ctx), unsupported, notes };
+}
+
 export function emitDocument(doc: DesignDocument, opts: EmitOptions = {}): EmitResult {
   const unsupported: EmitIssue[] = [];
   const notes: EmitIssue[] = [];

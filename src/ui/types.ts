@@ -93,6 +93,8 @@ export interface HostSignal {
     | 'remove'
     | 'up'
     | 'down'
+    /** ⭐ **新建一个空图层**（追加到最上层并选中它） */
+    | 'new-layer'
     /** ⭐ 给**画面上选中的那几个字**刷样式（`path` 来自 `selectionFields()`） */
     | 'style-selection';
   /** select/patch/remove/up/down/style-selection 需要；add-* 不需要 */

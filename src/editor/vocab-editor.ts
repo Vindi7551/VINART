@@ -313,6 +313,16 @@ export interface VocabEditorHandle {
    *    现在元素住在图层（或组）里 ⇒ 换的是**同一个容器里的兄弟元素**之间的位置。
    */
   moveLayer(id: string, to: 'up' | 'down' | 'top' | 'bottom'): void;
+  /**
+   * ⭐ **新建一个空图层**（追加到最上层），并选中它 —— 进撤销栈。
+   *
+   * ⚠️ 与 `addLayer(node)` 不是一回事：那个加的是**元素**（进第一个图层）。
+   *    名字里那个 "Layer" 是历史遗留（那时 `doc.layers` 装的是元素）。
+   *
+   * 新图层是空的 ⇒ 画布上没有它的 DOM（也没必要有），所以不需要重渲；
+   * 选中它以后面板就能改它的属性（显隐/锁定/不透明度）。
+   */
+  createLayer(): void;
   readonly selectedId: string | null;
   dispose(): void;
 }
@@ -1156,7 +1166,65 @@ export function createVocabEditor(
   }
 
   // ── 选中 ───────────────────────────────────────────────────────────
+  /**
+   * **当前图层** —— 唯一的**编辑作用域**（2026-10-17 用户定）。
+   *
+   * 规则（PS「自动选择：关闭」那一套）：
+   * - **只有图层列表能改它**：点图层行（= 选中 + 设为当前）· 新建图层 · 当前图层没了（自愈回退）。
+   * - **画布上只有当前图层里的元素能选**；点别的图层里的元素 ⇒ **静默无反应**。
+   * - 新增元素进当前图层的**最上层**。
+   * - 打开版式时的初始值 = **最上层的可见未锁图层**（不记忆）。
+   *
+   * ⚠️ 为什么要有它：图层上挂着 `opacity` / `blend` / `mask` ⇒ **元素进错层外观会变**，
+   *    归属必须由用户显式掌握，不能靠猜（例如"跟随选中元素"就不可预测）。
+   */
+  let currentLayerId: string | null = null;
+
+  /** 最上层的**可见未锁**图层；都没有 ⇒ 退回最上层；空文档 ⇒ null */
+  function topmostUsableLayerId(d: DesignDocument): string | null {
+    for (let i = d.layers.length - 1; i >= 0; i -= 1) {
+      const l = d.layers[i];
+      if (l.visible !== false && l.locked !== true) return l.id;
+    }
+    return d.layers.length ? d.layers[d.layers.length - 1].id : null;
+  }
+
+  /**
+   * 取当前图层对象，**顺手自愈**：当前图层被删/被撤销掉 ⇒ 回退到最上层可用图层。
+   *
+   * ⚠️ 自愈放在这里、而不是塞进 undo/redo：撤销是"文档换了"，任何读当前图层的地方
+   *    都可能撞上一个已经不存在的 id；在这一处兜住，就不用到处加校验。
+   */
+  function currentLayer(): Layer | null {
+    let l = currentLayerId ? findLayer(doc, currentLayerId) : null;
+    if (!l) {
+      currentLayerId = topmostUsableLayerId(doc);
+      l = currentLayerId ? findLayer(doc, currentLayerId) : null;
+    }
+    return l;
+  }
+
+  /** 这个元素在**当前图层**里吗（含组、组内元素） */
+  function inCurrentLayer(id: string): boolean {
+    const layer = currentLayer();
+    if (!layer) return false;
+    for (const e of iterElements(layer)) if (e.id === id) return true;
+    return false;
+  }
+
   function select(id: string | null, notify = true) {
+    // ⭐ **当前图层是唯一的编辑作用域**（规则见 `currentLayerId` 的注释）：
+    //    - 选中的是**图层** ⇒ 顺带把它设为当前图层（点图层行 = 选中 + 设当前）
+    //    - 选中的是**元素** ⇒ 只有它在当前图层里才允许；否则**静默忽略**
+    //      （用户明确要求静默：图层列表就在旁边，能切 —— 不需要弹提示）
+    if (id) {
+      const asLayer = findLayer(doc, id);
+      if (asLayer) {
+        currentLayerId = asLayer.id;
+      } else if (!inCurrentLayer(id)) {
+        return;
+      }
+    }
     selectedId = id;
     outline(id);
     syncOverlay();
@@ -1826,8 +1894,21 @@ export function createVocabEditor(
       syncOverlay();
     },
 
-    removeLayer(id: string) {
-      // ⭐ **图层自己**：叠放顺序就是 `doc.layers` 的顺序（画布的孩子之间）。
+    createLayer() {
+      // ⚠️ `doc.layers` 装的是**图层**（元素住 `Layer.elements` 里）——
+      //    方法名里的 "Layer" 是历史遗留，见接口注释。
+      //    新图层是空的 ⇒ 画布上没有它的 DOM、也不需要重渲；选中它，面板就能改它的属性。
+      const taken = new Set(doc.layers.map((l) => l.id));
+      let n = doc.layers.length + 1;
+      while (taken.has(`layer-${n}`)) n += 1;
+      const id = `layer-${n}`;
+      doc.layers.push({ id, elements: [] }); // 追加到数组尾 = 最上层
+      select(id);
+      submit(id, '新增图层');
+      syncOverlay();
+    },
+
+    removeLayer(id: string) {      // ⭐ **图层自己**：叠放顺序就是 `doc.layers` 的顺序（画布的孩子之间）。
       //    ⚠️ 这一段是补的：`EditPanel` 给图层行也摆了「删除」按钮，
       //       没有它点了会**静默无反应**（按钮摆出来了就必须能用）。
       const li = doc.layers.findIndex((l) => l.id === id);

@@ -495,11 +495,13 @@ export function PreviewPanel({
           fill: '#C8323C',
         });
         break;
+      case 'new-layer':
+        ed.createLayer();
+        break;
       case 'remove':
       case 'up':
       case 'down':
-        if (sig.id) {
-          if (sig.type === 'remove') ed.removeLayer(sig.id);
+        if (sig.id) {          if (sig.type === 'remove') ed.removeLayer(sig.id);
           else ed.moveLayer(sig.id, sig.type);
         }
         break;

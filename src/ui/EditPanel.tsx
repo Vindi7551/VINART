@@ -96,6 +96,13 @@ export type EditSignal = Omit<HostSignal, 'seq'>;
 interface EditPanelProps {
   layout: PreviewData;
   selectedLayer: string | null;
+  /**
+   * ⭐ **当前图层**（"新增元素进哪一层"，也是编辑器里唯一能被选中的范围）。
+   *
+   * 与 `selectedLayer` **不是一回事**：点元素时 `selectedLayer` 变、这个**不变**。
+   * 图层行用它画**阴影**（Procreate 那种"我在这层干活"的提示）。
+   */
+  currentLayerId: string | null;
   busy: boolean;
   /** ⭐ 文字选区快照（在画面上选了字才有）；驱动顶部那一栏"选中的字" */
   selection?: SelectionSnapshot | null;
@@ -113,6 +120,7 @@ interface EditPanelProps {
 export function EditPanel({
   layout,
   selectedLayer,
+  currentLayerId,
   busy,
   selection,
   tool,
@@ -228,9 +236,16 @@ export function EditPanel({
              ⚠️ 组里的元素（组内元素）这一版还不在清单里 —— 那要递归展开，属第二步。 */}
         {tool === 'layers' ? (
           <Section title="图层" icon={<IconLayers />} count={layout.doc.layers.length} collapsible={false}>
+            {/* ⭐ 新建图层：追加到最上层并选中它。
+                ⚠️ 这建的是**图层**（画布的孩子）；"新增元素"在各自的工具页里（进第一个图层）。 */}
+            <Row>
+              <Button disabled={busy} title="新建一个空图层（追加到最上层）" onClick={() => onSignal({ type: 'new-layer' })}>
+                ＋ 新建图层
+              </Button>
+            </Row>
             <div className="ui-layer-list">
               {[...layout.doc.layers].reverse().map((L) => (
-                <div key={L.id} className="ui-layer-block">
+                <div key={L.id} className={`ui-layer-block${L.id === currentLayerId ? ' is-current' : ''}`}>
                   <ListItem active={selectedLayer === L.id} onClick={() => onSelectLayer(L.id)}>
                     <span className="layer-name layer-name-layer">图层 · {L.id}</span>
                     <span className="ui-layer-actions">

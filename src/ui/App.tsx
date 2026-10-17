@@ -12,7 +12,7 @@ import type { Message, DelegationRecord } from './types';
 import type { PreviewData, HostSignal, SessionItem } from './types';
 import { fieldsFor, type SelectionSnapshot } from '../editor/inspector';
 import { emitDocument } from '../render/vocabulary/emit';
-import { findElement, type DesignDocument } from '../document/vocabulary';
+import { findElement, findLayer, type DesignDocument } from '../document/vocabulary';
 
 // ══════════════════════════════════════════════════════════
 // ⚠️ Agent 层已清空，等待重新设计
@@ -580,9 +580,40 @@ export function App() {
     setHostSignal({ seq: seqRef.current, type: 'style-selection', path, value });
   }, []);
 
+  /**
+   * ⭐ **当前图层** —— "新增元素进哪一层"，同时也是编辑器里**唯一能被选中的范围**
+   * （PS「自动选择：关闭」/ Procreate 那个概念，用户 2026-10-17 定）。
+   *
+   * ⚠️ **只有"点图层行 / 新建图层"会改它**；点元素**不影响**它 ⇒ 所以它**不能**
+   *    从 `selectedLayer` 派生（点元素时 `selectedLayer` 是元素 id）。
+   * ⚠️ 权威在**编辑器**里（它拿这个做选中门禁，见 `vocab-editor` 的 `currentLayerId`）。
+   *    这一份只用于**面板画阴影**；两边同一条规则（只有点图层才变、失效则回退到
+   *    "最上层的可见未锁图层"）⇒ 同进同退。
+   */
+  const [currentLayerId, setCurrentLayerId] = useState<string | null>(null);
+
   const handleLayerSelect = useCallback((id: string) => {
     setSelectedLayer(id);
+    // 选中的是**图层** ⇒ 它成为当前图层；选中元素 ⇒ 不动当前图层
+    const doc = layoutRef.current?.doc;
+    if (id && doc && findLayer(doc, id)) setCurrentLayerId(id);
   }, []);
+
+  /**
+   * 面板上要画阴影的那一层 = 当前图层；它若**已不存在**（被删 / 被撤销掉）
+   * ⇒ 回退到「最上层的可见未锁图层」（与编辑器的自愈规则**同一条**）。
+   * 就这么几行、图层数量很少 ⇒ 直接算，不值得 `useMemo`。
+   */
+  const effectiveCurrentLayer = (() => {
+    const doc = layout?.doc;
+    if (!doc) return null;
+    if (currentLayerId && findLayer(doc, currentLayerId)) return currentLayerId;
+    for (let i = doc.layers.length - 1; i >= 0; i -= 1) {
+      const l = doc.layers[i];
+      if (l.visible !== false && l.locked !== true) return l.id;
+    }
+    return doc.layers.length ? doc.layers[doc.layers.length - 1].id : null;
+  })();
 
   /** 打开产物:fetch data(会话工作目录模式带 session query) */
   const handleOpenArtifact = useCallback(
@@ -1241,6 +1272,7 @@ export function App() {
               <EditPanel
                 layout={layout}
                 selectedLayer={selectedLayer}
+                currentLayerId={effectiveCurrentLayer}
                 selection={selection}
                 busy={layoutBusy}
                 tool={tool}
