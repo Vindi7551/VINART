@@ -479,7 +479,16 @@ export function App() {
     //    选中的是**图层本身**时这里返回 null ⇒ 跳过（图层的属性面板是第二步的事）。
     const node = findElement(layout.doc, selectedLayer);
     if (!node) return;
-    if (shouldFollowSelection(fieldsFor(node, layout.doc.canvas), tool)) setTool(toolForLayer(node));
+    // ⚠️ **「形状」页是"创建页"，永不自动跳走**（用户 2026-10-17 报的问题）。
+    //    原因：`GROUP_TOOL` / `FIELD_TOOL` 里**没有任何字段映射到 `'shape'`** ——
+    //    对任何节点来说这一页都是"毫无关系的页"，于是一画完（`addElement` 会自动
+    //    选中新节点）就判定"该跳走"，跳去 `appearance`（形状第一个字段 fill 属「外观」）
+    //    ⇒ 想连着画就得每次都手动点回来。
+    //    ⚠️ 不能笼统地"有 `adds` 的页都不跳"：注释里那条反例是**期望行为**
+    //      （在「文字」页误点了一张图片 ⇒ 自动跳到「图片」页）。
+    if (tool !== 'shape' && shouldFollowSelection(fieldsFor(node, layout.doc.canvas), tool)) {
+      setTool(toolForLayer(node));
+    }
     // `tool` 故意不进依赖：只在**选中变化**时判断，不然手动换页会被立刻弹回
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLayer, layout]);
