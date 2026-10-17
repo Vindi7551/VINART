@@ -357,7 +357,7 @@ export function PreviewPanel({
         //    ⚠️ 判据是 **label** —— 编辑器在 undo/redo 里必须带上 '撤销'/'重做'
         //      （原来没带 ⇒ 宿主不知道这是撤销 ⇒ 画布永远不跟 ✗ 实测抓到的）。
         //    图层容器的 HTML 里含它的元素 ⇒ 逐图层替换一次就够 ✓
-        if (label === '撤销' || label === '重做') {
+        if (label === '撤销' || label === '重做' || label === '历史跳转') {
           const realm = iframeRef.current?.contentDocument;
           if (realm) {
             for (const l of next.layers) {

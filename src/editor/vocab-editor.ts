@@ -84,6 +84,8 @@ import { fieldsFor, findField, findLayerField, selectionSnapshotOf, type Field, 
 import {
   canRedo as stackCanRedo,
   canUndo as stackCanUndo,
+  /** ⭐ 跳到任意一步（历史面板用） */
+  gotoStep as stackGotoStep,
   createEditorStack,
   pushCommand,
   redo as stackRedo,
@@ -297,6 +299,13 @@ export interface VocabEditorHandle {
   readonly canRedo: boolean;
   /** 可撤销的步数（给状态条显示） */
   undoDepth(): number;
+  /**
+   * ⭐ **跳到第 `index` 步**（`0` = 最初；用于 PS 那样的历史面板：点任意一条跳过去）。
+   *
+   * 返回是否真的跳了（已在目标步 ⇒ false，不进任何栈）。
+   * 和 `undo`/`redo` 同一条路：装回文档 + 通知宿主（label = `'历史跳转'`）。
+   */
+  gotoStep(index: number): boolean;
   /** 调试/未来 UI：栈内命令摘要（before/after 里 title 的文本） */
   dump(): {
     done: Array<{ label: string; before: string[]; after: string[]; at: number; key: string }>;
@@ -1784,8 +1793,7 @@ export function createVocabEditor(
     return true;
   }
 
-  function redo(): boolean {
-    if (textEditId) exitTextEdit();
+  function redo(): boolean {    if (textEditId) exitTextEdit();
     const next = stackRedo(stack);
     if (!next) return false;
     doc = cloneDoc(next); // ⭐ 同上：与 `stack.head` 保持引用分离
@@ -1891,6 +1899,27 @@ export function createVocabEditor(
     undo,
 
     redo,
+
+    /**
+     * ⭐ **跳到第 `index` 步**（PS 历史面板那种）。`0` = 最初。
+     *
+     * 纯数据搬运交给 `editor-stack` 的 `gotoStep`；这里只做"装回文档 + 修选中 +
+     * 通知宿主"，和 `undo`/`redo` 完全同一条路 ✓
+     * ⚠️ label 用 `'历史跳转'` —— 宿主靠它判断"这是整份文档换了"⇒ 画布要整块重发。
+     */
+    gotoStep(index: number): boolean {
+      if (textEditId) exitTextEdit();
+      const next = stackGotoStep(stack, index);
+      if (!next) return false;
+      doc = cloneDoc(next);
+      if (selectedId && !elementById(selectedId)) {
+        selectedId = null;
+        outline(null);
+      }
+      syncOverlay();
+      opts.onChange?.(selectedId, doc, '历史跳转');
+      return true;
+    },
 
     get canUndo() {
       return stackCanUndo(stack);

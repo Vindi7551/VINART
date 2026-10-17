@@ -29,6 +29,15 @@ export interface EditorStack {
   limit: number;
   /** **当前状态的镜像**——push 的 before 来自它，undo/redo 后同步 */
   head: DesignDocument;
+  /**
+   * ⭐ **最初的文档**（第 0 步）。
+   *
+   * 为什么需要它：`head` 只在 `done` 非空时才等于"某条命令的 after"；
+   * 一旦全部撤销完（`done` 为空），**没有它就回不到第 0 步** ✗
+   * ⇒ PS 那种"跳到任意一步（含最开始）"必须存它 ✓
+   * （顺带：有了它，每条命令的 `before` 就是冗余的 —— 见 `gotoStep` 的注释）
+   */
+  base: DesignDocument;
 }
 
 /** 合并窗口（ms）：同类操作在此间隔内连续发生 ⇒ 并成一条 */
@@ -37,7 +46,7 @@ const MERGE_WINDOW = 800;
 const clone = (d: DesignDocument): DesignDocument => structuredClone(d);
 
 export function createEditorStack(base: DesignDocument, limit = 100): EditorStack {
-  return { done: [], undone: [], limit, head: clone(base) };
+  return { done: [], undone: [], limit, head: clone(base), base: clone(base) };
 }
 
 /**
@@ -95,4 +104,55 @@ export function resetStack(stack: EditorStack, base: DesignDocument): void {
   stack.done = [];
   stack.undone = [];
   stack.head = clone(base);
+  stack.base = clone(base);
+}
+
+/** 历史总步数（含已撤销的）—— 面板要画"第 k 步 / 共 n 步" */
+export const totalSteps = (s: EditorStack): number => s.done.length + s.undone.length;
+
+/**
+ * ⭐ **跳到第 `index` 步**（PS 历史面板那种"点任意一条跳过去"）。
+ *
+ * - `index = 0` ⇒ 回到**最初**（`stack.base`）
+ * - `index = done.length` ⇒ 什么都不做（已经在那儿）
+ * - `index > done.length` ⇒ **重做**若干步
+ * - `index < done.length` ⇒ **撤销**若干步
+ *
+ * ⚠️ 语义上它就是"连续 undo / 连续 redo"，只是**一次算完** ⇒ 返回要装回的文档。
+ * ⚠️ `undone` 的栈顶 = 最近被撤销的那条（`redo` 从尾部弹）⇒ 两个循环都从尾部搬 ✓
+ */
+export function gotoStep(stack: EditorStack, index: number): DesignDocument | null {
+  const total = totalSteps(stack);
+  if (!Number.isInteger(index) || index < 0 || index > total) return null;
+  if (index === stack.done.length) return null; // 已经在那儿，不必换文档
+
+  while (stack.done.length > index) {
+    const cmd = stack.done.pop();
+    if (!cmd) break;
+    stack.undone.push(cmd);
+  }
+  while (stack.done.length < index) {
+    const cmd = stack.undone.pop();
+    if (!cmd) break;
+    stack.done.push(cmd);
+  }
+  // ⭐ 第 0 步没有"上一条命令的 after" ⇒ 只能用 `base`
+  const at = stack.done.length === 0 ? stack.base : stack.done[stack.done.length - 1].after;
+  stack.head = clone(at);
+  return stack.head;
+}
+
+/** 历史列表（给面板用）：`[{ index, label, at }]`，index 从 1 开始（0 = 初始，不在列表里） */
+export function historyEntries(s: EditorStack): Array<{ index: number; label: string; at: number; undone: boolean }> {
+  return [
+    ...s.done.map((c, i) => ({ index: i + 1, label: c.label, at: c.at, undone: false })),
+    // ⚠️ `undone` 是**栈**（栈顶 = 最近被撤销的那条）⇒ 要 `reverse` 才是**升序的步号**，
+    //    否则面板里会出现 "3 排在 2 前面" ✗（实测踩过）
+    ...[...s.undone].reverse().map((c, i) => ({
+      index: s.done.length + i + 1,
+      label: c.label,
+      at: c.at,
+      undone: true,
+    })),
+  ];
 }
