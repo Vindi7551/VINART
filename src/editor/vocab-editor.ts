@@ -80,7 +80,7 @@ import {
   removePoint,
   type Point01,
 } from './points';
-import { fieldsFor, findField, selectionSnapshotOf, type Field, type SelectionSnapshot } from './inspector';
+import { fieldsFor, findField, findLayerField, selectionSnapshotOf, type Field, type SelectionSnapshot } from './inspector';
 import {
   canRedo as stackCanRedo,
   canUndo as stackCanUndo,
@@ -102,9 +102,11 @@ import {
   insertText as insertRunText,
   replaceRunText,
 } from './text-edit';
-import { groupContentBox, groupTransformCss, transformCss } from '../render/vocabulary/emit';
+import { effectiveTransform, groupContentBox, groupTransformCss, transformCss } from '../render/vocabulary/emit';
+import { containerOf, findElement, findLayer, iterElements } from '../document/vocabulary';
 import type {
   DesignDocument,
+  ElementNode,
   GroupNode,
   Layer,
   ShapeNode,
@@ -116,14 +118,25 @@ const OUTLINE = `2px solid ${ACCENT}`;
 /**
  * **带位置的节点** —— `GroupNode` 没有 `rect`（它的范围是子元素的并集），
  * 所以凡是「要按盒子算坐标」的地方都得先把它排除掉。
+ *
+ * ⚠️ 2026-10-16 文档模型改版：这个"任意节点"的联合类型（**旧名 `Layer`**）现在叫
+ *    **`ElementNode`**；`Layer` 那个名字归了**图层**（画布的孩子），两者不是一回事。
  */
-type Positioned = Exclude<Layer, { type: 'group' }>;
+type Positioned = Exclude<ElementNode, { type: 'group' }>;
 
 /** 只认「多边形」——`rect` / `ellipse` / `path` 没有可以掰的点集 */
 type Poly = ShapeNode & { kind: 'polygon' };
 
-function isPoly(n: Layer | null | undefined): n is Poly {
-  return !!n && n.type === 'shape' && (n as ShapeNode).kind === 'polygon';
+function isPoly(n: ElementNode | null | undefined): n is Poly {
+  return !!n && n.type === 'shape' && n.kind === 'polygon';
+}
+
+/**
+ * `containerOf` 给回来的是 `Layer | GroupNode`，而 **`Layer` 没有 `type` 字段**
+ * （只有元素才有）⇒ 判"这个容器是不是组"不能直接 `=== 'group'`，得先收窄。
+ */
+function isGroupContainer(c: Layer | GroupNode | null): c is GroupNode {
+  return !!c && 'type' in c && c.type === 'group';
 }
 
 export interface VocabEditorOptions {
@@ -282,11 +295,23 @@ export interface VocabEditorHandle {
     undone: Array<{ label: string; before: string[]; after: string[]; at: number; key: string }>;
   };
 
-  /** ⭐ 新增元素（追加到最上层）并选中它（进撤销栈） */
-  addLayer(node: Layer): void;
+  /**
+   * ⭐ 新增元素（追加到**第一个图层**的末尾 = 最上层）并选中它（进撤销栈）。
+   *
+   * ⚠️ 方法名里的 "Layer" 是**历史遗留** —— 它加的是**元素**（`ElementNode`），不是图层。
+   *    文档模型改成「画布 → 图层 → 元素」之后，"加一个元素"还没说**加进哪个图层**，
+   *    所以这里先定一条**临时规则**（见实现里的注释）：加到第一个图层，
+   *    一个图层都没有就先建一个默认图层。等图层面板做出来，这个入口应当改成"加进当前图层"。
+   */
+  addLayer(node: ElementNode): void;
   /** ⭐ 删除元素（组会连子元素一起删；进撤销栈） */
   removeLayer(id: string): void;
-  /** ⭐ 调整顶层叠放顺序（`up`/`down`/`top`/`bottom`；进撤销栈；已在目标位置 ⇒ 无操作） */
+  /**
+   * ⭐ 调整**它所在的那个容器**里的叠放顺序（`up`/`down`/`top`/`bottom`；进撤销栈；已在目标位置 ⇒ 无操作）。
+   *
+   * ⚠️ 旧模型里 `doc.layers` 是"所有节点"的扁平表，所以那时这是"顶层顺序"；
+   *    现在元素住在图层（或组）里 ⇒ 换的是**同一个容器里的兄弟元素**之间的位置。
+   */
   moveLayer(id: string, to: 'up' | 'down' | 'top' | 'bottom'): void;
   readonly selectedId: string | null;
   dispose(): void;
@@ -408,7 +433,7 @@ export function createVocabEditor(
   const textSession = createTextSession({
     root: () => root,
     textNode: (id) => {
-      const l = layerById(id);
+      const l = elementById(id);
       return l && l.type === 'text' ? l : null;
     },
     canvasWidth: () => doc.canvas.width,
@@ -442,7 +467,7 @@ export function createVocabEditor(
    */
   function buildSelectionSnapshot(): SelectionSnapshot | null {
     const id = textSession.id;
-    const n = id ? layerById(id) : null;
+    const n = id ? elementById(id) : null;
     if (!n || n.type !== 'text') return null;
     return selectionSnapshotOf(n, textSession.range(), textSession.abs(), textSession.selectedText(), doc.canvas);
   }
@@ -456,27 +481,21 @@ export function createVocabEditor(
   }
 
   /**
-   * 按 id 找节点 —— ⭐ **递归**（组里的子元素也必须能选中）。
+   * 按 id 找**元素** —— ⭐ **递归**（组里的子元素也必须能选中）。
    *
    * 为什么要递归：点组的子元素时，`elementFromPoint` 命中的是**最上面的那个子元素**
    * （组容器在它下面）⇒ 传进来的 id 是子元素的。只查顶层的话，点组里的东西会**什么都选不中**。
    *
    * ⚠️ 组**本身**不会靠点击选中（点它命中的总是子元素），但这里也返回它 ——
    * 以后图层列表要能选中组。调用方用 `type !== 'group'` 收窄（组没有 `rect`）。
+   *
+   * ⭐ **改名 + 换实现（2026-10-16 文档模型改版）**：原名 `layerById`。
+   *    文档现在是「画布 → 图层 → 元素」，`doc.layers` **已经是图层**（不是节点的扁平表）——
+   *    照旧自己写一遍 walk 就会漏掉"遍历所有图层里的元素"这件事
+   *    ⇒ 统一走词汇表的 `findElement`（它 = `每个图层 × iterElements` 递归找）。
    */
-  function layerById(id: string | null): Layer | null {
-    if (!id) return null;
-    const walk = (list: readonly Layer[]): Layer | null => {
-      for (const l of list) {
-        if (l.id === id) return l;
-        if (l.type === 'group') {
-          const hit = walk(l.children);
-          if (hit) return hit;
-        }
-      }
-      return null;
-    };
-    return walk(doc.layers);
+  function elementById(id: string | null): ElementNode | null {
+    return findElement(doc, id);
   }
 
   /**
@@ -489,23 +508,19 @@ export function createVocabEditor(
    *    **宁可不给，也不给一个看着能用其实很别扭的操作**，并把原因说出来。
    */
   function ancestorTransform(id: string): boolean {
-    const walk = (list: readonly Layer[], transformed: boolean): boolean | null => {
-      for (const l of list) {
-        if (l.id === id) return transformed;
-        if (l.type === 'group') {
-          const t = l.transform;
-          const has = !!(t?.rotate || t?.skewX || t?.skewY || t?.scale);
-          const r = walk(l.children, transformed || has);
-          if (r !== null) return r;
-        }
-      }
-      return null;
-    };
-    return walk(doc.layers, false) ?? false;
+    // ⚠️ 从"**它所在的容器**"往上走（`containerOf` 给的是**直接**容器，元素可能嵌在组里）。
+    //    走到**图层**就停 —— 图层不是组，`containerOf` 对图层返回 `null`，循环自然结束。
+    let c: Layer | GroupNode | null = containerOf(doc, id);
+    while (isGroupContainer(c)) {
+      const t = c.transform;
+      if (t?.rotate || t?.skewX || t?.skewY || t?.scale) return true;
+      c = containerOf(doc, c.id);
+    }
+    return false;
   }
 
   function polyOf(id: string | null): Poly | null {
-    const n = layerById(id);
+    const n = elementById(id);
     return isPoly(n) ? n : null;
   }
 
@@ -545,20 +560,20 @@ export function createVocabEditor(
     return next;
   }
 
-  /** 在（可能嵌套的）文档里**原位替换**一个节点 */
-  function replaceLayer(id: string, next: Layer): boolean {
-    const walk = (list: Layer[]): boolean => {
-      for (let i = 0; i < list.length; i++) {
-        if (list[i].id === id) {
-          list[i] = next;
-          return true;
-        }
-        const c = list[i];
-        if (c.type === 'group' && walk(c.children as Layer[])) return true;
-      }
-      return false;
-    };
-    return walk(doc.layers);
+  /**
+   * **原位替换**一个元素 —— 写回**它所在的那个容器**的 `elements`。
+   *
+   * ⚠️ 用 `containerOf` 而不是自己 walk：元素可能在**任意一个图层**里、也可能**嵌在组里**，
+   *    "它所在的容器是谁"正是词汇表给出的答案（旧模型里 `doc.layers` 就是那张扁平表，
+   *    所以那时可以自己走一遍；现在不行了）。
+   */
+  function replaceLayer(id: string, next: ElementNode): boolean {
+    const c = containerOf(doc, id);
+    if (!c) return false;
+    const i = c.elements.findIndex((e) => e.id === id);
+    if (i < 0) return false;
+    c.elements[i] = next;
+    return true;
   }
 
   /**
@@ -570,7 +585,7 @@ export function createVocabEditor(
    * ⚠️ 调用方先过 `blocked()`：组带变换时**不许升格也不许编辑**（改了也是错位置）。
    */
   function ensureEditablePoly(id: string): Poly | null {
-    const n = layerById(id);
+    const n = elementById(id);
     if (!n || n.type !== 'shape') return null;
     if (n.kind === 'polygon') return n;
     const promoted = promoteToPolygon(n);
@@ -586,11 +601,10 @@ export function createVocabEditor(
    * `polygon` 用自己的点集；`rect` / `ellipse` 用**等效点集**（升格的预览——先给你看顶点在哪，
    * 一拖就转成真 polygon）；`path` 待做（贝塞尔编辑）；其他类型没有顶点。
    */
-  function editablePoints(l: Layer): Point01[] | null {
+  function editablePoints(l: ElementNode): Point01[] | null {
     if (l.type !== 'shape') return null;
-    const sh = l as ShapeNode;
-    if (sh.kind === 'polygon') return sh.points;
-    if (sh.kind === 'rect') {
+    if (l.kind === 'polygon') return l.points;
+    if (l.kind === 'rect') {
       return [
         [0, 0],
         [1, 0],
@@ -598,7 +612,7 @@ export function createVocabEditor(
         [0, 1],
       ];
     }
-    if (sh.kind === 'ellipse') return ELLIPSE_PTS;
+    if (l.kind === 'ellipse') return ELLIPSE_PTS;
     return null;
   }
 
@@ -637,7 +651,7 @@ export function createVocabEditor(
    * ⚠️ 两份实现都**不算子元素自身的 `transform`**（转过的子元素实际占地更大）⇒
    *    框会偏小一点。组框本来就是近似值，别当精确包围盒用。
    */
-  function boxOfAny(l: Layer): LocalBox {
+  function boxOfAny(l: ElementNode): LocalBox {
     if (l.type !== 'group') return boxOf(l);
     return groupContentBox(l, doc.canvas);
   }
@@ -649,7 +663,7 @@ export function createVocabEditor(
    *
    * 我第一版写成了"统一走 `groupTransformCss`"，理由是数学上等价（普通节点的容器
    * 就是它自己那个盒 ⇒ 百分比口径相同）。**但它会崩**：
-   * `groupTransformCss` 内部要遍历 `node.children`，而普通节点**没有 `children`**
+   * `groupTransformCss` 内部要遍历 `node.elements`，而普通节点**没有 `elements`**
    * ⇒ `TypeError: ls is not iterable`。
    *
    * 更糟的是它在 `select()` 的路径上 ⇒ **一选中就抛异常**，整个选中/覆盖层流程中断。
@@ -658,16 +672,23 @@ export function createVocabEditor(
    * - **组**：容器铺满画布 ⇒ 原点百分比相对**画布** ⇒ 走 `groupTransformCss`（它换算）
    * - **普通节点**：容器就是它自己的盒 ⇒ 原点相对**盒子** ⇒ 走 `transformCss`
    */
-  function transformOf(l: Layer): string {
+  function transformOf(l: ElementNode): string {
     if (l.type === 'group') return groupTransformCss(l, doc.canvas);
-    return transformCss(l.transform, boxOf(l));
+    // ⚠️ 必须过一遍 `effectiveTransform`（文字上的 scale 非法、渲染时会丢）——
+    //    否则覆盖层按"带 scale"画、产物按"没 scale"画，拖一下就对不上。
+    return transformCss(effectiveTransform(l));
   }
 
-  /** 递归收集组里**所有真正占地方的节点**（有 `rect` 的那些；组自己不算） */
-  function collectLeaves(l: Layer): Positioned[] {
+  /**
+   * 收集组里**所有真正占地方的节点**（有 `rect` 的那些；组自己不算）。
+   *
+   * ⚠️ 遍历交给词汇表的 `iterElements`（深度优先、**含嵌套**）—— 组里还能再套组，
+   *    自己写 walk 迟早和别处那份走岔（这里原先就是自己递归 `children` 的）。
+   */
+  function collectLeaves(l: ElementNode): Positioned[] {
     if (l.type !== 'group') return [l];
     const out: Positioned[] = [];
-    for (const c of l.children) out.push(...collectLeaves(c));
+    for (const e of iterElements(l)) if (e.type !== 'group') out.push(e);
     return out;
   }
 
@@ -699,26 +720,31 @@ export function createVocabEditor(
   }
 
   /**
-   * 指针是否落在某个**顶层组**的内容范围里 —— 命中则返回组 id（没有则 `null`）。
+   * 指针是否落在某个**顶层组**（= 直接待在某个图层里的组）的内容范围里 —— 命中则返回组 id（没有则 `null`）。
    *
    * ⚠️ 口径必须与渲染侧 `emit.ts` 的 `groupContentBox` 一致：**子元素 `rect` 的并集**，
    *    不含子元素自身的 `transform`。两边不一致的话，"看起来在组里"和"实际选中组"会分叉。
    */
   function groupAtPointer(p: LocalPoint): string | null {
-    // 数组后写的画在上面 ⇒ 从后往前找，先命中的就是"最上面那个组"
+    // ⚠️ 现在有**两层**顺序：`doc.layers`（图层之间）与 `layer.elements`（图层内）——
+    //    两层都得**从后往前**扫，先命中的才是画面上真正"最上面那个组"
+    //    （数组后写的画在上面）。
     for (let i = doc.layers.length - 1; i >= 0; i--) {
-      const l = doc.layers[i];
-      if (l.type === 'group' && coversPoint(l, p)) return l.id;
+      const els = doc.layers[i].elements;
+      for (let j = els.length - 1; j >= 0; j--) {
+        const e = els[j];
+        if (e.type === 'group' && coversPoint(e, p)) return e.id;
+      }
     }
     return null;
   }
 
   /** 组（含嵌套）的子元素并集是否含这个点 */
   function coversPoint(g: GroupNode, p: LocalPoint): boolean {
-    const walk = (list: readonly Layer[]): boolean => {
+    const walk = (list: readonly ElementNode[]): boolean => {
       for (const l of list) {
         if (l.type === 'group') {
-          if (walk(l.children)) return true;
+          if (walk(l.elements)) return true;
           continue;
         }
         // `rect` 就是画布 px ⇒ 命中判定直接用它的四个数
@@ -727,27 +753,20 @@ export function createVocabEditor(
       }
       return false;
     };
-    return walk(g.children);
+    return walk(g.elements);
   }
 
   /** 从 `id` 往上找**最外层**的祖先组（`id` 本身就是顶层 ⇒ `null`） */
   function outermostGroupOf(id: string): string | null {
+    // ⚠️ 旧实现是"自上而下 walk `doc.layers`（那时它是所有节点的扁平表），
+    //    第一个命中的就是最外层"。现在改成**从它所在的容器往上走**：
+    //    最后记下的那个组就是最外层（图层不是组 ⇒ 走到图层自然停）。
     let found: string | null = null;
-    const walk = (list: readonly Layer[]): boolean => {
-      for (const l of list) {
-        if (l.type === 'group') {
-          if (l.id === id) return true;
-          if (walk(l.children)) {
-            if (found === null) found = l.id; // 自上而下 ⇒ 第一个命中的就是最外层
-            return true;
-          }
-        } else if (l.id === id) {
-          return true;
-        }
-      }
-      return false;
-    };
-    walk(doc.layers);
+    let c: Layer | GroupNode | null = containerOf(doc, id);
+    while (isGroupContainer(c)) {
+      found = c.id;
+      c = containerOf(doc, c.id);
+    }
     return found;
   }
 
@@ -765,7 +784,7 @@ export function createVocabEditor(
   function previewGroup(id: string | null, start: LocalBox, box: LocalBox) {
     const el = id ? (root.querySelector(`[data-layer="${cssEscape(id)}"]`) as HTMLElement | null) : null;
     if (!el) return;
-    const n = layerById(id);
+    const n = elementById(id);
     const rot = n?.type === 'group' && n.transform?.rotate ? ` rotate(${n.transform.rotate}deg)` : '';
     const dx = box.left - start.left;
     const dy = box.top - start.top;
@@ -775,7 +794,7 @@ export function createVocabEditor(
     el.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})${rot}`;
   }
 
-  function rotateOf(l: Layer): number {
+  function rotateOf(l: ElementNode): number {
     return l.transform?.rotate ?? 0;
   }
 
@@ -806,7 +825,28 @@ export function createVocabEditor(
    * 组一转，加出来的点就落在**别处**（不是崩，是悄悄改错地方 —— 更糟）。
    * 与"拖组内元素"同一个道理：**宁可不给，也不给个别扭/出错的**。
    */
-  function blocked(l: Layer): string | null {
+  /**
+   * **这个元素所在的图层被锁定了吗** —— 锁了就返回图层 id，否则 null。
+   *
+   * 从元素往上走到**图层**（`containerOf` 给的是直接容器，所以`null` 时就说明已经到顶 ⇒
+   * 它的父就是图层）。隐藏的图层不用管：隐藏的图层不产出 DOM，压根点不到。
+   */
+  function lockedLayerOf(id: string): string | null {
+    let cur = id;
+    for (;;) {
+      const owner = containerOf(doc, cur);
+      if (!owner) break;
+      cur = owner.id;
+    }
+    const layer = findLayer(doc, cur);
+    return layer && layer.locked === true ? layer.id : null;
+  }
+
+  function blocked(l: ElementNode): string | null {
+    // ⭐ **锁定的图层**：里面所有元素都不能改（选中/拖动/旋转/顶点一律挡住）。
+    //    `locked` 只给编辑器看，渲染完全忽略它（见 `vocabulary.ts` 的 `Layer.locked`）。
+    const lock = lockedLayerOf(l.id);
+    if (lock) return `图层「${lock}」被锁定 —— 先在「图层」页取消锁定`;
     const t = l.transform;
     if (t?.skewX || t?.skewY) return '这个节点有斜切，顶点编辑这一版不支持';
     if (t?.scale && (t.scale.x !== 1 || t.scale.y !== 1)) return '这个节点有缩放，顶点编辑这一版不支持';
@@ -817,7 +857,7 @@ export function createVocabEditor(
   }
 
   /** 只有斜切会挡住**旋转**（带 `scale` 能转：实时预览用渲染器同一个 `transformCss`） */
-  function rotateBlocked(l: Layer): boolean {
+  function rotateBlocked(l: ElementNode): boolean {
     return !!(l.transform?.skewX || l.transform?.skewY);
   }
 
@@ -825,7 +865,7 @@ export function createVocabEditor(
   let blockReason: string | null = null;
 
   function syncOverlay() {
-    const l = layerById(selectedId);
+    const l = elementById(selectedId);
 
     // ── 包围盒：任何选中的节点都显示 ──────────────────────────────
     if (!selectedId || !l) {
@@ -930,7 +970,7 @@ export function createVocabEditor(
    * 从文档重算，自动对上。**不能反过来**（先写点会把点写进旧框的像素空间）。
    */
   function normalizePolygon(id: string): void {
-    const n = layerById(id);
+    const n = elementById(id);
     if (!n || n.type !== 'shape' || n.kind !== 'polygon') return;
 
     const box = boxOf(n);
@@ -1037,7 +1077,7 @@ export function createVocabEditor(
    *    外层盒子一变就自动跟着变，本来就不需要同步。
    */
   function syncShapeSvg(id: string, box: LocalBox): void {
-    const n = layerById(id);
+    const n = elementById(id);
     if (!n || n.type !== 'shape') return;
     // ⚠️ 用**后代选择器**而不是 `>` 子选择器：语义在此等价（svg 就是那一层的直接子元素，
     //    层内也不会再有别的 svg 外层），而后代写法在与真浏览器行为一致的简单选择器子集里
@@ -1090,7 +1130,7 @@ export function createVocabEditor(
    * 就会出现「拖的时候看着对、松手重渲又跳一下」。
    */
   function setTransformStyle(id: string, rotate: number) {
-    const l = layerById(id);
+    const l = elementById(id);
     const el = layerEl(id);
     if (!l || !el) return;
     // ⚠️ 组走另一条：容器是**画布大小**，`transform-origin` 的百分比口径不同，
@@ -1098,7 +1138,7 @@ export function createVocabEditor(
     const css =
       l.type === 'group'
         ? groupTransformCss({ ...l, transform: { ...(l.transform ?? {}), rotate } }, doc.canvas)
-        : transformCss({ ...(l.transform ?? {}), rotate }, boxOf(l));
+        : transformCss({ ...(effectiveTransform(l) ?? {}), rotate });
     // `transformCss` 给的是一整串声明（`transform:…;transform-origin:…`），逐条设回去
     for (const decl of css.split(';')) {
       const i = decl.indexOf(':');
@@ -1191,7 +1231,7 @@ export function createVocabEditor(
     // 沿路径排字的（`curve` / `path`）编辑期间要**降级成普通文字**才能打字 ——
     // 它的产物是 SVG `<textPath>`，没有 `.vt`、也挂不上 `contentEditable`。
     // ⇒ 把这件事报给宿主，由它重渲一份"摊平版"（**文档一个字节都不改**）。
-    const n = layerById(id);
+    const n = elementById(id);
     const flatten = !!(n && n.type === 'text' && (n.path || n.curve));
     // ⭐ **让那块文字真的能编辑**（`contentEditable` + 聚焦 + 挂子文档监听）。
     //    这件事归**编辑器**：双击进文字态本来就是它做的，让文字可编辑是同一件事的后半段。
@@ -1204,7 +1244,7 @@ export function createVocabEditor(
   function exitTextEdit() {
     if (textEditId === null) return;
     const wasFlattened = (() => {
-      const n = layerById(textEditId);
+      const n = elementById(textEditId);
       return !!(n && n.type === 'text' && (n.path || n.curve));
     })();
     textEditId = null;
@@ -1228,7 +1268,7 @@ export function createVocabEditor(
     let poly = polyOf(selectedId);
     // ⭐ 点在**解析形状**（rect / ellipse）的等效顶点上 ⇒ 先升格成 polygon（单向，Figma 同款）
     //    ⚠️ 先过 `blocked`：组带变换时**不许升格也不许编辑**（改了也是错位置）
-    const selfV = layerById(selectedId);
+    const selfV = elementById(selectedId);
     if (vi >= 0 && selfV?.type === 'shape' && (selfV.kind === 'rect' || selfV.kind === 'ellipse') && !blocked(selfV)) {
       poly = ensureEditablePoly(selectedId!);
     }
@@ -1248,7 +1288,7 @@ export function createVocabEditor(
     }
 
     // ② 包围盒：四角**方块**柄 = 缩放，顶部**圆**柄 = 旋转
-    const node = layerById(selectedId);
+    const node = elementById(selectedId);
     const deco = hitDecoration(e.target);
     if (node) {
       // ⭐ 组也有这两套柄了：
@@ -1364,7 +1404,7 @@ export function createVocabEditor(
         ? moveBox(session.start, session.origin, p)
         : resizeBox(session.start, session.dir, session.origin, p, { ratioLock: e.shiftKey });
 
-    const n = layerById(selectedId);
+    const n = elementById(selectedId);
 
     gestureBox = box;
     if (session.kids) {
@@ -1427,7 +1467,7 @@ export function createVocabEditor(
       const deg = gestureRotate ?? s.rotate0;
       // 没真正动过 = 不是一次操作（原地单击），不发提交
       if (commit && deg !== s.rotate0) {
-        const l = layerById(id);
+        const l = elementById(id);
         if (l) l.transform = { ...(l.transform ?? {}), rotate: deg };
         submit(id, '旋转');
       } else if (!commit) {
@@ -1464,7 +1504,7 @@ export function createVocabEditor(
           };
         }
       } else {
-        const l = layerById(id);
+        const l = elementById(id);
         // ⚠️ `box` 与 `rect` 现在**同一单位**（画布 px）⇒ 直接搬四个数，没有换算函数
         if (l && l.type !== 'group') l.rect = { x: box.left, y: box.top, w: box.width, h: box.height };
       }
@@ -1527,7 +1567,7 @@ export function createVocabEditor(
 
     // ①b 光标压在 rect / ellipse 的**边上** ⇒ 先升格再"在这儿加点"
     //    （这正是"在矩形/椭圆上插点"的入口；组带变换时 blocked 挡住，不升格）
-    const selfC = layerById(selectedId);
+    const selfC = elementById(selectedId);
     let poly = polyOf(selectedId);
     if (selfC?.type === 'shape' && (selfC.kind === 'rect' || selfC.kind === 'ellipse') && !blocked(selfC)) {
       poly = ensureEditablePoly(selectedId!);
@@ -1588,7 +1628,7 @@ export function createVocabEditor(
     const p = localPoint(e);
 
     // ① 双击顶点 = 删掉它（rect / ellipse 会先升格成 polygon）
-    const selfD = layerById(selectedId);
+    const selfD = elementById(selectedId);
     let poly = polyOf(selectedId);
     if (selfD?.type === 'shape' && (selfD.kind === 'rect' || selfD.kind === 'ellipse') && !blocked(selfD)) {
       poly = ensureEditablePoly(selectedId!);
@@ -1611,7 +1651,7 @@ export function createVocabEditor(
 
     // ② 双击**文字** = 进入选字态（Word 那样：接下来在字上拖，选中哪几个改哪几个）
     const id = hitLayer(root, p);
-    const n = layerById(id);
+    const n = elementById(id);
     if (n && n.type === 'text') {
       select(n.id);
       enterTextEdit(n.id);
@@ -1653,7 +1693,7 @@ export function createVocabEditor(
     //    连 head 一起改 ⇒ 再下一次 push 的 before 就成了"已改状态"（实测：撤销后打字
     //    的命令 before 混入了已打的字符）。undo/redo 是 head 与 doc 唯一可能同引用的地方。
     doc = cloneDoc(prev);
-    if (selectedId && !layerById(selectedId)) {
+    if (selectedId && !elementById(selectedId)) {
       selectedId = null;
       outline(null);
     }
@@ -1667,7 +1707,7 @@ export function createVocabEditor(
     const next = stackRedo(stack);
     if (!next) return false;
     doc = cloneDoc(next); // ⭐ 同上：与 `stack.head` 保持引用分离
-    if (selectedId && !layerById(selectedId)) {
+    if (selectedId && !elementById(selectedId)) {
       selectedId = null;
       outline(null);
     }
@@ -1691,7 +1731,7 @@ export function createVocabEditor(
     updateDoc(next) {
       doc = cloneDoc(next);
       resetStack(stack, doc); // ⭐ 宿主整体换文档 ⇒ 历史作废
-      if (selectedId && !layerById(selectedId)) {
+      if (selectedId && !elementById(selectedId)) {
         selectedId = null;
         outline(null);
       }
@@ -1714,13 +1754,22 @@ export function createVocabEditor(
     },
 
     fields(id) {
-      const n = id ? layerById(id) : null;
+      const n = id ? elementById(id) : null;
       return n ? fieldsFor(n, doc.canvas) : [];
     },
 
     patch(id, path, value) {
-      const l = layerById(id);
-      if (!l) return;
+      // ⭐ 先按**元素**找；找不到再看它是不是**图层**（图层有自己的字段：底色 / 旋转 / 不透明度）
+      const l = elementById(id);
+      if (!l) {
+        const layer = findLayer(doc, id);
+        if (!layer) return;
+        const lf = findLayerField(path);
+        if (!lf) return;
+        lf.set(layer, value);
+        scheduleCommit(id, path);
+        return;
+      }
       const f = findField(l, doc.canvas, path);
       if (!f) return;
       f.set(l, value);
@@ -1730,7 +1779,7 @@ export function createVocabEditor(
     },
 
     get editable() {
-      const l = layerById(selectedId);
+      const l = elementById(selectedId);
       return !!l && isPoly(l) && !blocked(l);
     },
 
@@ -1757,29 +1806,52 @@ export function createVocabEditor(
     },
     undoDepth: () => stackUndoDepth(stack),
 
-    addLayer(node: Layer) {
+    addLayer(node: ElementNode) {
+      // ⚠️ **临时规则（文档模型改版迁移期）**：文档现在是「画布 → 图层 → 元素」，
+      //    而"往文档里加一个新元素"这件事**还没说加进哪个图层** ⇒ 这里定：
+      //    **加到第一个图层**；**一个图层都没有，就先建一个默认图层再加**
+      //    （`id` 用 `layer-1` 这种就够 —— 空文档里不会有重名）。
+      //    ⚠️ 图层**永远和画布一样大** ⇒ 里面的元素就是**画布坐标**，
+      //       新元素加进去不用做任何坐标换算（与现有文档同一套口径）。
+      //    ⭐ 等图层面板做出来，这个入口应改成"加进**当前选中**的那个图层"。
+      let layer = doc.layers[0];
+      if (!layer) {
+        layer = { id: 'layer-1', elements: [] };
+        doc.layers.push(layer);
+      }
       // ⭐ 追加到**尾部**（数组后面的在上 ⇒ 新元素在最上层，压在所有东西上面）
-      doc.layers.push(node);
+      layer.elements.push(node);
       select(node.id);
       submit(node.id, `新增 ${node.type}`);
       syncOverlay();
     },
 
     removeLayer(id: string) {
-      const walk = (list: Layer[]): boolean => {
-        for (let i = 0; i < list.length; i++) {
-          if (list[i].id === id) {
-            list.splice(i, 1);
-            return true;
-          }
-          const c = list[i];
-          if (c.type === 'group' && walk(c.children as Layer[])) return true;
+      // ⭐ **图层自己**：叠放顺序就是 `doc.layers` 的顺序（画布的孩子之间）。
+      //    ⚠️ 这一段是补的：`EditPanel` 给图层行也摆了「删除」按钮，
+      //       没有它点了会**静默无反应**（按钮摆出来了就必须能用）。
+      const li = doc.layers.findIndex((l) => l.id === id);
+      if (li >= 0) {
+        doc.layers.splice(li, 1);
+        // 删的是当前选中的图层、或选中的元素正躺在这个图层里 ⇒ 清选中
+        if (selectedId === id || !elementById(selectedId)) {
+          selectedId = null;
+          outline(null);
         }
-        return false;
-      };
-      if (!walk(doc.layers)) return;
+        submit(null, '删除图层');
+        syncOverlay();
+        return;
+      }
+      // ⚠️ 删的可能是**任意一个图层里的元素**（甚至嵌在组里的）⇒ 先问词汇表
+      //    "它所在的容器是谁"，再从**那一个** `elements` 里摘掉它。
+      //    （旧实现是自己 walk `doc.layers` —— 那时 `doc.layers` 就是所有节点的扁平表。）
+      const c = containerOf(doc, id);
+      if (!c) return;
+      const i = c.elements.findIndex((e) => e.id === id);
+      if (i < 0) return;
+      c.elements.splice(i, 1);
       // 删的是当前选中的（或其祖先）⇒ 清选中
-      if (selectedId === id || !layerById(selectedId)) {
+      if (selectedId === id || !elementById(selectedId)) {
         selectedId = null;
         outline(null);
       }
@@ -1788,9 +1860,31 @@ export function createVocabEditor(
     },
 
     moveLayer(id: string, to: 'up' | 'down' | 'top' | 'bottom') {
-      const i = doc.layers.findIndex((l) => l.id === id);
+      // ⭐ **图层自己**：在 `doc.layers` 里跟兄弟换位（同样是叠放语义）。
+      //    ⚠️ 与 `removeLayer` 同理，这一段是补的 —— 没有它图层行的「上移/下移」是静默无反应。
+      const li = doc.layers.findIndex((l) => l.id === id);
+      if (li >= 0) {
+        const ll = doc.layers;
+        let lj: number;
+        if (to === 'up') lj = li + 1;
+        else if (to === 'down') lj = li - 1;
+        else if (to === 'top') lj = ll.length - 1;
+        else lj = 0;
+        if (lj < 0 || lj >= ll.length || lj === li) return; // 已在目标位置 ⇒ 无操作（不进栈）
+        const [lmoved] = ll.splice(li, 1);
+        ll.splice(lj, 0, lmoved);
+        submit(null, '调整图层顺序');
+        syncOverlay();
+        return;
+      }
+      // ⚠️ 叠放顺序是**它所在的那个容器**里的事：图层里的元素只在**同一图层的兄弟之间**换位，
+      //    组里的元素同理（组内也有叠放顺序）。旧模型里 `doc.layers` 是所有节点的扁平表，
+      //    所以那时这是"顶层顺序"—— 照抄到现在会变成"移动图层"，那是另一件事。
+      const c = containerOf(doc, id);
+      if (!c) return;
+      const list = c.elements;
+      const i = list.findIndex((e) => e.id === id);
       if (i < 0) return;
-      const list = doc.layers;
       const at = (dir: -1 | 1) => i + dir;
       // ⚠️ 方向：数组**后面的层画在上面**（叠放语义）⇒
       //    `up`（视觉上移一层）= 与**后一个**交换（i+1）；`down` = 与前一个交换（i-1）；
@@ -1811,7 +1905,10 @@ export function createVocabEditor(
       done: Array<{ label: string; before: string[]; after: string[]; at: number; key: string }>;
       undone: Array<{ label: string; before: string[]; after: string[]; at: number; key: string }>;
     } {
-      const idsOf = (d: DesignDocument): string[] => d.layers.map((x) => x.id);
+      // ⚠️ `doc.layers` 现在是**图层**表 ⇒ 直接 `map((x) => x.id)` 只会摘出 `layer-1` 这种
+      //    名字，看不出改了什么。摘要要的是**元素** id ⇒ 按图层逐个 `iterElements` 展开。
+      const idsOf = (d: DesignDocument): string[] =>
+        d.layers.flatMap((l) => [...iterElements(l)].map((e) => e.id));
       const brief = (c: Command) => ({
         label: c.label,
         at: c.at,
@@ -1826,7 +1923,7 @@ export function createVocabEditor(
     },
 
     applyRange(id, range, patch) {
-      const l = layerById(id);
+      const l = elementById(id);
       if (!l || l.type !== 'text') return;
       l.runs = applyToRange(l.runs, range, patch);
       submit(id, '改选区样式');
@@ -1861,7 +1958,7 @@ export function createVocabEditor(
     selectionSnapshot: buildSelectionSnapshot,
 
     insertText(id, at, text) {
-      const l = layerById(id);
+      const l = elementById(id);
       if (!l || l.type !== 'text' || !text) return;
       l.runs = insertRunText(l.runs, at, text).runs;
       // ⚠️ 换行（含 `\n` 的插入）打断合并——Enter 后再打的字应是**新的一条**
@@ -1870,7 +1967,7 @@ export function createVocabEditor(
     },
 
     deleteRange(id, from, to) {
-      const l = layerById(id);
+      const l = elementById(id);
       if (!l || l.type !== 'text') return;
       l.runs = deleteRunRange(l.runs, from, to).runs;
       commitTyping(id);
@@ -1878,7 +1975,7 @@ export function createVocabEditor(
     },
 
     setRunText(id, index, text) {
-      const l = layerById(id);
+      const l = elementById(id);
       if (!l || l.type !== 'text') return;
       l.runs = replaceRunText(l.runs, index, text).runs;
       commitTyping(id);

@@ -44,13 +44,17 @@ import type {
   DesignDocument,
   GroupNode,
   ImageNode,
-  Layer,
-  LayerBase,
+  /** ⚠️ 名字带 Node 后缀：`Element` 会和 DOM 全局的 `Element` 撞名 */
+  ElementNode,
+  /** 元素的基础字段（`id` / `rect` / 外观）—— intent 那几个类型都从它派生 */
+  ElementBase,
   ShapeNode,
   TextNode,
   TextRun,
   VisualBase,
 } from '../../document/vocabulary';
+// ⚠️ 兜底字号 / 扁平→图层的折叠规则都从**文档模型**取，不自己写一份（理由见文件末那条 note）。
+import { DEFAULT_FONT_PX, wrapIntoLayers } from '../../document/vocabulary';
 
 // ══════════════════════════════════════════════════════════════════════
 // ① 意图（比例版）
@@ -85,32 +89,32 @@ type CanvasRelative = {
  * （`switch (l.type)` 收不窄），于是每个 `case` 里的 `l` 还是整个联合。
  * 把 `type` 显式重新声明在顶层，"按 `type` 收窄"才成立。
  */
-type IntentLayerBase = Omit<LayerBase, 'rect'> & CanvasRelative;
+type IntentElementBase = Omit<ElementBase, 'rect'> & CanvasRelative;
 type IntentVisualBase = VisualBase;
 
 export type IntentTextRun = Omit<TextRun, 'fontSizePx'> & { fontScale?: number };
 export type IntentTextNode = Omit<TextNode, 'rect' | 'fontSizePx' | 'runs' | 'type'> &
-  IntentLayerBase & { type: 'text'; runs: IntentTextRun[] };
+  IntentElementBase & { type: 'text'; runs: IntentTextRun[] };
 
 /**
  * ⚠️ **形状必须逐个几何写**，不能 `Omit<ShapeNode, …>` 一把过。
  *
- * `ShapeNode` 是 `LayerBase & ShapeGeometry & { type: 'shape' }` —— 一个**交叉类型**，
+ * `ShapeNode` 是 `ElementBase & ShapeGeometry & { type: 'shape' }` —— 一个**交叉类型**，
  * 而 `ShapeGeometry` 又是按 `kind` 判别的联合。`Omit` 作用在交叉类型上会把它
  * **压成一个对象类型**，`kind` 的判别能力随之消失（`points` / `d` 都读不到了）。
  *
  * ⇒ 这里按 `ShapeGeometry` 的形状**逐个**声明。
  * ⚠️ **词汇表将来加新几何时，这里要跟着加**（否则那个几何的字段会掉出意图类型）。
  */
-export type IntentShapeNode = IntentLayerBase &
+export type IntentShapeNode = IntentElementBase &
   (
     | { kind: 'rect' }
     | { kind: 'ellipse' }
     | { kind: 'polygon'; points: Array<[number, number]> }
     | { kind: 'path'; d: string }
   ) & { type: 'shape' };
-export type IntentImageNode = IntentLayerBase & { type: 'image'; asset: string; fit?: ImageNode['fit']; render?: ImageNode['render']; position?: ImageNode['position'] };
-export type IntentSvgNode = IntentLayerBase & { type: 'svg'; asset: string };
+export type IntentImageNode = IntentElementBase & { type: 'image'; asset: string; fit?: ImageNode['fit']; render?: ImageNode['render']; position?: ImageNode['position'] };
+export type IntentSvgNode = IntentElementBase & { type: 'svg'; asset: string };
 export type IntentGroupNode = IntentVisualBase &
   Pick<GroupNode, 'transform' | 'opacity' | 'blend' | 'clip' | 'mask' | 'backdrop' | 'filter'> & {
     type: 'group';
@@ -171,9 +175,6 @@ export interface TranslateResult {
  * 2 位足够（60 万分之一的画布宽），又不会把 JSON 写成科学计数法。
  */
 const r2 = (v: number): number => Math.round(v * 100) / 100;
-
-/** 默认字号比例 —— 与 `emit.ts` 的 `DEFAULT_FONT_PX`（27px）在 900 画布上同值 */
-const DEFAULT_FONT_SCALE = 0.03;
 
 /** 比例 → 画布宽 px */
 const byW = (ratio: number, W: number): number => r2(ratio * W);
@@ -269,11 +270,11 @@ export function translate(intent: DesignIntent): TranslateResult {
 
   const groupNode = (n: IntentGroupNode): GroupNode => {
     // ⚠️ 组**没有 `rect`**（范围 = 子元素并集）⇒ 这里不换算任何坐标。
-    //    ⚠️ 组自己的 id **不在这里校验** —— 由 `layer()` 统一过一遍，
+    //    ⚠️ 组自己的 id **不在这里校验** —— 由 `element()` 统一过一遍，
     //       否则嵌套组会被查两次，报出假的"id 重复"。
     return {
       ...n,
-      children: n.children.map((c, i) => layer(c, `${n.id}.children[${i}]`)),
+      elements: n.children.map((c, i) => element(c, `${n.id}.children[${i}]`)),
     } as GroupNode;
   };
 
@@ -281,7 +282,7 @@ export function translate(intent: DesignIntent): TranslateResult {
    * @param where 出问题时报的位置路径（嵌套时形如 `grp.children[2]`）——
    *   比裸下标有用得多：模型看到它才知道该改哪儿。
    */
-  const layer = (l: IntentLayer, where: string): Layer => {
+  const element = (l: IntentLayer, where: string): ElementNode => {
     checkId(l.id, where);
     switch (l.type) {
       case 'text':
@@ -289,7 +290,7 @@ export function translate(intent: DesignIntent): TranslateResult {
       case 'image':
       case 'svg':
       case 'shape':
-        return plainNode(l) as Layer;
+        return plainNode(l) as ElementNode;
       case 'group':
         return groupNode(l);
       default: {
@@ -313,12 +314,23 @@ export function translate(intent: DesignIntent): TranslateResult {
     }
   };
 
-  const layers = intent.layers.map((l, i) => layer(l, `<layer[${i}]>`));
+  // ⭐ intent 里是**扁平的一串元素**，文档里是**画布 → 图层 → 元素** ⇒ 用那条共用规则折一次。
+  //    规则本身在 `vocabulary.wrapIntoLayers`（迁移脚本用的是同一份，不许各写一遍）。
+  const elements = intent.layers.map((l, i) => element(l, `<layer[${i}]>`));
+  const layers = wrapIntoLayers(elements);
 
   // ── 全局提醒：默认字号（免得"我没设字号"变成沉默行为） ──
-  const anyTextWithoutSize = layers.some((l) => l.type === 'text' && l.fontSizePx === undefined);
+  // ⚠️ 判据必须和渲染器的兜底链**逐段一致**：`run.fontSizePx ?? node.fontSizePx ?? DEFAULT_FONT_PX`
+  //    ⇒ **两边都空**才算"没写字号"。只看元素级会把"只给了片段级"误报成没写
+  //    （作者明明写了 36px，却被通知"你没写字号" ⇒ 纯噪声；而 notes 是给模型的反馈通道，
+  //     报错了它会去修一个本来没问题的东西，报多了它就学会无视 notes）。
+  const anyTextWithoutSize = elements.some(
+    (l) => l.type === 'text' && l.fontSizePx === undefined && !l.runs.some((r) => r.fontSizePx !== undefined),
+  );
   if (anyTextWithoutSize) {
-    note('<canvas>', 'fontScale', `有文字没写字号 ⇒ 渲染器用兜底 ${Math.round(DEFAULT_FONT_SCALE * W)}px（= 画布宽 3%）`);
+    // ⚠️ 兜底值是**绝对 px、与画布宽无关**。曾经这里写的是 `0.03 × 画布宽`（比例时代的残留）——
+    //    在 1440 画布上对模型报 **43px**，而渲染器实际用的是 **27px**：对着模型报假数字。
+    note('<canvas>', 'fontScale', `有文字没写字号 ⇒ 渲染器用兜底 ${DEFAULT_FONT_PX}px（绝对 px，与画布宽无关）`);
   }
 
   return { doc: { canvas: intent.canvas, layers }, issues };

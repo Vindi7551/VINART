@@ -52,15 +52,46 @@ export interface Canvas {
    * **画布底色** —— 值 = 一个 CSS「背景」值，和元素的 `fill` **同一个值空间**
    * （纯色 / 渐变 / 图案 / 多层叠）。
    *
-   * ⚠️ 省略 = **不铺底色**（导出 PNG 时是透明的）。
+   * ⚠️ **省略 = 白底**（`#FFFFFF`）。这是个**安全的默认**：交付出去的 PNG 不带 alpha，
+   *    下游不管合成到什么底色上都不会变样。
+   *
+   * ⚠️ 要**透明**必须**显式写** `'transparent'`（CSS 合法值，原样透传）。
+   *    但先想清楚：**带 alpha 的 PNG 交给 Amazon，合成底色不由你控制**
+   *    （有的环节会合到黑底上）。而且透明只在 PNG 下有意义（JPEG 不支持 alpha）。
    */
   background?: string | string[];
 }
 
 // ══ 文档 ══════════════════════════════════════════════
+/**
+ * ## ⭐ 文档的结构（2026-10-16 定）
+ *
+ * ```
+ * 画布
+ * └─ 图层（画布的孩子 —— "又叠加的一张画布"）
+ *     └─ 元素（图层的孩子）
+ *         ├─ 叶子元素：矩形 / 椭圆 / 多边形 / 路径 / 文字 / 图片 / 图标
+ *         └─ 组（元素里特殊的一类）
+ *             └─ 组内元素（组的孩子，还能再是组）
+ * ```
+ *
+ * ⚠️ **图层和元素是父子，不是平级**：图层是画布的孩子，元素是图层的孩子。
+ *    （这条是用户 2026-10-16 明确的；此前这里是一个扁平的 `Layer[]`，
+ *     矩形/文字/图片/组全混在画布下面 —— 那表达不了上面这个三层结构。）
+ *
+ * ⚠️ **图层永远和画布一样大**，而且**没有底色**（用户 2026-10-16 定）—— 所以 `Layer` 既没有
+ *    `rect` 也没有 `background`。
+ *    「又叠加的一张画布」= 一个**透明的合成面**：跟主画布一样大、能整体做效果，
+ *    但**底色归画布**（`Canvas.background`），图层本身不画任何东西。
+ *    ⇒ **元素坐标永远是画布坐标**，不存在"层内坐标"这回事，编辑器也就不需要任何坐标换算。
+ *    ⚠️ 这两个字段都曾经有过：`rect`（让图层是个更小的盒子、元素用层内坐标）删掉了 ——
+ *      渲染支持而编辑器（手势/选中框/顶点）完全没跟上，是个"渲染对、编辑器错"的静默陷阱；
+ *      `background`（图层自己的底色）也删掉了 —— 那会把图层变成"卡片模型"，不是图层。
+ *      将来真要做"局部画板 / 卡片"，**必须连编辑器一起做**，而且要另立类型。
+ */
 export interface DesignDocument {
   canvas: Canvas;
-  /** 元素列表：**数组顺序即叠放顺序**（先写的在下面） */
+  /** **图层**列表（不是元素列表！）：数组顺序即叠放顺序（先写的在下面） */
   layers: Layer[];
 }
 
@@ -130,19 +161,41 @@ export interface Transform {
   rotate?: number;
 
   /**
-   * **横向斜切**："它斜了一点" —— 顶边相对底边水平偏移的**比例**（相对框宽）。
-   * `0.15` = 顶边向右错开 15%。
+   * **横向斜切**（度）：`8` = 斜 8 度。
+   *
+   * ⚠️ 口径**与 CSS `skewX()` 逐字一致**（y 轴朝下）
+   * ⇒ **正角度 = 底边向右、顶边向左**，与 `rotate` 的"顺时针为正"同出一源。
+   * 编译器原样写出去，**不做任何换算**。
+   *
+   * ⚠️ 曾经存的是"顶边错开多少倍框宽"的**比例** —— 那是错的：换算成角度还要用到**框高**
+   * （`tan θ = 比例 × 宽 ÷ 高`）⇒ 名义一维、实际依赖长宽比，而且同一个接口里
+   * `rotate` 是度、`skewX` 是比例，两套单位。已统一为**度**。
    */
   skewX?: number;
-  /** **纵向斜切**：左边相对右边垂直偏移的比例 */
+  /** **纵向斜切**（度）：与 CSS `skewY()` 同口径 ⇒ **正角度 = 右边向下、左边向上** */
   skewY?: number;
 
   /**
    * **非等比变形**（压扁 / 拉长）：`{x:1.2, y:0.8}`。
    *
-   * ⚠️ **等比缩放不要用它** —— 那会"把已画好的画面放大"，**文字变糊**；
-   * 想等比放大请改 `rect` 的 `w/h`（文字会重新排版、清晰）。
-   * 这里**只放 `x` 与 `y` 不相等的变形**。
+   * ## ⚠️ 只给 `shape` / `image` 用；**文字一个都不许**（等比、非等比都禁）
+   *
+   * | | 它其实在做什么 | 该归谁 |
+   * |---|---|---|
+   * | 等比 `{2,2}` | 改文字的**大小** | **`fontSizePx`** |
+   * | 非等比 `{0.8,1}` | 改文字的**字形比例** | **字体文件**（condensed 家族 / 变量字体的 `wdth` 轴） |
+   *
+   * ⇒ **文字的大小归 `fontSizePx`，文字的形状归字体文件 —— `transform` 两样都不管。**
+   *
+   * **为什么非等比也不行**：它不是"换一个窄的字形"，是**把已经画出来的字按方向压** ⇒
+   * 竖笔变细、横笔不动 ⇒ **笔画粗细不再一致**。印刷界管这个叫 faux condensed
+   * （与 faux bold / faux italic 同类），**懂排版的人一眼看得出来**。
+   *
+   * ⇒ **要放大文字**：`rect.w/h` × k **且** `fontSizePx` × k —— **两个都要动**，缺一个就不对
+   *    （只改框 = 字一点没变大，只是给了更多空间）。
+   * ⇒ `shape` / `image` 的**等比**放大也请改 `rect` —— 那是**版式上真的变大**，
+   *    而不是"画面上放大、版式占位没变"。
+   * ⇒ 编译器遇到"文字 + `scale`"会**丢掉它并报出来**（`emit.ts` 的 `effectiveTransform`）。
    */
   scale?: { x: number; y: number };
 
@@ -233,7 +286,7 @@ export interface Shadow {
 /**
  * **所有元素共有的一组「效果」字段**：变换 / 透明 / 混合 / 滤镜 / 裁剪 / 蒙版。
  *
- * 元素（`LayerBase`）和组（`GroupNode`）都从这里继承 ——
+ * 元素（`ElementBase`）和组（`GroupNode`）都从这里继承 ——
  * 组能对**一整组**做同样的事（整体旋转、整体淡出、整体打滤镜……）。
  */
 export interface VisualBase {
@@ -296,7 +349,7 @@ export interface VisualBase {
 }
 
 /** 每个元素都有的字段 */
-export interface LayerBase extends VisualBase {
+export interface ElementBase extends VisualBase {
   id: string;
   rect: Rect;
 
@@ -341,6 +394,19 @@ export interface LayerBase extends VisualBase {
 }
 
 // ── 文字 ──────────────────────────────────────────────
+
+/**
+ * **字号兜底**（画布 px）—— 文档没写字号时用它。
+ *
+ * ⚠️ 这是个**绝对 px** ⇒ 同一份文档在 900 和 1440 的画布上默认字号**一样**。
+ *    27 是**照搬**"画布宽 3%"在 900 宽下的老取值，纯为不改动已有文档的观感。
+ *
+ * ⚠️ 它住在**文档模型**里、而不是渲染器里，因为它是**两边的共同契约**：
+ *    渲染器拿它当兜底，翻译器拿它**报给模型**（"你没写字号，会用 27px"）。
+ *    各写一份必然分叉 —— 翻译器曾经自己写了个 `0.03 × 画布宽`，
+ *    在 1440 画布上对模型报 **43px**，而渲染器实际用的是 **27px**。
+ */
+export const DEFAULT_FONT_PX = 27;
 
 /**
  * **装饰线**（下划线 / 删除线的长相）。
@@ -426,7 +492,7 @@ export interface TextRun {
 }
 
 /** 文字 */
-export interface TextNode extends LayerBase {
+export interface TextNode extends ElementBase {
   type: 'text';
 
   /**
@@ -440,12 +506,13 @@ export interface TextNode extends LayerBase {
   // ── 元素级默认样式（可省）────────────────────────────
   //    `runs` 里的**同名项覆盖**这里的值。
   //    所以"整块都是 900 粗"只需写一次，不必每个片段都写。
-  //    （`fill` / `opacity` 是元素级公共属性，在 `LayerBase` 上。）
+  //    （`fill` / `opacity` 是元素级公共属性，在 `ElementBase` 上。）
   fontFamily?: string;
   /**
    * **元素级字号（画布 px）** —— 所有片段的默认；片段可用自己的 `fontSizePx` 覆盖。
    *
-   * ⚠️ 省略时用渲染器的兜底常量 `DEFAULT_FONT_PX`（27px）—— **它是绝对 px，与画布宽无关**。
+   * ⚠️ 省略时用兜底常量 `DEFAULT_FONT_PX`（27px，见本节开头）——
+   *    **它是绝对 px，与画布宽无关**。
    * （旧口径是"画布宽的 3%"，于是同一份文档在 900 和 1440 的画布上默认字号不同；
    *   改成 px 后不再随画布漂移。）
    */
@@ -527,7 +594,7 @@ export interface TextNode extends LayerBase {
 }
 
 /** image（位图） */
-export interface ImageNode extends LayerBase {
+export interface ImageNode extends ElementBase {
   type: 'image';
   /** 素材文件名（谁生产它、用什么提示词 —— 词汇一概不管，只管名字） */
   asset: string;
@@ -564,7 +631,7 @@ export interface ImageNode extends LayerBase {
  *
  * | 想画 | 用 |
  * |---|---|
- * | 底色 / 底板 / 卡片 / 圆角块 | `rect`（圆角见 `LayerBase.radius`）|
+ * | 底色 / 底板 / 卡片 / 圆角块 | `rect`（圆角见 `ElementBase.radius`）|
  * | 圆 / 椭圆 / 徽章 | `ellipse`（框是正方形 ⇒ 正圆）|
  * | **直边异形**（旗标 / 箭头 / 三角 / 斜切块）| `polygon` —— **给一串点** |
  * | **带曲线的异形**（拱门 / 飘带 / 波浪）| `path` |
@@ -583,7 +650,7 @@ export interface ImageNode extends LayerBase {
  *    **枚举 = 点集写死；`polygon` = 点集自己给。**
  */
 export type ShapeGeometry =
-  /** **矩形** —— 就是本节点自己的框（圆角用 `LayerBase.radius`） */
+  /** **矩形** —— 就是本节点自己的框（圆角用 `ElementBase.radius`） */
   | { kind: 'rect' }
   /** **椭圆** —— 内切于本节点的框（框是正方 ⇒ 正圆） */
   | { kind: 'ellipse' }
@@ -598,7 +665,7 @@ export type ShapeGeometry =
  * ⚠️ 矢量**放大不糊**（这是它和 `image` 的根本区别）：
  *    所以 `rect` 做大就是真的清晰，**不要**用 `transform.scale`（那会让它糊）。
  */
-export type ShapeNode = LayerBase & ShapeGeometry & { type: 'shape' };
+export type ShapeNode = ElementBase & ShapeGeometry & { type: 'shape' };
 
 /**
  * **外部 SVG 文件**（从外面拿来的图标 / 徽标）。
@@ -607,7 +674,7 @@ export type ShapeNode = LayerBase & ShapeGeometry & { type: 'shape' };
  * （早先把两者揉进一个节点：`asset` 与"内联图元"二选一 ——
  *  那会造成"同一件事两个说法"，且内联图元还要额外背一套坐标系。）
  */
-export interface SvgNode extends LayerBase {
+export interface SvgNode extends ElementBase {
   type: 'svg';
   /** 素材文件名（谁生产它、用什么工具 —— 词汇一概不管，只管名字） */
   asset: string;
@@ -616,21 +683,196 @@ export interface SvgNode extends LayerBase {
 // ── 分组 ──────────────────────────────────────────────
 
 /**
- * **组** —— 把多个元素**当一个整体**来做效果：整体旋转 / 整体淡出 /
- * 整体打滤镜 / 整体裁剪蒙版 / 整体混合。
+ * **组** —— 元素里**特殊的一类**：把几个元素当一个整体来做效果
+ * （整体旋转 / 整体淡出 / 整体打滤镜 / 整体裁剪蒙版 / 整体混合）。
  *
- * ⚠️ 组**没有 `rect`**（它的范围 = 子元素的并集，不需要自己算），
+ * ⚠️ 组**没有 `rect`**（它的范围 = 组内元素的并集，不需要自己算），
  *    也**没有 `fill`/`stroke`/`shadow`**（组本身不画东西）——
- *    所以它不从 `LayerBase` 继承，只从 `VisualBase` 继承。
+ *    所以它不从 `ElementBase` 继承，只从 `VisualBase` 继承。
+ *
+ * ⚠️ 组是**元素**（`Element` 的一种）⇒ 它只能待在**图层里面**（或另一个组里面），
+ *    **不能直接挂在画布上** —— 画布的孩子一律是图层。
  */
 export interface GroupNode extends VisualBase {
   type: 'group';
   id: string;
-  /** 组里的元素（可以再套组） */
-  children: Layer[];
+  /** **组内元素**（还能再是组） */
+  elements: ElementNode[];
 }
 
-export type Layer = TextNode | ImageNode | SvgNode | ShapeNode | GroupNode;
+/** **叶子元素** —— 自己不装别的东西的元素 */
+export type LeafNode = TextNode | ImageNode | SvgNode | ShapeNode;
+
+/**
+ * **元素** —— 图层（或组）的孩子。要么是叶子，要么是组。
+ *
+ * ⚠️ 名字带 `Node` 后缀是**必须**的：`Element` 会和 **DOM 全局的 `Element`** 撞名
+ *    （编辑器天天跟真 DOM 打交道，撞了以后 `tsc` 会说"两个不同的 Element"）。
+ *    也与本文件既有的 `TextNode` / `GroupNode` 一致。
+ */
+export type ElementNode = LeafNode | GroupNode;
+
+/**
+ * 图层能带的**那组整体效果** —— 比元素的 `VisualBase` **窄**，这是故意的。
+ *
+ * 对着 PS 的图层面板一项项核过（2026-10-16）：
+ *
+ * | PS 图层属性 | 我们有 | 说明 |
+ * |---|---|---|
+ * | 混合模式 | `blend` | ✅ |
+ * | 不透明度 | `opacity` | ✅ |
+ * | 图层蒙版（软） | `mask` | ✅ |
+ * | 智能滤镜 | `filter` | ✅（`url(#…)` 也能引 SVG 滤镜） |
+ * | （PS 没有"对背后做滤镜"） | `backdrop` | ✅ CSS 独有，毛玻璃要靠它 |
+ * | **旋转 / 斜切 / 缩放 / 支点** | ❌ **没有** | PS 也没有 —— 那是"自由变换"对**内容**做的事，不是图层属性。而且**图层和画布一样大**，转它等于转整张画布，没意义 |
+ * | 矢量蒙版（形状硬边） | ❌ **没有** | `mask` 已经能表达硬边（一张黑白形状的蒙版）⇒ 留着 `clip` 就是**两套做同一件事** |
+ * | 显示/隐藏 · 锁定 | ❌ 还没有 | PS 有、我们缺（**待做**） |
+ * | 填充（第二种不透明度） | ❌ 没有 | 先不用 |
+ */
+export interface LayerEffects {
+  /** 整层一起淡 —— ⚠️ 是"先合成再淡"，不是各自淡（这是"整组合成"） */
+  opacity?: number;
+  /** 整层和下面的东西怎么混 */
+  blend?: BlendMode;
+  /** 对**整层背后**做滤镜（毛玻璃） */
+  backdrop?: string;
+  /** 对**整层**做滤镜（模糊 / 对比度 / 饱和度…） */
+  filter?: string;
+  /** 整层的**软**遮罩（灰度图 / 渐变）；硬边用一张黑白形状的蒙版即可 */
+  mask?: string | string[];
+}
+
+/**
+ * **图层** —— 又叠加的一张画布。**画布的孩子一律是图层**（哪怕里面只有一个元素）。
+ *
+ * 它只带 `LayerEffects`（`opacity` / `blend` / `backdrop` / `filter` / `mask`），
+ * 作用在**这张面上的一切元素**上 —— 也就是"整组合成"（先合成、再处理）。
+ *
+ * ## ⚠️ 它**没有**什么（都是用户 2026-10-16 定的，每条都有理由）
+ *
+ * | 没有 | 为什么 |
+ * |---|---|
+ * | `rect`（自己的范围） | **永远和画布一样大** ⇒ 元素坐标永远是画布坐标，编辑器零换算 |
+ * | `background`（底色） | 底色归**画布**（`Canvas.background`）；图层是一张**透明的面** |
+ * | `transform`（旋转/斜切/缩放/支点） | **和画布一样大的面转起来等于转整张画布**，没意义；PS 也没有 |
+ * | `clip`（按形状裁） | `mask` 已能表达硬边 ⇒ 两套做同一件事 |
+ * | 自己的填充/描边/阴影 | 图层不是元素，**它不画东西** |
+ *
+ * ⇒ 一句话：**图层 = 名字 + 装着的元素 + 那组整体效果**，别的都不该有。
+ */
+export interface Layer extends LayerEffects {
+  id: string;
+  /**
+   * **显示 / 隐藏**。省略 = 显示。
+   *
+   * ⚠️ 隐藏的图层**不产出任何 DOM**（不是 `display:none`，是根本不存在）——
+   *    这样"分层截图 / 命中测试"天然看不到它，不用到处加判断。
+   */
+  visible?: boolean;
+  /**
+   * **锁定**。省略 = 不锁。
+   *
+   * ⚠️ **只给编辑器看**（锁住的图层里的元素不能选中 / 拖动 / 旋转），**渲染完全忽略它** ——
+   *    它不是视觉字段，所以不进 `unsupported`。
+   */
+  locked?: boolean;
+  /** 这张面上画的**元素** */
+  elements: ElementNode[];
+}
+
+// ══════════════════════════════════════════════════════
+// 【结构遍历】—— 到处都要用，收在这里一份，别再各写各的
+// ══════════════════════════════════════════════════════
+
+/** 深度优先遍历一个容器（图层 / 组）里的所有元素（含嵌套） */
+export function* iterElements(c: { elements: ElementNode[] }): Generator<ElementNode> {
+  for (const e of c.elements) {
+    yield e;
+    if (e.type === 'group') yield* iterElements(e);
+  }
+}
+
+/** 按 id 找**元素**（含嵌套）。找不到返回 null */
+export function findElement(doc: DesignDocument, id: string | null | undefined): ElementNode | null {
+  if (!id) return null;
+  for (const l of doc.layers) for (const e of iterElements(l)) if (e.id === id) return e;
+  return null;
+}
+
+/** 按 id 找**图层**。找不到返回 null */
+export function findLayer(doc: DesignDocument, id: string | null | undefined): Layer | null {
+  return id ? (doc.layers.find((l) => l.id === id) ?? null) : null;
+}
+
+/** 按 id 找它**所在的容器**（图层或组）。它是图层本身、或找不到 ⇒ null */
+export function containerOf(doc: DesignDocument, id: string | null | undefined): Layer | GroupNode | null {
+  if (!id) return null;
+  const hit = (c: Layer | GroupNode): Layer | GroupNode | null => {
+    for (const e of c.elements) {
+      if (e.id === id) return c;
+      if (e.type === 'group') {
+        const r = hit(e);
+        if (r) return r;
+      }
+    }
+    return null;
+  };
+  for (const l of doc.layers) {
+    if (l.id === id) return null; // 它自己就是图层，没有"所在的容器"
+    const r = hit(l);
+    if (r) return r;
+  }
+  return null;
+}
+
+/** 按 id 找**任何节点**（元素或图层）—— 给"只关心它是什么"的地方用 */
+export function findAny(doc: DesignDocument, id: string | null | undefined): ElementNode | Layer | null {
+  return findElement(doc, id) ?? findLayer(doc, id);
+}
+
+// ══════════════════════════════════════════════════════
+// 【扁平 → 图层】旧文档迁移 / 翻译器产出，**共用这一份规则**
+// ══════════════════════════════════════════════════════
+
+/**
+ * **把一串扁平的元素折成图层**。旧文档（`doc.layers` 曾经直接装元素）迁移、以及
+ * 翻译器把 intent 变成文档，都走这一份 —— 两边各写一遍必然漂开。
+ *
+ * ## 规则（两条，别的都不许加）
+ *
+ * 1. **顶层的组 → 直接升格成一个图层**（"画布的孩子一律是图层"）。
+ *    `id` **保持不变**（选中/引用不断），效果字段原样搬到图层上，`children` → `elements`。
+ * 2. **一段连续的普通元素 → 合成一个图层**。
+ *
+ * ## 为什么是"连续的一段"而不是"全部合成一个"
+ *
+ * `layers` 的**数组顺序就是叠放顺序**。若把散落在各处的普通元素全塞进同一个图层，
+ * 它们与组之间的上下关系就丢了 ⇒ **渲染会变**。
+ * 按"连续段"合并则顺序天然保真：`[a, b, 组, c]` → `[图层(a,b), 图层(组), 图层(c)]`。
+ *
+ * ⚠️ 合成出来的图层 `id` 取**这段里第一个元素的 id** 加 `-layer` 后缀 ——
+ *    确定性、可追溯（同一份文档每次折出来一样）。
+ */
+export function wrapIntoLayers(elements: readonly ElementNode[]): Layer[] {
+  const out: Layer[] = [];
+  let bucket: ElementNode[] = [];
+  const flush = () => {
+    if (!bucket.length) return;
+    out.push({ id: `${bucket[0].id}-layer`, elements: bucket });
+    bucket = [];
+  };
+  for (const e of elements) {
+    if (e.type === 'group') {
+      flush();
+      const { type: _drop, ...rest } = e;
+      out.push({ ...rest, elements: e.elements });
+    } else {
+      bucket.push(e);
+    }
+  }
+  flush();
+  return out;
+}
 
 // ══════════════════════════════════════════════════════
 // 【备忘录】—— 不是词汇，供归类时参照

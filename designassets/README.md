@@ -1,5 +1,20 @@
 # designassets —— 版式库与元素库
 
+> ⚠️ **旧契约流程，相关工具已删除（2026-10-16）。本文下半部分"怎么出图"的口径已作废，照做跑不出东西。**
+>
+> 文中提到的 `render_sketch` / `generate_assets` / `render_design` / `compile_appearance` 等工具，
+> 以及这些路径 **都已不存在**：`src/workflow/design-sketch/`（含 `render.ts`）、
+> `src/workflow/appearance/`、`src/workflow/compose/`、`src/render/declarative/`、
+> `src/document/design-sketch.ts`、`src/document/design-appearance.ts`。
+> 现在**唯一的文档模型**是 `src/document/vocabulary.ts`，落盘只有一份 `doc.json`
+> （口径见 [`src/document/README.md`](../src/document/README.md)）；
+> 素材生成（`src/workflow/assetsgen/`）也已经改成吃 `DesignDocument`。
+>
+> 下面**仍然有效**的是资产本身：目录结构、入库规则、元素 / 字体 / 配色的用法。
+> **失效**的是"用哪个工具把版式渲成草图 / 成品"那几段。
+> 各 `layouts/<名>/` 里的 `design-sketch.json` / `design-appearance.json` / `sketch.html`
+> 是**历史存档**，现在没有任何代码读它们。
+
 设计资产集中在这里。分两类：**版式**（可挑着复用的整套版面）和**元素**（版式的零件）。
 
 ```

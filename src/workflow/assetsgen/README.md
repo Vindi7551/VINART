@@ -1,10 +1,14 @@
 # assetsgen —— 视觉素材生成
 
 这个阶段负责**产出素材文件**：位图（调生图模型）与 SVG（素材库 / 模型）。
-它消费 `design-sketch` 阶段的版式规格（`design-sketch.json`），产出的素材由
-final 组装（`compose/assemble.ts` 的 `assembleFinal()`）回填进成品图。
+它消费的是**文档模型本身**：`DesignDocument`（落盘 `<工作目录>/designs/<版式名>/doc.json`）——
+`order.ts` / `image.ts` 都收 `spec: DesignDocument`，按其中 `image` 元素的 `asset` 找图位
+（`order.ts` 的 `imageNodes()`、`image.ts` 的 `imageNodeOf()`）。
+⚠️ **旧口径已作废**：`design-sketch` 阶段与 `design-sketch.json` 契约**整层已删**；
+产出素材也不再由 `compose/assemble.ts` 的 `assembleFinal()` 回填，而是交给
+`render/vocabulary/emit.ts` 的 `emitDocument(doc, { assets })` —— 渲染那一步现场消费。
 
-**与 design-sketch 的衔接点只有一个字符串**：节点的 `asset: "hero.png"` =
+**与文档的衔接点只有一个字符串**：元素的 `asset: "hero.png"` =
 订单的 `file: "hero.png"`——直接拿文件名当引用，不做 id 映射。
 
 ---
@@ -18,7 +22,9 @@ final 组装（`compose/assemble.ts` 的 `assembleFinal()`）回填进成品图�
 | `cutout.ts` | **商品照预处理**：实测主体边界 / 阈值抠白底 / 裁刻字区 / 压参考图 |
 | `README.md` | 本文件 |
 
-**入口**：聊天链的 `generate_assets` 工具（`designharness/tools/generate-assets.ts`）调本目录的 `generateAssets()`。
+**入口**：本目录的 `generateAssets()`。
+⚠️ **旧入口已删除**：聊天链的 `generate_assets` 工具 / `designharness/tools/generate-assets.ts`
+随旧契约整层摘除（`designharness/tools/` 现在只剩 `project-paths.ts`），还没有长回来。
 
 ---
 

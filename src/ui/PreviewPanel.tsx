@@ -1,48 +1,60 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { createEditor, type EditorHandle } from '../editor';
-import type { LayerPatch } from '../editor/types';
-import type { LayoutData, HostSignal } from './types';
+import { createVocabEditor, type VocabEditorHandle } from '../editor/vocab-editor';
+import type { SelectionSnapshot } from '../editor/inspector';
+import { emitDocument } from '../render/vocabulary/emit';
+import { findElement } from '../document/vocabulary';
+import type { PreviewData, HostSignal } from './types';
 
 interface PreviewPanelProps {
   /** 数据还没到时的兜底图（PNG） */
   previewUrl?: string | null;
   /** 版式编辑模式：有值 = 用服务端现场渲染的 HTML + 父侧编辑器 */
-  layoutData?: LayoutData | null;
+  layoutData?: PreviewData | null;
   /** 会话 id：有值 = 素材 base 走 file API（工作目录模式）；无 = 旧约定 /files/ */
   sessionId?: string | null;
-  /** 图上操作(拖拽/缩放/旋转/就地改字)→ App 合并进持久数据 */
-  onLayerChange?: (id: string, patch: LayerPatch) => void;
+  /** 图上操作 → App 接住整份文档（就地编辑存 state；结构性变化按 label 重取 html） */
+  onLayerChange?: (id: string, doc: PreviewData['doc'], label?: string) => void;
+  /** 打字（就地补 DOM，不重渲） */
+  onTypingChange?: (id: string, doc: PreviewData['doc']) => void;
   /** 图上点选 → App 侧同步选中（右栏面板跟着切） */
   onLayerSelect?: (id: string) => void;
+  /**
+   * ⭐ **文字选区变了**（在画面上拖选了几个字）—— App 拿它驱动样式面板。
+   * `null` = 没在选字（面板该把那一栏收起来）。
+   */
+  onSelectionChange?: (snap: SelectionSnapshot | null) => void;
   /** 点在染色词上 → 面板单行颜色切换为该词的颜色 */
   onLayerWord?: (id: string, word: string) => void;
-  /** 宿主信号：参数面板/图层清单发起的选中与 patch */
+  /** 宿主信号：参数面板/图层清单发起的选中 / 单字段 patch / 撤销 / 重做 */
   hostSignal?: HostSignal | null;
-  /**
-   * 图层可视性（隐藏集合）—— **编辑器视角态，不进 spec**。
-   * 整集下发（`setHidden`），幂等；iframe 重载后由 `onLoad` 重放。
-   */
-  hiddenLayers?: ReadonlySet<string> | null;
 }
 
 /** 默认画布尺寸，在解析不到 HTML 尺寸时使用 */
 const DEFAULT_WIDTH = 800;
 const DEFAULT_HEIGHT = 1200;
 
+/**
+ * 编辑器在"文字结构变了（段数变了）"时用的 label（见 `text-session.ts` 的 `afterEdit`）。
+ *
+ * ⚠️ 这个字符串是**约定**：编辑器说"该重建节点了"，宿主就得重渲。
+ *    改一边不改另一边 ⇒ 打字切开 runs 之后画面与文档脱节。
+ */
+const STRUCT_LABEL = '改文字结构';
+
 export function PreviewPanel({
   previewUrl,
   layoutData,
   sessionId,
   onLayerChange,
+  onTypingChange,
   onLayerSelect,
-  onLayerWord,
+  onSelectionChange,
   hostSignal,
-  hiddenLayers,
 }: PreviewPanelProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const editorRef = useRef<EditorHandle | null>(null);
+  const editorRef = useRef<VocabEditorHandle | null>(null);
 
   // ── 画布状态：缩放 & 平移 ──
   const [zoom, setZoom] = useState(1);
@@ -50,6 +62,9 @@ export function PreviewPanel({
   const [panY, setPanY] = useState(0);
   const [dragging, setDragging] = useState(false);
   /** 就地改字中：此时把指针**还给 iframe**，好让鼠标能点光标位置 */
+  // 文字态：由编辑器的 onTextEditChange 回调驱动（**不再轮询**）。
+  // ⚠️ 早先用 200ms 轮询 `ed.textEditId`（因为当时没传这个回调）—— 后果是
+  //    双击之后最多要等 200ms 鼠标才落到画面上，拖选/点光标都会漏掉开头那一下。
   const [editingText, setEditingText] = useState(false);
   const dragStart = useRef({ x: 0, y: 0, px: 0, py: 0 });
   const [canvasSize, setCanvasSize] = useState({ w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT });
@@ -57,14 +72,28 @@ export function PreviewPanel({
   // ── 编辑器读取的一切都走 ref ──
   // 目的：`bind()` 保持**稳定**，只在 srcdoc 变化时重挂；否则每次 props 变
   // 都会 dispose + create（覆盖层会闪、编辑态会丢）。
-  const cbRef = useRef({ onLayerChange, onLayerSelect, onLayerWord });
-  cbRef.current = { onLayerChange, onLayerSelect, onLayerWord };
-  const specRef = useRef(layoutData?.spec ?? null);
-  specRef.current = layoutData?.spec ?? null;
-  const appearanceRef = useRef(layoutData?.appearance ?? null);
-  appearanceRef.current = layoutData?.appearance ?? null;
-  const hiddenRef = useRef<ReadonlySet<string>>(hiddenLayers ?? new Set());
-  hiddenRef.current = hiddenLayers ?? new Set();
+  const cbRef = useRef({ onLayerChange, onTypingChange, onLayerSelect, onSelectionChange });
+  cbRef.current = { onLayerChange, onTypingChange, onLayerSelect, onSelectionChange };
+  const docRef = useRef(layoutData?.doc ?? null);
+  docRef.current = layoutData?.doc ?? null;
+  /** 素材映射（摊平重渲时要用）—— 服务端随 data 下发 */
+  const assetRef = useRef<PreviewData['assets']>({});
+  assetRef.current = layoutData?.assets ?? {};
+  /** 版式名（摊平重渲时要用；`applyFlatten` 的依赖必须是空的，所以走 ref） */
+  const nameRef = useRef<string | null>(null);
+  nameRef.current = layoutData?.name ?? null;
+  /**
+   * ⭐ **编辑器刚交出来的那一份 doc**。
+   *
+   * 编辑器每次编辑完都会把自己那份交出来（`onChange` / `onTyping`）；宿主存下 ⇒ setState
+   * ⇒ 组件重渲 ⇒ 下面那个 effect 又把它喂回 `updateDoc` ⇒ 里面 `resetStack`
+   * **把撤销历史清一次**（实测：每编辑一次清一次，撤销/重做按钮一直是灰的）。
+   *
+   * ⇒ 记下"交出来的那一份"，effect 里一看是同一份就跳过。
+   * ⚠️ 不能用 `ed.doc === layoutData.doc` 代替：编辑器 `updateDoc` 里会 `cloneDoc`，
+   *    两边永远不是同一个对象（实测两者不等）。
+   */
+  const lastEmitted = useRef<PreviewData['doc'] | null>(null);
 
   // ── 版式编辑模式：srcdoc 只在换版式时构建一次 ──
   // base 快照与实时数据解耦：patch 走宿主 state 合并，若让 srcdoc 跟着数据重建，
@@ -77,6 +106,66 @@ export function PreviewPanel({
   }, [layoutData, base]);
 
   /**
+   * ⭐ **正在编辑「沿路径排字」的节点**（`curve` / `path`）。
+   *
+   * 那种文字的产物是 SVG `<textPath>` —— 页面上**没有 `.vt`**、也挂不上
+   * `contentEditable`（SVG 元素没有这个能力，实测）。⇒ 编辑期间必须把它
+   * **降级成普通文字**再送去渲染，退出后回到弧线。
+   *
+   * 两个 ref 分工不同，别混：
+   * - `renderDocRef` = 已经**送进渲染器**的那一份（原始，或摊平后的副本）
+   * - `flatDocRef`   = 摊平后的那份（退出时用它判断"要不要还原"）
+   */
+  const renderDocRef = useRef<PreviewData['doc'] | null>(null);
+  const flatDocRef = useRef<PreviewData['doc'] | null>(null);
+
+  /**
+   * 送进渲染器的那一份文档。
+   *
+   * ⚠️ 关键是**深拷贝**：降级只发生在"渲染输入"上，文档本身**一个字节都不改** ——
+   * 否则"平铺版"会被写进文档，退出编辑就再也回不去弧线了（这条是 demo 踩实的）。
+   */
+  const docForRender = useCallback((doc: PreviewData['doc'], flattenId: string | null): PreviewData['doc'] => {
+    if (!flattenId) return doc;
+    // ⚠️ 找的是**元素**（含嵌套）：`doc.layers` 现在是图层，元素在 `Layer.elements` 里
+    const node = findElement(doc, flattenId);
+    if (!node || node.type !== 'text' || (!node.path && !node.curve)) return doc;
+    const copy = structuredClone(doc) as PreviewData['doc'];
+    const flat = findElement(copy, flattenId);
+    if (flat && flat.type === 'text') {
+      delete flat.path;
+      delete flat.curve;
+    }
+    return copy;
+  }, []);
+
+  /**
+   * 摊平 / 还原：重算 HTML 换掉 iframe 内容（编辑器会在 onLoad 之后重新接管）。
+   *
+   * ⚠️ **依赖数组必须为空**：`bind()` 的依赖也是空的（它只在 srcdoc 变时重挂），
+   *    而 `bind` 里要调它。若这里依赖 `layoutData`，`bind` 抓到的就是**旧的**
+   *    `applyFlatten`（旧 layoutData）⇒ 摊平时用的文档是陈旧的。
+   *    所以一律从 ref 现取（`docRef` / `assetRef`），不闭包任何 props。
+   */
+  const applyFlatten = useCallback(
+    (flattenId: string | null) => {
+      // ⚠️ 优先用"编辑器刚交出来的那一份"：`onChange` 里 App 的 setState 还没冲刷，
+      //    `docRef.current` 可能还是上一版（摊平用的文档就旧了）。
+      const doc = lastEmitted.current ?? docRef.current;
+      const name = nameRef.current;
+      if (!doc || !name) return;
+      const next = docForRender(doc, flattenId);
+      flatDocRef.current = next === doc ? null : next;
+      renderDocRef.current = next;
+      // ⚠️ 只换 `base.html`（**原始** HTML）：`<base>` 由 `srcdoc` 那一步统一插，
+      //    这里再插一次会变成两个 base。
+      const { html } = emitDocument(next, { assets: assetRef.current });
+      setBase({ name, html });
+    },
+    [docForRender],
+  );
+
+  /**
    * ⚠️ 这里**只**插一个 `<base>` 标签，不再注入任何 `<script>`。
    *
    * 编辑器已搬去**父文档**（`src/editor/`）：iframe 退化为纯渲染器，
@@ -87,14 +176,18 @@ export function PreviewPanel({
    * - 会话工作目录模式：file API 作 base
    * - legacy：dev-server 的 /files 静态映射（test_product）
    */
-  const layoutSrcdoc = !base
-    ? ''
-    : base.html.replace(
+  const withBase = useCallback(
+    (html: string, name: string) =>
+      html.replace(
         '</head>',
         (sessionId
-          ? `<base href="/api/sessions/${sessionId}/file/designs/${base.name}/">`
-          : `<base href="/files/test_product/layout/${base.name}/">`) + '</head>',
-      );
+          ? `<base href="/api/sessions/${sessionId}/file/designs/${name}/">`
+          : `<base href="/files/test_product/layout/${name}/">`) + '</head>',
+      ),
+    [sessionId],
+  );
+
+  const layoutSrcdoc = !base ? '' : withBase(base.html, base.name);
 
   const srcdoc = layoutData ? layoutSrcdoc : '';
 
@@ -128,7 +221,7 @@ export function PreviewPanel({
   // 0.2504 / 0.2087 三个不同档位。
   useEffect(() => {
     if (!layoutData) return;
-    const { width, height } = layoutData.spec.canvas;
+    const { width, height } = layoutData.doc.canvas;
     setCanvasSize((prev) => (prev.w === width && prev.h === height ? prev : { w: width, h: height }));
   }, [layoutData]);
 
@@ -144,23 +237,64 @@ export function PreviewPanel({
     const wrap = wrapperRef.current;
     const iframe = iframeRef.current;
     const root = iframe?.contentDocument;
-    const spec = specRef.current;
-    if (!wrap || !root || !spec) return;
+    const doc = docRef.current;
+    if (!wrap || !root || !doc) return;
 
     editorRef.current?.dispose();
     // `document` = 宿主（父）文档；`root` = 子文档。两者都从参数流入，
     // 编辑器自己不认识任何"当前页面"（见 src/editor/README.md 不变量①）。
-    const ed = createEditor(document, wrap, root, {
-      spec,
-      appearance: appearanceRef.current ?? undefined,
+    const ed = createVocabEditor(document, wrap, root, {
+      doc,
       onSelect: (id) => {
         if (id) cbRef.current.onLayerSelect?.(id);
       },
-      onChange: (id, patch) => cbRef.current.onLayerChange?.(id, patch),
-      onWord: (id, word) => cbRef.current.onLayerWord?.(id, word),
-      onEditingChange: setEditingText,
+      // ⭐ 编辑器给的 label（见 editor-stack 的 submit）：App 靠它区分就地/结构变化
+      onChange: (id, next, label) => {
+        lastEmitted.current = next;
+        // ⚠️ **必须无条件外发**，不能 `if (id)`：（2026-10-17 修）
+        //    编辑器的 `submit` 在**结构性操作**上会传 `id = null` —— 移动/删除图层
+        //    （`moveLayer` / `removeLayer` 的图层分支）、以及撤销时的选中节点。
+        //    原来这里是 `if (id) …` ⇒ 那些操作**全都静默丢在编辑器里**：
+        //    文档内部改了、App 收不到 ⇒ 不存盘、画布也不变（实测：点「上移一层」
+        //    12 秒轮询，doc.json 一个字节没变）。而 `patch` 因为带 id 所以能存盘，
+        //    于是只有"显隐/不透明度"能生效、"顺序/删除"不能 —— 就是这个原因。
+        //    收方 `handleLayerChanged` 本来就忽略这个 id（只取 doc + label）⇒ 安全。
+        cbRef.current.onLayerChange?.(id ?? '', next, label);
+        // ⚠️ 文字结构变了（段数变了）⇒ 编辑器说"该重建节点了"。
+        //    重渲时**必须沿用摊平状态**：正在编辑弧形文字的话，
+        //    重渲出来的还得是摊平版（不然 `.vt` 又没了、光标进不去）。
+        if (label === STRUCT_LABEL) applyFlatten(editorRef.current?.textEditId ?? null);
+      },
+      onTyping: (id, next) => {
+        lastEmitted.current = next;
+        if (id) cbRef.current.onTypingChange?.(id, next);
+      },
+      /**
+       * ⭐ 进 / 出文字态。宿主在这里做**两件**自己才知道的事：
+       *
+       * ① 放开 iframe 的 `pointer-events` —— 让它真的能收到鼠标（拖选 / 点光标）。
+       *    这是编辑器按"不引用全局网页对象"的不变量**碰不到**的：iframe 是宿主的 DOM。
+       * ② `flatten` = 这块文字是「沿路径排字」（`curve` / `path`）⇒ 它的产物是 SVG
+       *    `<textPath>`，**没有 `.vt`、挂不上 `contentEditable`** ⇒ 必须降级成普通文字
+       *    再重渲一份（**只改送进渲染器的那一份，文档不动**），退出时还原回弧线。
+       *
+       * 其余全在编辑器里：`contentEditable`、`beforeinput`、光标/选区、就地补 DOM。
+       */
+      onTextEditChange: (id, flatten) => {
+        setEditingText(!!id);
+        if (flatten) {
+          // 进：摊平重渲；出：还原回弧线。两边都走同一条路。
+          applyFlatten(id);
+        } else if (flatDocRef.current) {
+          // 退出且之前确实摊平过 ⇒ 还原
+          applyFlatten(null);
+        }
+        // 退出文字态 ⇒ 面板那一栏要收起来（编辑器那边不会再来通知了）
+        if (!id) cbRef.current.onSelectionChange?.(null);
+      },
+      /** ⭐ 文字选区变了 ⇒ 交给 App 驱动样式面板（面板是右栏，不在本组件里） */
+      onSelectionChange: (snap) => cbRef.current.onSelectionChange?.(snap),
     });
-    ed.setHidden(hiddenRef.current);
     editorRef.current = ed;
   }, []);
 
@@ -185,16 +319,89 @@ export function PreviewPanel({
     [],
   );
 
-  // 数据变了 → 刷新编辑器的工作副本 + 覆盖层
+  // 数据变了 → 刷新编辑器的工作副本（**只在真换了文档时**）
   useEffect(() => {
     if (!layoutData) return;
-    editorRef.current?.updateLayout(layoutData.spec, layoutData.appearance);
+    const ed = editorRef.current;
+    if (!ed) return;
+    // ⚠️ **不能无条件 updateDoc**：`updateDoc` 里有 `resetStack`（撤销历史作废），
+    //    无条件调它的后果是"每编辑一次，撤销历史清一次" —— 撤销/重做按钮永远灰着（实测）。
+    //    只有"宿主手里这份**不是**编辑器刚交出来的那份"（换版式 / 外部替换 / undo 后重取 html）
+    //    才需要重装。
+    //
+    // 两个条件缺一不可，且各有各的用处：
+    //  ① `lastEmitted`：这正是"编辑一次清一次"的主路径 —— 必须是**同一个对象引用**，
+    //     因为 App 存的时候是 `{ ...prev, doc: next }`（浅拷贝），结构比较会被骗过。
+    //  ② `ed.doc`：兜"宿主自己把 layout 换成一份陈旧数据"的情况（getter 见 handle 接口注释）。
+    if (lastEmitted.current === layoutData.doc) return;
+    if (ed.doc === layoutData.doc) return;
+    ed.updateDoc(layoutData.doc);
   }, [layoutData]);
 
-  // 隐藏集合变了 → 整集下发（幂等）
+  /**
+   * ⭐ **图层的显示 / 隐藏 —— 就地做，不重载 srcdoc**（2026-10-17 定）。
+   *
+   * 为什么就地而不是重渲：**产物由 `emitDocument` 保证**（`emitLayer` 遇到 `visible === false`
+   * 直接不产出那个容器 ⇒ 出图里根本没有它），画布只需要"看起来对"。而重载 `srcdoc` 会闪、
+   * 还会打断正在编辑的状态（选中/光标）—— 那是踩过的坑。
+   *
+   * ⚠️ **必须挂在 `doc` 上、而不是只在"点眼睛"那一处改**：隐藏是文档变更，
+   * **撤销 / 重做**也会改 `doc.layers[].visible` ⇒ 只有跟着文档同步，撤销才能把图层恢复出来。
+   *
+   * ⚠️ 用 `display:none` 而**不是** `opacity:0`：`opacity:0` 的元素**仍然接收指针事件**，
+   * 等于在画布上埋一个看不见的陷阱；`display:none` 不接收事件、不占尺寸，最接近"不存在"。
+   */
   useEffect(() => {
-    editorRef.current?.setHidden(hiddenLayers ?? new Set());
-  }, [hiddenLayers]);
+    const d = iframeRef.current?.contentDocument;
+    if (!d) return;
+    // ⚠️ **必须用 iframe 自己的 `HTMLElement`**：同源 iframe 有独立的全局对象，
+    //    iframe 里的元素**不是**父窗口 `HTMLElement` 的实例 ⇒ 用父窗口的写
+    //    `el instanceof HTMLElement` 永远 false，赋值会被**静默跳过**（实测踩过：
+    //    打点显示文档对、节点也找到了，display 就是不生效）。
+    const HTMLEl = d.defaultView?.HTMLElement;
+    if (!HTMLEl) return;
+    const layers = layoutData?.doc.layers ?? [];
+    const live = new Set(layers.map((l) => l.id));
+    // ① 文档里**已经删掉**的图层 ⇒ 把残留的容器藏起来。
+    //    用 `display:none` 而不是删节点：撤销把图层加回来时还能恢复（下面的 ② 会复原）。
+    //    （画布的 srcdoc 是快照、不随文档重载，所以"文档删了"不会自动从 DOM 消失。）
+    for (const el of Array.from(d.querySelectorAll('[data-layer-type="layer"]'))) {
+      const id = el.getAttribute('data-layer') ?? '';
+      if (el instanceof HTMLEl && !live.has(id)) el.style.display = 'none';
+    }
+    // ② 按**文档顺序**把容器重新 append 一遍（`appendChild` 会移动已有节点）——
+    //    这样"上移/下移"的叠放顺序在画布上也立刻跟上，不用重载 srcdoc。
+    //
+    // ③ **递归**把每个容器里的**元素**也同步一遍（含组内元素）：元素也要能被删、能换顺序，
+    //    而画布的 srcdoc 是快照 ⇒ 不主动同步的话"文档删了元素、画布上还留着"。
+    //    ⚠️ 判据是 `data-layer` 属性在不在文档的那份清单里；用 `display:none` 而不是删节点，
+    //    撤销回来还能恢复。
+    const syncChildren = (parentDom: Element, want: readonly { id: string; type: string; elements?: unknown }[]) => {
+      const wantIds = new Set(want.map((e) => e.id));
+      for (const el of Array.from(parentDom.children)) {
+        const id = el.getAttribute('data-layer') ?? '';
+        if (!wantIds.has(id) && el instanceof HTMLEl) el.style.display = 'none';
+      }
+      for (const e of want) {
+        const el = parentDom.querySelector(`:scope > [data-layer="${CSS.escape(e.id)}"]`);
+        if (!(el instanceof HTMLEl)) continue;
+        el.style.display = '';
+        parentDom.appendChild(el);
+        if (e.type === 'group') {
+          // 组内元素：`GroupNode.elements`
+          syncChildren(el, (e as unknown as { elements: typeof want }).elements ?? []);
+        }
+      }
+    };
+
+    for (const l of layers) {
+      const el = d.querySelector(`[data-layer="${CSS.escape(l.id)}"]`);
+      if (!(el instanceof HTMLEl)) continue;
+      el.style.display = l.visible === false ? 'none' : '';
+      el.parentElement?.appendChild(el);
+      syncChildren(el, l.elements);
+    }
+  }, [layoutData]);
 
   // 宿主信号（面板发起的选中 / patch）→ 直接调编辑器，不再走 postMessage
   const lastSeq = useRef(0);
@@ -203,8 +410,100 @@ export function PreviewPanel({
     lastSeq.current = hostSignal.seq;
     const ed = editorRef.current;
     if (!ed) return;
-    if (hostSignal.type === 'select') ed.select(hostSignal.id);
-    if (hostSignal.type === 'patch') ed.patch(hostSignal.id, hostSignal.patch ?? {});
+    const sig = hostSignal;
+    switch (sig.type) {
+      case 'select':
+        if (sig.id) ed.select(sig.id);
+        break;
+      case 'patch':
+        if (sig.id && sig.path) ed.patch(sig.id, sig.path, sig.value);
+        break;
+      /**
+       * ⭐ 给画面上**选中的那几个字**刷样式（样式面板发起的）。
+       *
+       * 面板给的是 `path + value`（`path` 来自 `selectionFields()`），
+       * px → 0–1 换算、装饰线的逐项合并**都在编辑器里做** ——
+       * 面板不必知道 `RunPatch` 的形状，宿主也不必。
+       */
+      case 'style-selection':
+        if (sig.path !== undefined) ed.styleSelection(sig.path, sig.value);
+        break;
+      case 'undo':
+        ed.undo();
+        break;
+      case 'redo':
+        ed.redo();
+        break;
+      // ⭐ 增删/排序走 handle（M3 API）——id 生成在这里（add 用时间戳，保唯一）
+      case 'add-text':
+        ed.addLayer({
+          id: `t${Date.now()}`,
+          type: 'text',
+          rect: { x: 270, y: 192, w: 360, h: 72 },
+          runs: [{ text: '双击编辑文字' }],
+          fontSizePx: 36,
+          fill: '#2B2B2B',
+          align: 'left',
+        });
+        break;
+      case 'add-rect':
+        ed.addLayer({
+          id: `s${Date.now()}`,
+          type: 'shape',
+          kind: 'rect',
+          rect: { x: 270, y: 180, w: 270, h: 120 },
+          fill: '#2F6B8A',
+          radius: 0.04,
+        });
+        break;
+      // ⭐ 另外三种几何（词汇表早就有，只是原来没有入口）。
+      //    默认几何都给"看得出是什么形状"的最小样子，摆在新元素该出现的位置。
+      case 'add-ellipse':
+        ed.addLayer({
+          id: `s${Date.now()}`,
+          type: 'shape',
+          kind: 'ellipse',
+          rect: { x: 330, y: 210, w: 240, h: 180 },
+          fill: '#B8722F',
+        });
+        break;
+      case 'add-polygon':
+        ed.addLayer({
+          id: `s${Date.now()}`,
+          type: 'shape',
+          kind: 'polygon',
+          rect: { x: 330, y: 210, w: 240, h: 180 },
+          // 默认正五边形（0–1，相对自己的盒子）—— 顶点可拖，所以给个"一看就知道能拖"的形状
+          points: [
+            [0.5, 0],
+            [1, 0.37],
+            [0.81, 1],
+            [0.19, 1],
+            [0, 0.37],
+          ],
+          fill: '#2F6B8A',
+        });
+        break;
+      case 'add-path':
+        ed.addLayer({
+          id: `s${Date.now()}`,
+          type: 'shape',
+          kind: 'path',
+          rect: { x: 300, y: 240, w: 300, h: 120 },
+          // ⚠️ `path.d` 恒为 **0–1**（见词汇表分母表）—— 不是像素
+          d: 'M0,1 C0.25,0 0.75,0 1,1 Z',
+          fill: '#C8323C',
+        });
+        break;
+      case 'remove':
+      case 'up':
+      case 'down':
+        if (sig.id) {
+          if (sig.type === 'remove') ed.removeLayer(sig.id);
+          else ed.moveLayer(sig.id, sig.type);
+        }
+        break;
+    }
   }, [hostSignal]);
 
   // ── 鼠标拖拽平移 ──

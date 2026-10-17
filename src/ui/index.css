@@ -87,21 +87,85 @@ html, body, #root {
   color: var(--text-primary);
 }
 
-/* ===== Artifact Gallery（管线产物缩略图条） ===== */
+/* ===== Artifact Gallery（管线产物缩略图条）=====
+   **顶部滑出式**：平时收起、**不占位**；鼠标移到**窗口顶端**就滑下来，移开就滑回去。
+
+   ⚠️ 为什么必须 `position: fixed` 而不是原来的 in-flow：画廊原先夹在 header 与 `.main` 之间，
+   是一条普通横条 —— 收/放会把 `.main` 顶上顶下，**画布跟着跳**。浮层不会。
+
+   ⚠️ `.gallery-dock` **自己只有热区那么高**（= header 的 44px，正好盖住 header 那条），
+   面板是它的绝对定位**子元素** ⇒ 鼠标在面板里时 `.gallery-dock:hover` 仍然成立
+   （CSS 的 `:hover` 把后代算在内）⇒ 能在面板里横滚、点卡片，不会一点就缩回去。 */
+.gallery-dock {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 44px; /* = .header 的高度：热区严丝合缝盖住 header 那条 */
+  z-index: 30; /* 压过 .main（.header 的 z-index 其实无效——它是 static） */
+}
+
 .artifact-gallery {
-  flex-shrink: 0;
+  position: absolute;
+  top: 100%; /* 挂在热区**下面** ⇒ 展开时落在 header 下沿，不盖住 logo */
+  left: 0;
+  right: 0;
+  /* 收起：整块移到屏幕上方（自己高度 + 热区高度）⇒ 一个像素都不露。
+     ⚠️ `-100%` 是相对**自己的高度**（translateY 的百分比口径） */
+  transform: translateY(calc(-100% - 44px));
+  transition: transform 0.22s ease;
   padding: 10px 20px 12px;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-light);
+  box-shadow: var(--shadow-sm);
 }
 
+.gallery-dock:hover .artifact-gallery {
+  transform: translateY(0);
+}
+
+/* ⭐ 钉住：面板不再跟着鼠标走（`.pinned` 与 `:hover` 的优先级相同、且都设同一个值 ⇒ 不打架） */
+.gallery-dock.pinned .artifact-gallery {
+  transform: translateY(0);
+}
+
+/* 标题那一行：**左边**是钉住按钮，紧跟标题（靠左排，不靠右） */
 .artifact-gallery-title {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
   font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-bottom: 8px;
+}
+
+/* 钉住按钮（住在画廊里 ⇒ 得先滑下来才够得着，正是要的） */
+.gallery-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.gallery-pin:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.gallery-pin.on {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--accent);
 }
 
 .artifact-strip {
@@ -157,6 +221,68 @@ html, body, #root {
   display: flex;
   flex: 1;
   min-height: 0;
+  /* 工具栏宽度 —— **唯一真源**。`.left-toggle` 是绝对定位 + 内联 `left`，
+     工具栏占了最左这一条之后它必须让开（否则正好压在第一格工具上），
+     所以 JS 那边用 `calc(var(--toolbar-w) + …)` 而不是再写一个 44。 */
+  --toolbar-w: 44px;
+}
+
+/* ===== 主工具栏（最左一栏 · 固定宽 · 不参与拖拽）=====
+   两段：上 = 工具（单选、有高亮），下 = 动作（点一下就走、不留高亮）。
+   ⚠️ 这里的按钮**刻意不用**基元层的 `.ui-btn` —— 那是"面板里"的按钮（有边框、
+   有内边距）；工具栏按钮是另一种东西。样式仍然全走 token，不写内联颜色。 */
+.toolbar {
+  flex: none;
+  width: var(--toolbar-w);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border);
+}
+
+.toolbar-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.toolbar-sep {
+  width: 22px;
+  height: 1px;
+  background: var(--border);
+  margin: 2px 0;
+}
+
+.tool-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.tool-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+/* 当前工具：常驻高亮（这是"我现在在哪个工具里"的唯一指示） */
+.tool-btn.active {
+  background: var(--accent-light);
+  color: var(--accent);
+}
+.tool-btn:disabled {
+  opacity: 0.45;
+  cursor: wait;
 }
 
 /* ===== Preview Panel (Left) ===== */
@@ -1664,7 +1790,186 @@ html, body, #root {
   font-weight: 600;
   color: var(--text-secondary);
   letter-spacing: 0.04em;
-  margin-bottom: 4px;
+}
+
+/* ── 小节标题行：折叠箭头 + 图标 + 标题 + 数量徽标 ────────────────── */
+.ui-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+  margin-bottom: 6px;
+}
+/* 可折叠的那一版：整行可点、带 hover 底色（负 margin 让底色比文字宽一点，像一整条） */
+.ui-section-head.foldable {
+  cursor: pointer;
+  margin-left: -5px;
+  padding: 2px 5px;
+  border-radius: var(--radius-sm);
+}
+.ui-section-head.foldable:hover {
+  background: var(--bg-hover);
+}
+.ui-section-head.foldable:hover .ui-section-icon {
+  color: var(--text-secondary);
+}
+
+.ui-caret {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+.ui-caret.open {
+  transform: rotate(90deg);
+}
+
+.ui-section-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-muted);
+}
+
+/* 数量徽标推到最右（"这个分类里有 8 个字段"） */
+.ui-section-count {
+  margin-left: auto;
+  font-size: 10px;
+  line-height: 15px;
+  padding: 0 5px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  background: var(--bg-hover);
+}
+
+/* ── 字段网格：两列；需要宽的整行跨两列 ─────────────────────────── */
+.ui-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 8px;
+  align-items: end;
+}
+.ui-fields > .ui-field {
+  margin-bottom: 0;
+}
+.ui-fields > .ui-field.wide {
+  grid-column: 1 / -1;
+}
+/* 窄栏里数字框不要固定 100px，撑满自己那格 */
+.ui-fields .ui-num {
+  width: 100%;
+}
+/* 复选框那一格：标签在左、框靠右（标签在上会显得空） */
+.ui-field.check {
+  flex-direction: row;
+  align-items: center;
+}
+.ui-field.check > .ui-check {
+  margin-left: auto;
+}
+
+/* 数字框 + 单位后缀 / 色块 + 十六进制串：横排、自适应 */
+.ui-num-wrap,
+.ui-color-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ui-num-wrap > .ui-input,
+.ui-color-row > .ui-input {
+  flex: 1;
+  min-width: 0;
+}
+.ui-suffix {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* 复选框 */
+.ui-check {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+/* 下拉（原生 select，跟 .ui-input 同口径） */
+.ui-select {
+  cursor: pointer;
+}
+
+/* ── 方形图标按钮（动作按钮统一长这样）─────────────────────────── */
+.ui-btn.sq {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+}
+.ui-btn.sq.tiny {
+  width: 20px;
+  height: 20px;
+}
+
+/* ── 图层清单：**限高可滚**（不然 18 行会把属性表单顶到折叠线以下）── */
+.ui-layer-list {
+  max-height: 216px;
+  overflow-y: auto;
+  padding: 2px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+}
+
+/* 图层块 = 图层那一行 + 它下面缩进的元素行（结构：画布 → 图层 → 元素） */
+.ui-layer-block + .ui-layer-block {
+  margin-top: 3px;
+  padding-top: 3px;
+  border-top: 1px dashed var(--border-light);
+}
+.layer-name-layer {
+  font-weight: 700;
+}
+.layer-name-el {
+  padding-left: 12px;
+  color: var(--text-secondary);
+}
+/* 行内动作：平时藏起来，hover / 选中才出现 —— 一屏 18×3 个按钮太吵 */
+.ui-layer-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.ui-list-item:hover .ui-layer-actions,
+.ui-list-item.active .ui-layer-actions {
+  opacity: 1;
+}
+/* 选中行里的图标按钮：底色已是强调色，图标别再叠一层 hover 底色 */
+.ui-list-item.active .ui-btn.sq.tiny {
+  color: var(--accent);
+}
+
+/* ── 文字选区面板（"选中的字"）：强调色的一小块，与节点级表单区分开 ── */
+.ui-selection {
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent-light);
+  padding: 8px 8px 6px;
+}
+.ui-selection-text {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  max-height: 34px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ui-hint {
@@ -1695,6 +2000,10 @@ html, body, #root {
   gap: 3px;
   margin-bottom: 8px;
   min-width: 0;
+}
+/* 网格里不需要下边距（靠 gap 撑开） */
+.ui-fields > .ui-field {
+  margin-bottom: 0;
 }
 .ui-field-label {
   color: var(--text-secondary);

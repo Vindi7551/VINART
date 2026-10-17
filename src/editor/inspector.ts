@@ -39,18 +39,22 @@
  * 调用方以为改的是整块。
  */
 
-import type { DesignDocument, Layer, Rect, ShapeNode, TextNode, TextRun } from '../document/vocabulary';
+import { findElement } from '../document/vocabulary';
+import type { DesignDocument, ElementNode, Layer, Rect, ShapeNode, TextNode, TextRun } from '../document/vocabulary';
 import { DEFAULT_FONT_PX } from '../render/vocabulary/emit';
 import { firstRunOf, type RunPatch, type RunRange } from './text-runs';
 
 /**
  * **带位置 / 带外观的节点** —— `GroupNode` 两者都没有
  * （它没有 `rect`，也不画东西），所以凡是读写这些字段的地方都得先把它排除掉。
+ *
+ * ⚠️ 2026-10-16 文档模型改版：这个"任意节点"的联合类型（**旧名 `Layer`**）现在叫
+ *    **`ElementNode`**；`Layer` 那个名字归了**图层**（画布的孩子），两者不是一回事。
  */
-type Positioned = Exclude<Layer, { type: 'group' }>;
+type Positioned = Exclude<ElementNode, { type: 'group' }>;
 
-/** 把 `Layer` 收窄成"有外观可改"的那部分（`GroupNode` 已经在调用前被挡掉了） */
-const P = (l: Layer) => l as Positioned;
+/** 把 `ElementNode` 收窄成"有外观可改"的那部分（`GroupNode` 已经在调用前被挡掉了） */
+const P = (l: ElementNode) => l as Positioned;
 
 export type FieldKind =
   | { kind: 'number'; min?: number; max?: number; step?: number; suffix?: string }
@@ -67,17 +71,17 @@ export interface Field {
   group: string;
   kind: FieldKind;
   /** 读当前值。**返回 `undefined` = 这一项没写（UI 显示占位）** */
-  get(node: Layer): unknown;
+  get(node: ElementNode): unknown;
   /** 写回节点（**原地改**，调用方负责触发重渲） */
-  set(node: Layer, value: unknown): void;
+  set(node: ElementNode, value: unknown): void;
 }
 
 const num = (
   path: string,
   label: string,
   group: string,
-  get: (n: Layer) => number | undefined,
-  set: (n: Layer, v: number) => void,
+  get: (n: ElementNode) => number | undefined,
+  set: (n: ElementNode, v: number) => void,
   o: { min?: number; max?: number; step?: number; suffix?: string } = {},
 ): Field => ({
   path,
@@ -92,8 +96,8 @@ const text = (
   path: string,
   label: string,
   group: string,
-  get: (n: Layer) => string | undefined,
-  set: (n: Layer, v: string) => void,
+  get: (n: ElementNode) => string | undefined,
+  set: (n: ElementNode, v: string) => void,
   multiline = false,
 ): Field => ({
   path,
@@ -108,8 +112,8 @@ const color = (
   path: string,
   label: string,
   group: string,
-  get: (n: Layer) => string | undefined,
-  set: (n: Layer, v: string) => void,
+  get: (n: ElementNode) => string | undefined,
+  set: (n: ElementNode, v: string) => void,
 ): Field => ({ path, label, group, kind: { kind: 'color' }, get, set: (n, v) => set(n, String(v ?? '')) });
 
 /** 开关（下划线 / 斜体 / 小型大写……） */
@@ -117,8 +121,8 @@ const toggle = (
   path: string,
   label: string,
   group: string,
-  get: (n: Layer) => boolean | undefined,
-  set: (n: Layer, v: boolean) => void,
+  get: (n: ElementNode) => boolean | undefined,
+  set: (n: ElementNode, v: boolean) => void,
 ): Field => ({ path, label, group, kind: { kind: 'toggle' }, get, set: (n, v) => set(n, !!v) });
 
 /** 单选（对齐 / 换行 / 书写方向……）—— 选项写死在 `kind.options` 里 */
@@ -127,8 +131,8 @@ const pick = (
   label: string,
   group: string,
   options: string[],
-  get: (n: Layer) => string | undefined,
-  set: (n: Layer, v: string) => void,
+  get: (n: ElementNode) => string | undefined,
+  set: (n: ElementNode, v: string) => void,
 ): Field => ({ path, label, group, kind: { kind: 'enum', options }, get, set: (n, v) => set(n, String(v)) });
 
 // ── 位置 / 尺寸：文档里**就是 px**（`Rect` 的单位是画布 px，不需要换算）──
@@ -138,7 +142,7 @@ const pick = (
 // （`round4` 到 4 位小数 ⇒ 900 宽画布上每次 0.09px），而且它是
 // "面板显示一个数、set 按另一个单位收" 这类 bug 的温床。
 function rectFields(_canvas: { width: number; height: number }): Field[] {
-  const has = (n: Layer): n is Layer & { rect: Rect } => 'rect' in n;
+  const has = (n: ElementNode): n is ElementNode & { rect: Rect } => 'rect' in n;
   return [
     num('rect.x', '左', '位置', (n) => (has(n) ? n.rect.x : undefined), (n, v) => {
       if (has(n)) n.rect.x = v;
@@ -192,7 +196,7 @@ function shapeFields(n: ShapeNode): Field[] {
 }
 
 /** 收窄成文字节点（凡是要改文字字段的地方都得先过一下） */
-const T = (l: Layer): TextNode | null => (l.type === 'text' ? l : null);
+const T = (l: ElementNode): TextNode | null => (l.type === 'text' ? l : null);
 
 /**
  * 文字能改什么 —— 分五组：内容 / 字体 / 排版 / 装饰 / 字形。
@@ -682,7 +686,7 @@ type RunTextTransform = NonNullable<TextRun['textTransform']>;
  * ⚠️ **组**只给「变换」（旋转 / 不透明度）：它没有 `rect`，也没有 `fill`/`stroke`/`shadow`。
  *    （`blend` / `filter` / `clip` / `mask` 这些**所有节点**都还没有入口，属另一批。）
  */
-export function fieldsFor(node: Layer, canvas: { width: number; height: number }): Field[] {
+export function fieldsFor(node: ElementNode, canvas: { width: number; height: number }): Field[] {
   // ⭐ 组没有 `rect`（不给位置尺寸），但它**有一组效果**（整体旋转 / 淡出 / 滤镜…）——
   //    那正是"组"存在的理由，不给入口就等于这功能不存在。
   if (node.type === 'group') return commonFields();
@@ -710,7 +714,7 @@ export function fieldsFor(node: Layer, canvas: { width: number; height: number }
 }
 
 /** 按 `path` 找字段（UI 回写、编辑器 `patch` 都用它） */
-export function findField(node: Layer, canvas: { width: number; height: number }, path: string): Field | null {
+export function findField(node: ElementNode, canvas: { width: number; height: number }, path: string): Field | null {
   return fieldsFor(node, canvas).find((f) => f.path === path) ?? null;
 }
 
@@ -718,8 +722,83 @@ export function findField(node: Layer, canvas: { width: number; height: number }
 //    已经整个消失（`rect` / `fontSizePx` 都直接是 px），它也就没人用了。
 
 
+// ══════════════════════════════════════════════════════════════════════
+// 【图层】的字段（"这张面"自己的属性）
+// ══════════════════════════════════════════════════════════════════════
+
+/**
+ * **图层的字段** —— 和 `Field` **结构同形**，但 `get` / `set` 收 `Layer`。
+ * （不能复用 `Field`：它的 `get/set` 收 `ElementNode`，而图层**没有 `type` / `rect`**。）
+ *
+ * ⚠️ 面板渲染两边**共用同一个 `FieldControl`**（`ui/field-control.tsx`）——
+ *    `get/set` 的入参不同，但字段描述（`kind` / `label`）是同一套，控件不用写两份。
+ */
+export interface LayerField {
+  path: string;
+  label: string;
+  group: string;
+  kind: FieldKind;
+  get(l: Layer): unknown;
+  set(l: Layer, v: unknown): void;
+}
+
+/**
+ * 图层**自己**的属性（= "这张面"的属性；元素在它上面，见 `vocabulary.ts` 文件头）。
+ *
+ * ⚠️ **只有「不透明度」一个入口** —— 因为图层真的只有这么点东西：
+ *    - **没有** `rect`（永远和画布一样大）· **没有** `background`（底色归画布）
+ *    - **没有** `transform`（和画布一样大的面转起来等于转整张画布，PS 也没这个属性）
+ *    - **没有** `clip`（硬边用 `mask` 表达）
+ *    - 字段还有 `blend` / `backdrop` / `filter` / `mask` 四样，但**面板暂时不给入口**
+ *      （组也没给，要开就两边一起开）。
+ */
+export function fieldsForLayer(): LayerField[] {
+  return [
+    {
+      path: 'visible',
+      label: '显示',
+      group: '图层',
+      // 勾上 = 显示（默认）；取消 = 隐藏（隐藏的图层不产出 DOM）
+      kind: { kind: 'toggle' },
+      get: (l) => l.visible !== false,
+      set: (l, v) => {
+        if (v === false) l.visible = false;
+        else delete l.visible; // 省略 = 显示，别在文档里留 `visible: true`
+      },
+    },
+    {
+      path: 'locked',
+      label: '锁定',
+      group: '图层',
+      kind: { kind: 'toggle' },
+      get: (l) => l.locked === true,
+      set: (l, v) => {
+        if (v === true) l.locked = true;
+        else delete l.locked;
+      },
+    },
+    {
+      path: 'opacity',
+      label: '不透明度',
+      group: '图层',
+      kind: { kind: 'number', min: 0, max: 1, step: 0.01 },
+      get: (l) => l.opacity,
+      set: (l, v) => {
+        const n = Number(v);
+        if (!Number.isFinite(n)) return;
+        l.opacity = n;
+      },
+    },
+  ];
+}
+
+/** 在图层字段里按 `path` 找一个 —— 给编辑器的 `patch` 用（与 `findField` 对称） */
+export function findLayerField(path: string): LayerField | null {
+  return fieldsForLayer().find((f) => f.path === path) ?? null;
+}
+
 /** 面板标题（给 UI 显示"正在改谁"） */
-export function nodeLabel(node: Layer): string {
+export function nodeLabel(node: ElementNode): string {
   if (node.type === 'shape') return `形状 · ${node.kind}`;
   if (node.type === 'text') return '文字';
   if (node.type === 'image') return '图片';
@@ -730,7 +809,10 @@ export function nodeLabel(node: Layer): string {
 /** 用文档自身的画布尺寸（省得调用方每次都拆一遍） */
 export function fieldsOfDoc(doc: DesignDocument, id: string | null): Field[] {
   if (!id) return [];
-  const node = doc.layers.find((l) => l.id === id);
+  // ⚠️ 2026-10-16 文档模型改版：`doc.layers` 现在是**图层**（不再是"所有节点"的扁平表）
+  //    ⇒ 查找必须走词汇表的 `findElement`（它按"每个图层里的所有元素"递归找，**含组内**）。
+  //    这里原先是 `doc.layers.find(...)`，在旧模型下等价；照抄到现在只会找到"顶层节点"。
+  const node = findElement(doc, id);
   return node ? fieldsFor(node, doc.canvas) : [];
 }
 

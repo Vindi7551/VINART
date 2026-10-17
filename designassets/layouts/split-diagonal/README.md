@@ -1,5 +1,12 @@
 # split-diagonal
 
+> ⚠️ **旧契约流程，相关工具已删除（2026-10-16）。** 下面提到的 `render_sketch` / `generate_assets` /
+> `render_design` 都已不存在（`design-sketch` / `design-appearance` 契约整层删除）。
+> 本目录的 `design-sketch.json` / `design-appearance.json` / `sketch.html` 只是**历史存档**
+> （文中提到的 `sketch.png` 也已不在），现在**没有任何代码读它们**。
+> 当前文档模型与落盘口径见 [`src/document/README.md`](../../../src/document/README.md)（`doc.json`）。
+> 下文保留原样，作当时的流程记录。
+
 图片2 复刻 — Schneiden und Servieren（斜切双场景：备料 / 上菜）
 
 ## 版式结构

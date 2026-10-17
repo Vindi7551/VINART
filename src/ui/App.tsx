@@ -6,9 +6,13 @@ import { ArtifactGallery, artifactDataUrl } from './ArtifactGallery';
 import { SessionListPanel } from './SessionListPanel';
 import { DirectoryBrowser } from './DirectoryBrowser';
 import { EditPanel } from './EditPanel';
-import { toggleHidden } from './layer-visibility';
+import { ToolBar } from './ToolBar';
+import { shouldFollowSelection, toolForLayer, type ToolId } from './tools';
 import type { Message, DelegationRecord } from './types';
-import type { LayoutData, HostSignal, LayerAppearance, SessionItem } from './types';
+import type { PreviewData, HostSignal, SessionItem } from './types';
+import { fieldsFor, type SelectionSnapshot } from '../editor/inspector';
+import { emitDocument } from '../render/vocabulary/emit';
+import { findElement, type DesignDocument } from '../document/vocabulary';
 
 // ══════════════════════════════════════════════════════════
 // ⚠️ Agent 层已清空，等待重新设计
@@ -88,7 +92,7 @@ function formatToolLine(d: { name?: unknown; ok?: unknown; ms?: unknown; result?
  */
 function layoutApiUrl(
   cur: { name: string },
-  action: 'save' | 'render',
+  action: 'save' | 'render' | 'data',
   sessionId: string | null,
 ): string {
   const q = new URLSearchParams();
@@ -105,6 +109,12 @@ export function App() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   /** 产物可能有新图时 +1,画廊据此重新拉清单 */
   const [galleryKey, setGalleryKey] = useState(0);
+  /**
+   * ⭐ **当前工具**（左栏选中的那个）—— 决定右侧检查器显示哪一页字段。
+   *
+   * 与"选中了哪个节点"是两件独立的维度：工具定"改哪一类"，选中定"改谁"。
+   */
+  const [tool, setTool] = useState<ToolId>('select');
 
   // ── 会话层(多会话 + 持久化;id 贯穿前端/API/转录文件)──
   const [sessionId, setSessionId] = useState<string | null>(() =>
@@ -300,6 +310,26 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * **常驻事件流**：服务端**主动推**的那些事（现在只有 `artifacts` —— 出图了 ⇒ 画廊重拉）。
+   *
+   * ⚠️ 在此之前前端**没有任何常驻通道**：`/chat` 那条 SSE 只活一轮对话。
+   *    于是"**别人**出了图"（直接 `POST /api/layout/<n>/render`，或别的工具）
+   *    前端完全不知道 ⇒ 画廊要等下次对话结束、或者手动 F5。
+   *
+   * `EventSource` **自带断线重连**（含服务重启），所以这里只管收摊，不用写重试。
+   */
+  useEffect(() => {
+    if (!sessionId) return;
+    const es = new EventSource(`/api/sessions/${sessionId}/stream`);
+    const onArtifacts = () => setGalleryKey((k) => k + 1);
+    es.addEventListener('artifacts', onArtifacts);
+    return () => {
+      es.removeEventListener('artifacts', onArtifacts);
+      es.close();
+    };
+  }, [sessionId]);
+
   // 取「当前用的模型」——来自服务端注册表（keys.json），UI 只做展示不做选择
   useEffect(() => {
     void (async () => {
@@ -317,13 +347,12 @@ export function App() {
     localStorage.setItem('vinart.sessionId', id);
     setSessionId(id);
     setSelectedLayer(null);
-    setActiveWord(null);
     savePendingEnv({});
     await loadSessionMessages(id);
     const wd = await fetchWorkDir(id);
     setWorkDir(wd);
     if (wd) rememberWorkDir(wd); // 自愈燃料
-    commitLayout(null as unknown as LayoutData);
+    commitLayout(null as unknown as PreviewData);
   }, []);
 
   /**
@@ -335,9 +364,8 @@ export function App() {
       localStorage.removeItem('vinart.sessionId');
       setSessionId(null);
       setSelectedLayer(null);
-      setActiveWord(null);
       setMessages([]);
-      commitLayout(null as unknown as LayoutData);
+      commitLayout(null as unknown as PreviewData);
       // envOverride（组头 ✎）= 预填该目录；无参 = 沿用当前显示环境
       const env = envOverride ?? (workDir ? { workDir } : {});
       savePendingEnv(env);
@@ -411,32 +439,49 @@ export function App() {
   );
 
   // ── 版式编辑状态(产物点击 → 加载 → 逐元素修改 → 保存/重渲)──
-  const [layout, setLayout] = useState<LayoutData | null>(null);
+  const [layout, setLayout] = useState<PreviewData | null>(null);
   const [layoutBusy, setLayoutBusy] = useState(false);
   /** 选中的图层(检查器与 iframe 双向同步) */
   const [selectedLayer, setSelectedLayer] = useState<string | null>(null);
-  /** 当前激活的染色词(点图上染色片段切换;面板单行颜色跟随它) */
-  const [activeWord, setActiveWord] = useState<string | null>(null);
+  /**
+   * ⭐ **文字选区快照**（在画面上拖选了几个字）。
+   *
+   * 由编辑器的 `onSelectionChange` 推上来（编辑器内部做了指纹比对，只在真变了时报）。
+   * `null` = 没在选字 ⇒ 面板那一栏收起来。
+   */
+  const [selection, setSelection] = useState<SelectionSnapshot | null>(null);
   /** 宿主→iframe 的统一信号(面板发起的选中/patch;图上操作不走这里防回环) */
   const [hostSignal, setHostSignal] = useState<HostSignal | null>(null);
   const seqRef = useRef(0);
+
   /**
-   * 图层可视性(隐藏集合)—— **编辑器视角态,不进 spec/appearance**。
+   * ⭐ **工具页跟着选中自动跳**（规则 A：只在"当前页跟这个节点**毫无关系**"时才跳）。
    *
-   * 为什么不复用 `handleLayerPatch`:那条路会把字段 merge 进 `spec`,
-   * 而这里有 1.5s **防抖自动保存**,于是"藏一层看看"会在两秒后变成磁盘上的版式数据,
-   * 进而被 `render.ts` 渲染进成品图 —— 正是必须避免的。详见 `layer-visibility.ts`。
+   * 这样在「选择」页调位置，选中任何东西都不会被跳走；但在「文字」页误点了一张图片，
+   * 会自动跳到「图片」页。`选择` / `图层` 是全局页，**永不**自动跳（见 `tools.ts`）。
+   *
+   * ⚠️ 用 ref 记住"这次选中已处理过"：否则你**手动**点一个当前节点没字段的页时，
+   *    这个 effect 会立刻把你弹走 —— 手动选择就失效了。
    */
-  const [hiddenLayers, setHiddenLayers] = useState<ReadonlySet<string>>(() => new Set());
+  const jumpedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!layout || !selectedLayer) return;
+    if (jumpedFor.current === selectedLayer) return;
+    jumpedFor.current = selectedLayer;
+    // ⚠️ 找的是**元素**：`doc.layers` 现在是图层，元素在 `Layer.elements` 里。
+    //    选中的是**图层本身**时这里返回 null ⇒ 跳过（图层的属性面板是第二步的事）。
+    const node = findElement(layout.doc, selectedLayer);
+    if (!node) return;
+    if (shouldFollowSelection(fieldsFor(node, layout.doc.canvas), tool)) setTool(toolForLayer(node));
+    // `tool` 故意不进依赖：只在**选中变化**时判断，不然手动换页会被立刻弹回
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLayer, layout]);
 
   /** 权威数据引用 + 防抖自动保存(1.5s 无操作静默写盘,刷新页面不丢) */
-  const layoutRef = useRef<LayoutData | null>(null);
+  const layoutRef = useRef<PreviewData | null>(null);
   const saveTimer = useRef<number | undefined>(undefined);
 
-  function commitLayout(next: LayoutData) {
-    // 换版式 = 换画布:可视性不能跨版式残留(旧 id 在新版式里根本不存在)。
-    // 关掉也一样(next 为 null)——"没有版式"不该带着上一张的隐藏名单。
-    if (next?.name !== layoutRef.current?.name) setHiddenLayers(new Set());
+  function commitLayout(next: PreviewData) {
     layoutRef.current = next;
     setLayout(next);
   }
@@ -455,96 +500,89 @@ export function App() {
       await fetch(layoutApiUrl(cur, 'save', sessionId), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ spec: cur.spec, appearance: cur.appearance }),
+        body: JSON.stringify({ doc: cur.doc }),
       });
     } catch {
       /* 静默:网络抖动时下次操作会再触发 */
     }
   }
 
-  function mergePatch(prev: LayoutData, id: string, patch: Record<string, unknown>): LayoutData {
-    const spec = { ...prev.spec, layers: prev.spec.layers.slice() };
-    const li = spec.layers.findIndex((x) => x.id === id);
-    if (li < 0) return prev;
-    const merged = { ...spec.layers[li] } as Record<string, unknown>;
-    for (const [k, v] of Object.entries(patch)) {
-      if (k === 'rect' && typeof v === 'object' && v)
-        merged.rect = { ...(merged.rect as object), ...(v as object) };
-      else merged[k] = v;
-    }
-    spec.layers[li] = merged as (typeof prev.spec.layers)[number];
-    const appearance = { ...prev.appearance, layers: { ...prev.appearance.layers } };
-    const cur = { ...(appearance.layers[id] ?? {}) } as LayerAppearance & Record<string, unknown>;
-    if ('color' in patch) cur.color = patch.color as string;
-    if ('fill' in patch) cur.fill = patch.fill as string;
-    if ('accent' in patch) {
-      // accent 归外观层(与 color/fill 同层);空 words = 取消强调
-      const a = patch.accent as { words?: string[]; color?: string } | undefined;
-      if (a && a.words && a.words.length)
-        cur.accent = {
-          words: a.words,
-          color: a.color ?? cur.accent?.color ?? 'accent',
-        } as LayerAppearance['accent'];
-      else if ('accent' in patch) delete cur.accent;
-    }
-    if ('opacity' in patch) {
-      const o = patch.opacity as number;
-      if (o >= 1) delete cur.opacity;
-      else cur.opacity = o;
-    }
-    appearance.layers[id] = cur;
-    return { ...prev, spec, appearance };
-  }
+  /**
+   * ⭐ 新数据流（2026-10-15）：**编辑器给整份文档**，App 只负责"存 + 需要时重渲"。
+   * 旧的 mergePatch（spec/appearance 双层合并）随旧链删除——patch 的合并活
+   * 已由编辑器内部完成（vocab-editor 直接改内部 doc，onTyping 就地补 DOM）。
+   */
+  /** 结构性变化的 label（画布与文档会脱节 ⇒ 必须重取服务端渲染的 HTML） */
+  /**
+   * 这些 label 的操作会**改变渲染产物本身** ⇒ 必须重新 `emitDocument` + 换 srcdoc。
+   *
+   * ⚠️ `改 visible` 必须在这里：**隐藏图层 = 那个图层不产出 DOM**（见 `emitLayer`），
+   *    不重渲的话文档改了、磁盘存了，**画布上那个图层却还在** —— 看起来就是"点了没用"。
+   *    `改 locked` **不用**重渲：锁定只影响交互，不改变渲染产物。
+   */
+  const STRUCT_LABELS = ['撤销', '重做', '新增', '删除元素', '调整图层顺序', '改 visible'];
 
-  /** 统一的 patch 入口:合并进持久数据 + 通知 iframe(参数面板发起) */
-  const handleLayerPatch = useCallback((id: string, patch: Record<string, unknown>) => {
-    const prev = layoutRef.current;
-    if (!prev) return;
-    commitLayout(mergePatch(prev, id, patch));
+  const handleLayerChanged = useCallback(
+    (_id: string, next: DesignDocument, label?: string) => {
+      const prev = layoutRef.current;
+      if (!prev) return;
+      const updated: PreviewData = { ...prev, doc: next };
+      commitLayout(updated);
+      scheduleAutoSave();
+      // ⭐ 结构性变化（撤销/重做/增删/排序）⇒ 就地改的 DOM 已失效
+      //    ⇒ **前端自己 emitDocument**（编辑即渲染：编译是纯函数，浏览器里毫秒级，
+      //    素材映射随 PreviewData 下发）⇒ 换 srcdoc 重载。零网络往返。
+      //
+      // ⚠️ **除了 label 判据，还直接比对图层的开关**（`visible` / `locked`）——
+      //    `visible` 改变**渲染产物本身**（隐藏的图层不产出 DOM，见 `emitLayer`），必须重渲。
+      //    曾经只靠 label 字符串匹配（在 `STRUCT_LABELS` 里写死 `改 visible`），
+      //    **实测没生效**：文档改了、磁盘也存了，`srcdoc` 一个字节都没变（画布不动）。
+      //    ⇒ 教训：别用"字符串猜语义"，直接看数据。
+      const layerFlagsChanged =
+        next.layers.length !== prev.doc.layers.length ||
+        next.layers.some((l, i) => {
+          const p = prev.doc.layers[i];
+          return !p || p.visible !== l.visible || p.locked !== l.locked;
+        });
+      if (layerFlagsChanged || (label && STRUCT_LABELS.some((k) => label.startsWith(k)))) {
+        const { html } = emitDocument(next, { assets: prev.assets });
+        commitLayout({ ...updated, html });
+      }
+    },
+    [sessionId],
+  );
+
+  /** 打字（就地补 DOM）⇒ 只存 + 自动保存，不重渲 */
+  const handleTypingChanged = useCallback(
+    (_id: string, next: DesignDocument) => {
+      const prev = layoutRef.current;
+      if (!prev) return;
+      commitLayout({ ...prev, doc: next });
+      scheduleAutoSave();
+    },
+    [],
+  );
+
+  /** 参数面板改单字段 ⇒ 发信号给编辑器（数据由编辑器的 onChange 统一回流，防双写） */
+  const handleLayerPatch = useCallback((id: string, path: string, value: unknown) => {
     seqRef.current += 1;
-    setHostSignal({ seq: seqRef.current, type: 'patch', id, patch });
-    scheduleAutoSave();
+    setHostSignal({ seq: seqRef.current, type: 'patch', id, path, value });
   }, []);
 
-  /** 图上操作(iframe 内)→ 只合并数据,不经 hostSignal(iframe 已自应用,防回环) */
-  const handleLayerChanged = useCallback((id: string, patch: Record<string, unknown>) => {
-    const prev = layoutRef.current;
-    if (!prev) return;
-    commitLayout(mergePatch(prev, id, patch));
-    scheduleAutoSave();
+  /**
+   * ⭐ 给画面上**选中的那几个字**刷样式。
+   *
+   * 面板给的是 `(path, value)`（`path` 来自 `selectionFields()`）——
+   * px → 0–1 换算、装饰线的逐项合并都在编辑器里做，这一层只转发。
+   */
+  const handleSelectionStyle = useCallback((path: string, value: unknown) => {
+    seqRef.current += 1;
+    setHostSignal({ seq: seqRef.current, type: 'style-selection', path, value });
   }, []);
 
   const handleLayerSelect = useCallback((id: string) => {
     setSelectedLayer(id);
-    setActiveWord(null); // 点元素其他部分 → 回到基色上下文
   }, []);
-
-  /**
-   * 图层可视性开关（清单里的眼睛）。只改画布显示，**不碰 spec**。
-   * `solo` = Alt 点击 = 只看这一层（再 Alt 点一次还原全显示，见 `toggleHidden`）。
-   */
-  const handleToggleLayerVisible = useCallback((id: string, solo: boolean) => {
-    const cur = layoutRef.current;
-    if (!cur) return;
-    const allIds = cur.spec.layers.map((l) => l.id);
-    setHiddenLayers((prev) => toggleHidden(prev, id, solo, allIds));
-  }, []);
-
-  const handleShowAllLayers = useCallback(() => setHiddenLayers(new Set()), []);
-
-  /**
-   * 不变量：**被选中的图层不可能是隐藏的**。
-   *
-   * 不管隐藏集合怎么变的（点眼睛 / 独奏 / 换版式），只要撞上当前选中就取消选中
-   * —— 用户选的是"自动取消选中"。iframe 侧从同一份集合自行 `deselect()`，
-   * 两边独立推导同一结论，不需要来回通信（也就没有回环风险）。
-   */
-  useEffect(() => {
-    if (selectedLayer && hiddenLayers.has(selectedLayer)) {
-      setSelectedLayer(null);
-      setActiveWord(null);
-    }
-  }, [hiddenLayers, selectedLayer]);
 
   /** 打开产物:fetch data(会话工作目录模式带 session query) */
   const handleOpenArtifact = useCallback(
@@ -581,7 +619,7 @@ export function App() {
           ]);
           return;
         }
-        const data = (await resp.json()) as LayoutData;
+        const data = (await resp.json()) as PreviewData;
         if (!data.html) {
           setMessages((prev) => [
             ...prev,
@@ -634,7 +672,7 @@ export function App() {
         const { workDir: abs } = (await resp.json()) as { workDir: string };
         setWorkDir(abs);
         // 目录变了:当前打开的版式属于旧位置,清掉(回到缩略图重选)
-        commitLayout(null as unknown as LayoutData);
+        commitLayout(null as unknown as PreviewData);
         setPreviewUrl(null);
         setGalleryKey((k) => k + 1);
         setMessages((prev) => [
@@ -689,8 +727,10 @@ export function App() {
     const v = Number(localStorage.getItem('vinart.leftColWidth'));
     return Number.isFinite(v) && v >= LEFT_COL_MIN && v <= LEFT_COL_MAX ? v : 230;
   });
+  // ⚠️ **默认收起**（只有明确存过 `'0'` = 用户展开过，才展开）——
+  //    会话列表是"偶尔切一下"的东西，不该占着最左边一条。
   const [leftColCollapsed, setLeftColCollapsed] = useState<boolean>(() =>
-    localStorage.getItem('vinart.leftColCollapsed') === '1',
+    localStorage.getItem('vinart.leftColCollapsed') !== '0',
   );
   const toggleLeftCol = useCallback(() => {
     setLeftColCollapsed((c) => {
@@ -832,13 +872,13 @@ export function App() {
       const resp = await fetch(layoutApiUrl(cur, 'save', sessionId), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ spec: cur.spec, appearance: cur.appearance }),
+        body: JSON.stringify({ doc: cur.doc }),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      logSessionAction('save-spec', { layout: cur.name });
+      logSessionAction('save-doc', { layout: cur.name });
       setMessages((prev) => [
         ...prev,
-        { id: crypto.randomUUID(), role: 'assistant', text: `💾 已保存 ${cur.name} 的 spec/appearance` },
+        { id: crypto.randomUUID(), role: 'assistant', text: `💾 已保存 ${cur.name} 的版式文档` },
       ]);
     } catch (e) {
       setMessages((prev) => [
@@ -1121,11 +1161,25 @@ export function App() {
             onOpen={handleOpenArtifact}
           />
       <div className={`main${isResizingCol ? ' resizing' : ''}`}>
+        {/* ⭐ 主工具栏：**最左一栏**（44px 固定宽）。上面 6 个是工具（单选，决定检查器显示哪一页），
+            下面 4 个是动作（撤销/重做/保存/出图）—— 动作只此一处入口。 */}
+        <ToolBar
+          tool={tool}
+          onTool={setTool}
+          busy={layoutBusy}
+          onSignal={(sig) => {
+            seqRef.current += 1;
+            setHostSignal({ seq: seqRef.current, ...sig });
+          }}
+          onSave={handleSaveLayoutLive}
+          onRender={handleRenderLayoutLive}
+        />
         {/* 左侧对话列表:宽度可拖拽(localStorage 持久化),收起时 width→0,开关贴屏左缘;图标竖线靠左=侧栏在左 */}
         <button
           type="button"
           className={`left-toggle${leftColCollapsed ? ' collapsed' : ''}`}
-          style={{ left: leftColCollapsed ? 10 : leftColWidth + 10 }}
+          // ⚠️ 要**让开工具栏**（最左 `--toolbar-w` 那一条），否则收起时会正好压在第一格工具上
+          style={{ left: `calc(var(--toolbar-w, 44px) + ${leftColCollapsed ? 10 : leftColWidth + 10}px)` }}
           onClick={toggleLeftCol}
           title={leftColCollapsed ? '展开对话列表' : '收起对话列表'}
         >
@@ -1149,13 +1203,10 @@ export function App() {
           previewUrl={previewUrl}
           layoutData={layout}
           sessionId={sessionId}
-          hiddenLayers={hiddenLayers}
           onLayerChange={handleLayerChanged}
+          onTypingChange={handleTypingChanged}
           onLayerSelect={handleLayerSelect}
-          onLayerWord={(id, word) => {
-            setSelectedLayer(id);
-            setActiveWord(word);
-          }}
+          onSelectionChange={setSelection}
           hostSignal={hostSignal}
         />
         {/* 检查器栏（版式编辑器）—— **独立一栏**，贴画布右侧；无版式时不占位。
@@ -1190,20 +1241,20 @@ export function App() {
               <EditPanel
                 layout={layout}
                 selectedLayer={selectedLayer}
-                activeWord={activeWord}
+                selection={selection}
                 busy={layoutBusy}
-                hiddenLayers={hiddenLayers}
-                onToggleVisible={handleToggleLayerVisible}
-                onShowAll={handleShowAllLayers}
+                tool={tool}
                 onSelectLayer={(id) => {
                   setSelectedLayer(id);
                   seqRef.current += 1;
                   setHostSignal({ seq: seqRef.current, type: 'select', id });
                 }}
-                onActivateWord={(word) => setActiveWord(word)}
                 onLayerPatch={handleLayerPatch}
-                onSave={handleSaveLayoutLive}
-                onRender={handleRenderLayoutLive}
+                onSelectionStyle={handleSelectionStyle}
+                onSignal={(sig) => {
+                  seqRef.current += 1;
+                  setHostSignal({ seq: seqRef.current, ...sig });
+                }}
               />
             </div>
           </>

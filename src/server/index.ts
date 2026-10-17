@@ -20,6 +20,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
+// 文档模型（`buildLayoutNote` 要把"当前打开的版式"讲给 LLM 听 —— 结构见 `vocabulary.ts` 文件头）
+import { iterElements, type DesignDocument } from '../document/vocabulary';
 
 const PORT = Number(process.env.PORT) || 8787;
 
@@ -27,9 +29,9 @@ const PNG_PRIORITY = ['final.png', 'sketch.png'];
 
 /**
  * 版式编辑数据链路(前端逐元素编辑的持久层):
- *   GET  /api/layout/<name>/data   → { name, spec, appearance, html }
- *   POST /api/layout/<name>/save   → body { spec?, appearance? } 写盘
- *   POST /api/layout/<name>/render → 复用聊天链的 render_design 工具(零模型调用)
+ *   GET  /api/layout/<name>/data   → { name, doc, html }（html = emitDocument 现场生成）
+ *   POST /api/layout/<name>/save   → body { doc } 写 doc.json
+ *   POST /api/layout/<name>/render → emitDocument + blink 渲染 final.png
  * name 只允许字母数字横线下划线,防路径穿越。
  *
  * ⚠️ **三个动作都必须带 `?session=`**（render 必须有会话，save/data 建议带）。
@@ -40,6 +42,140 @@ const PNG_PRIORITY = ['final.png', 'sketch.png'];
  */
 // 渲染互斥:同一时间只允许一个渲染任务(历史:run/pipeline/render 共用)
 let running: { stepId: string } | null = null;
+
+// ══════════════════════════════════════════════════════════════════════
+// 会话事件推送（常驻 SSE）
+// ══════════════════════════════════════════════════════════════════════
+
+/**
+ * **活着的会话事件流**：`sessionId → 打开的响应`（一个会话可以同时开着好几个页面）。
+ *
+ * ## 为什么需要它
+ *
+ * 在此之前前端**没有任何常驻通道** —— 唯一的 SSE 是 `/chat` 那一轮对话的流，说完就断。
+ * 于是"**别人**出了图"（直接 `POST /api/layout/<n>/render`，或者将来某个工具）
+ * 前端完全不知道：画廊要等下一次对话结束、或者用户手动 F5 才更新。
+ *
+ * ⇒ 挂一条常驻的 `GET /api/sessions/<sid>/stream`，服务端有事就 `pushSessionEvent`。
+ *    现在只推 `artifacts`（出图了 ⇒ 画廊重拉清单），以后渲染进度之类也能走它。
+ */
+const liveStreams = new Map<string, Set<ServerResponse>>();
+
+/** 给某个会话的**所有**打开的页面推一条 SSE 事件。没人听就什么都不做 */
+function pushSessionEvent(sessionId: string, event: string, data: unknown): void {
+  const set = liveStreams.get(sessionId);
+  if (!set?.size) return;
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const res of set) {
+    try {
+      res.write(payload);
+    } catch {
+      set.delete(res); // 写失败 = 这条已经断了（`close` 事件也兜着，这里只是快点清）
+    }
+  }
+}
+
+/**
+ * 递归收集文档里引用的**素材名**。
+ *
+ * ⚠️ **四个地方都可能出现素材引用，一个都不能漏**：
+ *    · `asset`（image / svg）
+ *    · `fill` 里的 `url(...)`（形状的图案填充；字符串或数组）
+ *    · `mask` 里的 `url(...)`（蒙版图）
+ *    · `stroke.paint` 里的 `url(...)`（图片描边 → `border-image`）
+ *    漏掉的后果是**断图、而且不报错**：名字没进 `assets`，emit 就只当它是一段普通 CSS 值，
+ *    原样写出去，浏览器拿它当相对 URL 去 404。
+ */
+/**
+ * ⚠️ **文档结构是「画布 → 图层 → 元素」**（2026-10-16 改，见 `vocabulary.ts` 文件头）：
+ *    `doc.layers` 是**图层**，素材挂在 `Layer.elements` 里的元素上，组还能再嵌套。
+ *    ⇒ 必须**递归到元素**去挖，只看 `doc.layers` 一层会**一个素材都收不到**
+ *      （后果见上：断图、而且不报错）。
+ */
+function collectAssetNames(doc: { layers: unknown[] }): string[] {
+  const out = new Set<string>();
+  /** 从一个 CSS 值里挖 `url(名字)`。`data:` / `http(s):` / 路径**不是素材名**，跳过 */
+  const takeUrls = (v: unknown): void => {
+    const one = (s: string) => {
+      for (const m of s.matchAll(/url\(\s*['"]?([^)'"]+)/g)) {
+        const name = m[1].trim();
+        if (!/^(data:|https?:|\/|\.\.?\/)/i.test(name)) out.add(name);
+      }
+    };
+    if (typeof v === 'string') one(v);
+    else if (Array.isArray(v)) for (const x of v) if (typeof x === 'string') one(x);
+  };
+  const walk = (ls: unknown[]): void => {
+    for (const l of ls) {
+      const n = l as {
+        type?: string;
+        asset?: string;
+        fill?: unknown;
+        mask?: unknown;
+        stroke?: { paint?: string };
+        /** 元素（图层 / 组都有这个字段） */
+        elements?: unknown[];
+      };
+      if (n.asset) out.add(n.asset);
+      takeUrls(n.fill);
+      takeUrls(n.mask);
+      takeUrls(n.stroke?.paint);
+      if (Array.isArray(n.elements)) walk(n.elements);
+    }
+  };
+  walk(doc.layers);
+  return [...out];
+}
+
+/** 扩展名 → MIME（**文件流 与 data URL 共用这一份**） */
+const MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  svg: 'image/svg+xml',
+  json: 'application/json',
+  md: 'text/markdown',
+  txt: 'text/plain',
+};
+
+const mimeOf = (p: string): string =>
+  MIME[p.split('.').pop()?.toLowerCase() ?? ''] ?? 'application/octet-stream';
+
+/** 读盘 → `data:<mime>;base64,...` */
+const dataUrlOf = (p: string): string => `data:${mimeOf(p)};base64,${readFileSync(p).toString('base64')}`;
+
+/**
+ * **素材名 → URL** —— **唯一一处"找文件"的地方**。
+ *
+ * ⚠️ 为什么必须只有一份：`/data`（预览）和 `/render`（出图）原来**各写了一遍**（复制粘贴），
+ *    只有最后一行不同。而 `/render` 那行写的是 `file://` ——
+ *    `page.setContent()` 出来的文档是 `about:blank`，**Chromium 禁止从非 `file://` 页面
+ *    加载 `file://` 子资源**（安全边界，没有开关）⇒ **出图里所有素材都是裂图**；
+ *    而预览那条路（`/api/sessions/.../file/...`）好好的。
+ *    ⇒ "预览看得见、出图看不见"，还一声不响（服务端把 `unsupported` 也丢了）。
+ *
+ * `urlFor` 由调用方决定 URL 形态：**预览**给 http 路由；**出图**给 **data URL**
+ * （不受 scheme / CORS 限制、产物自包含 —— 与 `@font-face` 内联是同一个思路）。
+ */
+function resolveAssets(
+  doc: { layers: unknown[] },
+  roots: string[],
+  urlFor: (abs: string) => string,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const nm of collectAssetNames(doc)) {
+    for (const r of roots) {
+      const p = resolve(r, nm);
+      if (existsSync(p)) {
+        out[nm] = urlFor(p);
+        break;
+      }
+    }
+  }
+  return out;
+}
 
 async function handleLayout(
   req: IncomingMessage,
@@ -65,59 +201,35 @@ async function handleLayout(
     return res.end('bad layout path');
   }
   const action = m[2];
-  const specPath = join(dir, 'design-sketch.json');
-  const appPath = join(dir, 'design-appearance.json');
+  // ⭐ 新协议：**一个文件就是一份 DesignDocument**（词汇表）。
+  //    旧产物（design-sketch.json / design-appearance.json）不迁移——读到没有 doc.json
+  //    一律 404 提示重新生成（旧格式没有值得保留的信息，见 docs/MIGRATION.md）。
+  const docPath = join(dir, 'doc.json');
 
   if (req.method === 'GET' && action === 'data') {
-    if (!existsSync(specPath)) {
+    if (!existsSync(docPath)) {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-      return res.end(`no spec: ${name}`);
+      return res.end(
+        `no doc: ${name}（旧格式产物不兼容——请在对话里重新生成这份版式）`,
+      );
     }
-    const spec = JSON.parse(readFileSync(specPath, 'utf8'));
-    const appearance = existsSync(appPath)
-      ? JSON.parse(readFileSync(appPath, 'utf8'))
-      : {};
-    // ⚠️ html **始终现场生成**——不从任何落盘快照读。这样编辑视图永远与
-    // spec + appearance 一致；落盘快照（final.html / final.linked.html）已于
-    // 2026-10-09 删除，那条路整个消失。spec 才是编辑的数据源。
-    const { renderDesign } = await import('../render/declarative/render');
-    const { applyAppearance } = await import('../document/design-appearance');
-    const { loadAppearance, loadPalette, loadTypography } = await import(
-      '../render/runtime'
-    );
-    const app2 = loadAppearance(specPath);
-    const merged = {
-      ...spec,
-      layers: applyAppearance(spec.layers, app2),
-    } as typeof spec;
-    const rendered = renderDesign(merged, {
-      mode: 'final',
-      palette: loadPalette((app2.palette as string) ?? 'warm-copper'),
-      typography: loadTypography((app2.fontScheme as string) ?? 'legacy-system'),
-    });
-    // {{KEY}} → file API 绝对路径（多根解析：版式目录 → 工作目录）。
-    // 旧写法是文件名 + base tag（designs/<name>/）——素材在 designs/ 里、
-    // 贴图在 uploads/ 里，固定 base 必 404（可编辑视图图片全空的实锤根因）。
+    const doc = JSON.parse(readFileSync(docPath, 'utf8'));
+    // ⚠️ html **始终现场生成**（emitDocument 纯函数）——编辑视图永远与 doc 一致，
+    //    doc 是唯一数据源（与旧协议同理念）。
+    //    素材解析：doc 里引用的素材名 → [版式目录, 工作目录] 找文件 → URL。
+    //    **预览这条路的 URL 形态是 http 路由**（见 `resolveAssets` 的对照）。
+    const { emitDocument } = await import('../render/vocabulary/emit');
     const assetRoots = [dir, ...(workDir ? [workDir] : [])];
-    const html = rendered.html.replace(
-      /\{\{(\w+)\}\}/g,
-      (key: string) => {
-        const filename = (rendered.assets as Record<string, string>)[key.slice(2, -2)] ?? key;
-        for (const r of assetRoots) {
-          const p = resolve(r, filename);
-          if (existsSync(p)) {
-            if (sessionId && workDir) {
-              const rel = relative(workDir, p).split(sep).join('/');
-              return `/api/sessions/${sessionId}/file/${rel}`;
-            }
-            return `/files/${relative(dir, p).split(sep).join('/')}`; // legacy 静态映射
-          }
-        }
-        return filename;
-      },
+    const assets = resolveAssets(doc, assetRoots, (p) =>
+      sessionId && workDir
+        ? `/api/sessions/${sessionId}/file/${relative(workDir, p).split(sep).join('/')}`
+        : `/files/${relative(dir, p).split(sep).join('/')}`,
     );
+    const { html } = emitDocument(doc, { assets });
+    // ⭐ assets 映射随 data 下发——前端结构性变化（undo/增删）时**在浏览器里自己
+    //    emitDocument**（编辑即渲染，无网络往返），素材映射从这里拿。
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    return res.end(JSON.stringify({ name, spec, appearance, html }));
+    return res.end(JSON.stringify({ name, doc, html, assets }));
   }
 
   if (req.method === 'POST' && action === 'save') {
@@ -125,13 +237,10 @@ async function handleLayout(
     req.on('data', (c: Buffer) => (body += c));
     req.on('end', () => {
       try {
-        const payload = JSON.parse(body) as { spec?: unknown; appearance?: unknown };
+        const payload = JSON.parse(body) as { doc?: unknown };
         mkdirSync(dir, { recursive: true });
-        if (payload.spec) {
-          writeFileSync(specPath, JSON.stringify(payload.spec, null, 2) + '\n', 'utf8');
-        }
-        if (payload.appearance) {
-          writeFileSync(appPath, JSON.stringify(payload.appearance, null, 2) + '\n', 'utf8');
+        if (payload.doc) {
+          writeFileSync(docPath, JSON.stringify(payload.doc, null, 2) + '\n', 'utf8');
         }
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ ok: true }));
@@ -152,24 +261,40 @@ async function handleLayout(
       res.writeHead(409, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end(`已有任务在跑: ${running.stepId}`);
     }
-    if (!existsSync(specPath)) {
+    if (!existsSync(docPath)) {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-      return res.end(`no spec: ${name}`);
+      return res.end(`no doc: ${name}`);
     }
     console.log(`[render] ${name} → final`);
     running = { stepId: `render:${name}` };
     try {
-      // ⚠️ 复用聊天链的 render_design 工具，**不再自己 spawn step-layout**：
-      // 此前两条渲染实现不一致——step-layout 侧不传 searchRoots（工作目录相对的
-      // 贴图素材解析不到）、且规格路径硬编码 test_product/layout/<name>；
-      // 而聊天链的 render_design 用共享渲染器 + [workDir, 项目根] 回退根 + 校验。
-      // 入口唯一化后，网页点「重渲」与让 AI 重渲走同一份逻辑。
-      const result = await createRenderDesignTool({ sessionId }).execute(
-        { name },
-        { dir, signal: new AbortController().signal },
-      );
-      res.writeHead(result.isError ? 500 : 200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: !result.isError, log: result.content }));
+      // ⭐ 新链：emitDocument（词汇 → HTML）+ blink 渲染 PNG。
+      //    ⚠️ 素材**必须内联成 data URL** —— 曾经这里是 `pathToFileURL()`（注释还写着
+      //    "渲染器本地读盘最稳"，实际**最不稳**）：渲染器用 `page.setContent()`，
+      //    文档是 `about:blank` ⇒ Chromium 禁止加载 `file://` 子资源 ⇒ 出图里素材全裂。
+      //    完整理由见 `resolveAssets` 上面那段。
+      const doc = JSON.parse(readFileSync(docPath, 'utf8'));
+      const { emitDocument } = await import('../render/vocabulary/emit');
+      const assetRoots = [dir, ...(workDir ? [workDir] : [])];
+      const assets = resolveAssets(doc, assetRoots, dataUrlOf);
+      const { html } = emitDocument(doc, { assets });
+      const { createBlinkRenderer } = await import('../render/rasterize/blink-renderer');
+      const renderer = await createBlinkRenderer();
+      try {
+        const out = await renderer.render(
+          { html },
+          dir,
+          { width: doc.canvas.width, height: doc.canvas.height, deviceScaleFactor: 2, format: 'png', filename: 'final' },
+        );
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ ok: true, png: out.imagePath }));
+        // ⭐ 出完图**推一次**：画廊据此重拉清单。
+        //    原来这个事件只有"对话链产出"才会推（见 `/chat` 里 `evt.kind === 'artifacts'`）——
+        //    直接调本端点出图，前端永远不知道 ⇒ 只能手动 F5。
+        pushSessionEvent(sessionId, 'artifacts', { layout: name, png: out.imagePath });
+      } finally {
+        await renderer.dispose();
+      }
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ ok: false, log: String(e) }));
@@ -200,7 +325,7 @@ async function handleSessions(
 ) {
   const JSON_HDR = { 'Content-Type': 'application/json; charset=utf-8' };
   const sessionIdMatch =
-    /^\/api\/sessions\/([\w.-]+)(?:\/(events|chat|artifacts|workdir|file)(?:\/(.*))?)?$/.exec(path);
+    /^\/api\/sessions\/([\w.-]+)(?:\/(events|chat|artifacts|workdir|file|stream)(?:\/(.*))?)?$/.exec(path);
 
   // 列表：一级分组——条目带 home（= 工作目录 = 项目根），前端按它分组
   if (path === '/api/sessions' && method === 'GET') {
@@ -301,19 +426,38 @@ async function handleSessions(
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end('not found');
     }
-    const ext = abs.split('.').pop()?.toLowerCase() ?? '';
-    const MIME: Record<string, string> = {
-      png: 'image/png',
-      jpg: 'image/jpeg',
-      jpeg: 'image/jpeg',
-      webp: 'image/webp',
-      gif: 'image/gif',
-      json: 'application/json',
-      md: 'text/markdown',
-      txt: 'text/plain',
-    };
-    res.writeHead(200, { 'Content-Type': MIME[ext] ?? 'application/octet-stream' });
+    res.writeHead(200, { 'Content-Type': mimeOf(abs) });
     return res.end(readFileSync(abs));
+  }
+
+  // ── 常驻事件流(服务端主动推:出图了、以后还有渲染进度)────────────────
+  // ⚠️ **长连接**：绝不能 `res.end()`，清理只靠 `req.on('close')`。
+  //    前端用 `EventSource`（自带断线重连），所以服务重启也不用管。
+  if (sub === 'stream' && method === 'GET') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.write(': connected\n\n'); // 先吐一个注释帧，让前端立刻知道连上了
+    const set = liveStreams.get(sessionId) ?? new Set<ServerResponse>();
+    set.add(res);
+    liveStreams.set(sessionId, set);
+    // 心跳：25 秒一个注释帧 —— 免得中间层（代理 / 系统）把空闲连接掐掉
+    const beat = setInterval(() => {
+      try {
+        res.write(': ping\n\n');
+      } catch {
+        /* 写失败由下面的 close 收拾 */
+      }
+    }, 25_000);
+    req.on('close', () => {
+      clearInterval(beat);
+      set.delete(res);
+      if (!set.size) liveStreams.delete(sessionId);
+    });
+    return;
   }
 
   // 追加事件(编辑器操作与消息共用)
@@ -557,41 +701,37 @@ async function buildSystemNote(sessionId: string, layoutName?: string | null): P
   return [catalog, layoutNote].filter(Boolean).join('\n\n');
 }
 
-/** 版式摘要 → systemNote 注入(让 LLM 知道「当前打开的版式」;每轮按最新状态重算) */
+/**
+ * 版式摘要 → systemNote 注入（让 LLM 知道「当前打开的版式」；每轮按最新状态重算）。
+ *
+ * ⚠️ **2026-10-16 改成读 `doc.json`**：此前它读的是**旧契约**的
+ *    `design-sketch.json` + `design-appearance.json` —— 那两个契约整层已删，
+ *    而这两个文件在交付目录里**再没有任何程序会读**（只剩这里）。
+ *    继续读下去的后果：给旧版式注入**旧契约的描述**，对 `smoke` / `vocab-full`
+ *    则**什么都不注入**（`doc.json` 在、但 `design-sketch.json` 不在 ⇒ 早退）。
+ */
 async function buildLayoutNote(sessionId: string, layoutName?: string | null): Promise<string> {
   if (!layoutName) return '';
   const wd = await transcript.getWorkDir(sessionId);
-  const dir = join(wd, 'designs', layoutName);
-  const specPath = join(dir, 'design-sketch.json');
-  if (!existsSync(specPath)) return '';
+  const docPath = join(wd, 'designs', layoutName, 'doc.json');
+  if (!existsSync(docPath)) return '';
   try {
-    const spec = JSON.parse(readFileSync(specPath, 'utf8')) as {
-      canvas: { width: number; height: number };
-      layers: { id: string; type: string; text?: string | string[] }[];
-    };
-    const layers = spec.layers
+    const doc = JSON.parse(readFileSync(docPath, 'utf8')) as DesignDocument;
+    // 结构是「画布 → 图层 → 元素」（见 `vocabulary.ts` 文件头）⇒ 逐图层展开它的元素。
+    const layers = doc.layers
       .map((l) => {
-        const t = Array.isArray(l.text) ? l.text.join(' ') : (l.text ?? '');
-        return `- ${l.id}(${l.type})${t ? `「${String(t).slice(0, 40)}」` : ''}`;
+        const els = [...iterElements(l)]
+          .map((e) => {
+            const t = e.type === 'text' ? e.runs.map((r) => r.text).join(' ') : '';
+            return `  - ${e.id}(${e.type})${t ? `「${t.slice(0, 40)}」` : ''}`;
+          })
+          .join('\n');
+        return `- 图层 ${l.id}（${l.elements.length} 个元素）\n${els}`;
       })
       .join('\n');
-    let appearanceNote = '';
-    const appPath = join(dir, 'design-appearance.json');
-    if (existsSync(appPath)) {
-      const app = JSON.parse(readFileSync(appPath, 'utf8')) as {
-        palette?: unknown;
-        layers?: Record<string, { color?: string }>;
-      };
-      const colors = Object.entries(app.layers ?? {})
-        .map(([k, v]) => `${k}=${v.color ?? '?'}`)
-        .slice(0, 8)
-        .join('、');
-      appearanceNote = `\n外观(部分):${colors}`;
-      void app.palette;
-    }
     return (
-      `【当前打开的版式】${layoutName}(${spec.canvas.width}×${spec.canvas.height})\n` +
-      `图层:\n${layers}${appearanceNote}\n` +
+      `【当前打开的版式】${layoutName}(${doc.canvas.width}×${doc.canvas.height})\n` +
+      `图层:\n${layers}\n` +
       `用户说「标题/按钮/某个词」时,指的就是上面清单里的对应元素。`
     );
   } catch {
@@ -676,7 +816,7 @@ import { getChatSession, dropChatSession, isSessionStreaming } from '../designha
 import type { Attachment } from '../designharness/gateway/type/chat';
 import { uploadImageFile, FILES_API_MAX_BYTES } from '../designharness/gateway/util/files-api';
 // 重渲复用聊天链的成品渲染工具（/api/layout/<name>/render）——见该工具顶部注释
-import { createRenderDesignTool } from '../designharness/tools/render-design';
+// （createRenderDesignTool 已随旧链弃用——render 端点走 emitDocument + blink）
 import { getChatModelNames, getOpenAICompatChatConfig } from '../config';
 
 const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {

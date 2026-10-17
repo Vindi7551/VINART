@@ -30,7 +30,7 @@
  */
 
 import type { ChatMessage, TokenUsage } from '../../designharness/gateway/type/chat';
-import type { DesignSketch, ImageNode } from '../../document/design-sketch';
+import { iterElements, type DesignDocument, type ImageNode } from '../../document/vocabulary';
 import { BANNED_WORDS, type AssetOrders } from './asset-order';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -52,8 +52,7 @@ const ORDER_SYSTEM_PATH = resolve('src/workflow/assetsgen/order-system.md');
 let orderSystemTemplateCache: string | null = null;
 function orderSystemTemplate(): string {
   if (orderSystemTemplateCache === null) {
-    // rstrip 末尾换行：md 文件天然以 \n 结尾，但原 prompt 不以 \n 收尾——
-    // 去掉它才能与抽取前的字面量逐字节一致（见 _probe-order-system-extract）。
+    // rstrip 末尾换行：md 文件天然以 \n 结尾，但原 prompt 不以 \n 收尾。
     orderSystemTemplateCache = readFileSync(ORDER_SYSTEM_PATH, 'utf8').replace(/\n+$/, '');
   }
   return orderSystemTemplateCache;
@@ -89,7 +88,7 @@ function systemPrompt(
 }
 
 export interface GenerateOrdersOptions {
-  spec: DesignSketch;
+  spec: DesignDocument;
   /** 创意方案全文 */
   briefText: string;
   /**
@@ -115,11 +114,23 @@ const LANG_META: Record<string, { name: string; safe: string }> = {
   zh: { name: '中文', safe: '产品表面没有任何印刷文字元素' },
 };
 
+/**
+ * 版式里**所有 image 元素** —— 画布的孩子是**图层**，图片是**图层里的元素**
+ * （还能待在组里，甚至几层组）⇒ 必须逐层往下走，不能只看 `doc.layers` 这一层。
+ */
+function imageNodes(spec: DesignDocument): ImageNode[] {
+  const out: ImageNode[] = [];
+  for (const layer of spec.layers) {
+    for (const e of iterElements(layer)) {
+      if (e.type === 'image') out.push(e);
+    }
+  }
+  return out;
+}
+
 /** 提取版式里的 image 节点摘要（喂给编写模型的部分） */
-function imageSummaries(spec: DesignSketch) {
-  return spec.layers
-    .filter((l): l is ImageNode => l.type === 'image')
-    .map(({ id, name, asset, rect }) => ({ id, name, asset, rect }));
+function imageSummaries(spec: DesignDocument) {
+  return imageNodes(spec).map(({ id, asset, rect }) => ({ id, asset, rect }));
 }
 
 export async function generateOrders(opts: GenerateOrdersOptions): Promise<AssetOrders> {
@@ -248,11 +259,9 @@ function parseOrders(text: string): AssetOrders {
  * 与 `image.ts` 的运行时检查同源：审核禁词在生成阶段就是**问题**（前置拦截省生图费），
  * 权重语法 / 质量词同样是问题（订单还没执行就该改）。
  */
-export function validateOrders(orders: AssetOrders, spec: DesignSketch): string[] {
+export function validateOrders(orders: AssetOrders, spec: DesignDocument): string[] {
   const problems: string[] = [];
-  const specAssets = spec.layers
-    .filter((l): l is ImageNode => l.type === 'image')
-    .map((l) => l.asset);
+  const specAssets = imageNodes(spec).map((l) => l.asset);
 
   // 覆盖检查：版式的每个 image 素材都有订单；没有凭空多出的订单
   for (const a of specAssets) {

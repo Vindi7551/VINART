@@ -160,7 +160,26 @@ export default defineConfig({
       // 和管线正在写的 png/json——chokidar 碰到锁定文件会 EBUSY 且
       // 错误未被接住,直接把 dev server 进程干崩(实测 2026-10-04)。
       // 这些目录与前端模块图无关,监视它们零收益、纯风险。
-      ignored: ['**/test_product/**', '**/designassets/**', '**/.tmp-run/**', '**/.workbuddy/**'],
+      //
+      // ⚠️ `scripts/` 也要排除(2026-10-15 实测崩过一次):写脚本的工具会在这里
+      //    留 `._xxx.js.<pid>.<uuid>.tmpdir/` 临时目录,chokidar 一 watch 就
+      //    `EBUSY: resource busy or locked` ⇒ dev server 直接退出。
+      //    scripts/ 里没有任何前端模块,排除它不影响热更新。
+      //
+      // ⚠️⚠️ **最关键的是最后两条**(2026-10-15 第二次崩):编辑工具会在**源文件旁边**
+      //    建临时目录 —— 形如 `<所在目录>/.<文件名>.<pid>.<uuid>.tmpdir/<名>.tmp`,
+      //    而且**任何目录下都可能出现**(实测 `src/editor/` 下就有一个)。
+      //    只按目录排除永远堵不完 ⇒ 必须按**这个模式**排除。
+      ignored: [
+        '**/test_product/**',
+        '**/designassets/**',
+        '**/.tmp-run/**',
+        '**/.workbuddy/**',
+        '**/scripts/**',
+        // 编辑工具的临时目录（带点的目录名 / 以 .tmpdir 结尾，两种写法都留着）
+        '**/.*.tmpdir/**',
+        '**/*.tmpdir/**',
+      ],
     },
   },
   optimizeDeps: {

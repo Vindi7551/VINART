@@ -9,11 +9,6 @@ import { createSessionManager } from './manager';
 import { createChatContext } from '../context';
 import { getChatGateway } from '../../config';
 import * as transcript from './transcript';
-import { createSpawnTool } from '../subagent/spawn-tool';
-import { createRenderDesignTool } from '../tools/render-design';
-import { createGenerateAssetsTool } from '../tools/generate-assets';
-import { createCompileAppearanceTool } from '../tools/compile-appearance';
-import { createReadSpecTool, createEditSpecTool } from '../tools/edit-spec';
 import { createSkillTool } from '../skills/skill-tool';
 import type { ChatSession } from './types';
 import { readFileSync } from 'node:fs';
@@ -51,18 +46,17 @@ export function getChatSession(sessionId: string): ChatSession {
     // 参数 JSON(实测 Unterminated string at position 2015)——32768 与
     // provider 默认值一致,也够写满一批 brief。
     maxTokens: 32768,
-    // 主 AI 的工具表:spawn 委派 + 成品渲染 + 素材生成(自带两段式钱闸) + 配色编译。
-    // 工具闭包持 sessionId,execute 时现取 workDir(工作目录可中途更改)——
-    // 工具与会话同生命周期,随会话删除而弃
-    tools: [
-      createSpawnTool({ sessionId }),
-      createRenderDesignTool({ sessionId }),
-      createGenerateAssetsTool({ sessionId }),
-      createCompileAppearanceTool({ sessionId }),
-      createReadSpecTool({ sessionId }),
-      createEditSpecTool({ sessionId }),
-      createSkillTool({ sessionId }),
-    ],
+    /**
+     * 主 AI 的工具表。
+     *
+     * ⚠️ **旧契约那一批工具已于 2026-10-15 摘除**（`spawn_design_agents` /
+     * `render_design` / `generate_assets` / `compile_appearance` / `read_spec` / `edit_spec`）：
+     * 它们建立在已删除的 `document/design-sketch.ts` 契约上（`design-sketch.json` +
+     * `design-appearance.json`），而落盘协议早已换成单份 `doc.json`（词汇表）。
+     * ⇒ 这一层要**重新对着词汇表长**，是独立的一步（见 CLAUDE.md 的核心链路）。
+     * 现在只留与契约无关的技能工具。
+     */
+    tools: [createSkillTool({ sessionId })],
   });
   chatSessions.set(sessionId, session);
   void transcript

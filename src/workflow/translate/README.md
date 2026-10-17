@@ -30,6 +30,8 @@
 | `letterSpacing` · `wordSpacing` · `baselineShift` | 字号（em） | ❌ 原样透传 |
 | `lineHeight` | 字号倍数 | ❌ 原样透传 |
 | `transform.origin` | `rect` 自身 | ❌ 原样透传 |
+| `rotate` · `skewX` · `skewY` | —— **度**（无量纲） | ❌ 原样透传（与 CSS 同口径 ⇒ 编译器零换算） |
+| `scale` | —— 倍数 | ❌ 原样透传（⚠️ **文字上非法**，见 `vocabulary.ts` 的 `scale`） |
 | `image.position` | 图片自己 | ❌ 原样透传 |
 
 **最后那几行不是"暂时没做"，是永远不能做**：它们的分母是**用户正在拖的那个盒子**

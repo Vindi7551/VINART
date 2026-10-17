@@ -18,10 +18,12 @@
  * - 输入类基元基本就是「带对类名的原生 input」，**解析与提交交给调用方**
  *   —— 这样换皮不改变任何既有行为。
  */
+import { useState } from 'react';
 import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
   ReactNode,
+  SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from 'react';
 
@@ -57,26 +59,81 @@ export function PanelBody({ children }: { children: ReactNode }) {
   return <div className="ui-panel-body">{children}</div>;
 }
 
-/** 小节：标题 + 内容 + 尾部提示 */
+/**
+ * 小节：**图标 + 标题 + 字段数 + 可折叠**，下面是内容。
+ *
+ * ⚠️ 折叠是**本地 state**、不持久化：它是"我现在要看哪一块"的临时状态。
+ * ⚠️ `collapsible` 默认**跟着 `title` 走**（有标题就能折）；`defaultOpen` 默认展开 ——
+ *    常用分类（位置 / 变换 / 内容）保持展开，长尾分类（字体 / 排版 / 字形…）传 `false`。
+ */
 export function Section({
   title,
-  hint,
+  icon,
+  count,
+  collapsible,
+  defaultOpen = true,
   divider,
+  hint,
   children,
 }: {
   title?: ReactNode;
-  hint?: ReactNode;
+  /** 标题左边的图标（图形由调用方给，基元不认识业务） */
+  icon?: ReactNode;
+  /** 标题右边的字段数之类的小徽标 */
+  count?: ReactNode;
+  collapsible?: boolean;
+  defaultOpen?: boolean;
   /** 上方画一条虚线分隔（用于把属性划分组） */
   divider?: boolean;
   children: ReactNode;
+  hint?: ReactNode;
 }) {
+  const canFold = collapsible ?? title !== undefined;
+  const [open, setOpen] = useState(defaultOpen);
+  const shown = canFold ? open : true;
+
   return (
     <div className={`ui-section${divider ? ' divider' : ''}`}>
-      {title !== undefined ? <div className="ui-section-title">{title}</div> : null}
-      {children}
-      {hint ? <div className="ui-hint">{hint}</div> : null}
+      {title !== undefined ? (
+        <div
+          className={`ui-section-head${canFold ? ' foldable' : ''}`}
+          onClick={canFold ? () => setOpen((v) => !v) : undefined}
+          role={canFold ? 'button' : undefined}
+          aria-expanded={canFold ? open : undefined}
+          title={canFold ? (open ? '收起' : '展开') : undefined}
+        >
+          {canFold ? (
+            <span className={`ui-caret${open ? ' open' : ''}`}>
+              <CaretGlyph />
+            </span>
+          ) : null}
+          {icon ? <span className="ui-section-icon">{icon}</span> : null}
+          <span className="ui-section-title">{title}</span>
+          {count !== undefined ? <span className="ui-section-count">{count}</span> : null}
+        </div>
+      ) : null}
+      {shown ? children : null}
+      {shown && hint ? <div className="ui-hint">{hint}</div> : null}
     </div>
   );
+}
+
+/** 折叠箭头（基元内部用，不对外 —— 免得每个调用方各画一个） */
+function CaretGlyph() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 3.5 10.5 8 6 12.5" />
+    </svg>
+  );
+}
+
+/**
+ * 字段网格：**两列**，需要宽的直接 `span 2`。
+ *
+ * 窄栏里一行一个字段太浪费（文字节点 36 个字段 ⇒ 36 行），两列刚好。
+ */
+export function FieldGrid({ children }: { children: ReactNode }) {
+  return <div className="ui-fields">{children}</div>;
 }
 
 /** 灰色小字说明 */
@@ -93,18 +150,20 @@ export function Row({ children }: { children: ReactNode }) {
   return <div className="ui-row">{children}</div>;
 }
 
-/** 字段：标签在上、控件在下；可选尾部提示 */
+/** 字段：标签在上、控件在下；可选尾部提示。`className` 用于网格里跨列（`wide` / `check`）*/
 export function Field({
   label,
   hint,
+  className,
   children,
 }: {
   label?: ReactNode;
   hint?: ReactNode;
+  className?: string;
   children: ReactNode;
 }) {
   return (
-    <div className="ui-field">
+    <div className={`ui-field${className ? ` ${className}` : ''}`}>
       {label !== undefined ? <span className="ui-field-label">{label}</span> : null}
       {children}
       {hint ? <span className="ui-hint">{hint}</span> : null}
@@ -134,6 +193,25 @@ export function TextArea({ className, ...rest }: TextareaHTMLAttributes<HTMLText
 /** 色块（原生 color picker，样式化） */
 export function ColorSwatch({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
   return <input type="color" className={`ui-color-swatch${className ? ` ${className}` : ''}`} {...rest} />;
+}
+
+/** 下拉（枚举字段）—— 原生 select + `.ui-input` 口径 */
+export function Select({ className, children, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <select className={`ui-input ui-select${className ? ` ${className}` : ''}`} {...rest}>
+      {children}
+    </select>
+  );
+}
+
+/**
+ * 复选框（**三态**字段：`true` 要 / `false` 明确不要 / `undefined` 跟随）。
+ *
+ * ⚠️ 只能是复选框：做成文本框的话它读回来是 `undefined`（"没写"）、
+ *    写回去是字符串 `"false"` —— 经 `!!v` 变成 `true`，**永远关不掉**。
+ */
+export function Checkbox({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
+  return <input type="checkbox" className={`ui-check${className ? ` ${className}` : ''}`} {...rest} />;
 }
 
 /** 滑块字段：标签 + range + 右侧数值 */

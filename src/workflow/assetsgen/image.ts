@@ -23,7 +23,7 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import type { DesignSketch } from '../../document/design-sketch';
+import { iterElements, type DesignDocument, type ImageNode } from '../../document/vocabulary';
 import { BANNED_WORDS, type AssetOrders, type AssetReference, type AssetRequest } from './asset-order';
 import { cropToRef, dataUrlToBuffer, downscaleToRef, prepareProduct } from './cutout';
 
@@ -146,7 +146,7 @@ function warnFidelity(prompt: string, file: string): void {
 export interface GenerateAssetsOptions {
   orders: AssetOrders;
   /** 版式（用于找每个素材所属的 image 节点 → 裁草图参考） */
-  spec: DesignSketch;
+  spec: DesignDocument;
   /** 素材输出目录（同时也是 sketch.png 所在目录） */
   outDir: string;
   /**
@@ -175,6 +175,21 @@ function guessRole(ref: string): 'subject' | 'compose' | 'detail' {
   if (ref === '@product') return 'subject';
   if (ref === '@sketch') return 'compose';
   return 'detail';
+}
+
+/**
+ * 按素材名找**引用它的那个 image 元素**。
+ *
+ * ⚠️ 画布的孩子是**图层**，图片是**图层里的元素**（还能待在组里，甚至几层组）
+ * ⇒ 必须逐层往下走，不能只看 `doc.layers` 这一层。
+ */
+function imageNodeOf(spec: DesignDocument, asset: string): ImageNode | null {
+  for (const layer of spec.layers) {
+    for (const e of iterElements(layer)) {
+      if (e.type === 'image' && e.asset === asset) return e;
+    }
+  }
+  return null;
 }
 
 /**
@@ -324,9 +339,8 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<Asset
         // 按**引用这份素材的 image 节点的 rect** 裁草图——
         // 只让模型看到"这个图位"的构图，看不到版式的文字占位条。
         // （实测：整张草图传进去，模型会把文字占位条当设计画进素材。）
-        const owner = spec.layers.find((l) => l.type === 'image' && l.asset === job.file);
-        const region =
-          owner && owner.type === 'image' ? owner.rect : { x: 0, y: 0, w: 1, h: 1 };
+        const owner = imageNodeOf(spec, job.file);
+        const region = owner ? owner.rect : { x: 0, y: 0, w: 1, h: 1 };
         const ep = await opts.host.newPage();
         refs.push(
           await cropToRef(

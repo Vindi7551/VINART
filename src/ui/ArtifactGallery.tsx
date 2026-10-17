@@ -47,6 +47,16 @@ export function ArtifactGallery({
 }: ArtifactGalleryProps) {
   const [items, setItems] = useState<ArtifactItem[]>([]);
   const [active, setActive] = useState<string | null>(null);
+  /**
+   * **钉住**：钉住后面板不再跟着鼠标走，一直展开；再点一次解除。
+   *
+   * ⚠️ 按钮**就放在画廊里面**（标题行右端）—— 所以"得先把它滑下来才够得着"是天然的：
+   *    鼠标在面板里时 `.gallery-dock:hover` 成立，面板不会在点的过程中缩回去。
+   *
+   * ⚠️ **不持久化**（刷新回到收起态）：它是"我现在要挑一张图"的临时状态，
+   *    不是布局偏好。要跨刷新记住的话，照 `leftColCollapsed` 那样写 localStorage 即可。
+   */
+  const [pinned, setPinned] = useState(false);
 
   useEffect(() => {
     // 无会话：不请求任何端点，直接置空
@@ -64,30 +74,57 @@ export function ArtifactGallery({
   if (!sessionId || items.length === 0) return null;
 
   return (
-    <div className="artifact-gallery">
-      <div className="artifact-gallery-title">产物库 · {items.length} 套版式</div>
-      <div className="artifact-strip">
-        {items.map((it) => {
-          // 缩略图优先成品,其次草图;没有 png 的目录跳过
-          const best = it.pngs.includes('final.png') ? 'final.png' : it.pngs[0];
-          if (!best) return null;
-          const url = itemUrl(it, best, sessionId);
-          const key = it.layoutsRoot + it.name;
-          return (
-            <button
-              key={key}
-              className={`artifact-card${active === key ? ' active' : ''}`}
-              onClick={() => {
-                setActive(key);
-                onOpen(url, it.name, key);
-              }}
-              title={url}
-            >
-              <img src={url} alt={it.name} loading="lazy" />
-              <span className="artifact-name">{it.name}</span>
-            </button>
-          );
-        })}
+    // ⚠️ `.gallery-dock` **自己就是顶部热区**（高度 = header 高度）：
+    //    平时只有它露在屏幕里（透明，看不见），鼠标进来把面板滑下来。
+    //    面板是它的绝对定位**子元素** ⇒ 鼠标在面板里时 `:hover` 仍然成立。
+    <div className={`gallery-dock${pinned ? ' pinned' : ''}`}>
+      <div className="artifact-gallery">
+        <div className="artifact-gallery-title">
+          {/* ⚠️ 钉住按钮在**左边**（标题之前）—— 靠左放，不要靠右 */}
+          <button
+            type="button"
+            className={`gallery-pin${pinned ? ' on' : ''}`}
+            onClick={() => setPinned((v) => !v)}
+            title={pinned ? '解除钉住（恢复"鼠标移到顶端才展开"）' : '钉住（鼠标移开也保持展开）'}
+            aria-pressed={pinned}
+          >
+            {/* 图钉：杆 + 头。钉住时头填实 */}
+            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+              <path
+                d="M8 1.6c2.1 0 3.8 1.7 3.8 3.8 0 2.6-3.8 8-3.8 8s-3.8-5.4-3.8-8C4.2 3.3 5.9 1.6 8 1.6Z"
+                fill={pinned ? 'currentColor' : 'none'}
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinejoin="round"
+              />
+              <circle cx="8" cy="5.4" r="1.5" fill={pinned ? 'var(--bg-surface)' : 'none'} stroke="currentColor" strokeWidth="1.2" />
+            </svg>
+          </button>
+          <span>产物库 · {items.length} 套版式</span>
+        </div>
+        <div className="artifact-strip">
+          {items.map((it) => {
+            // 缩略图优先成品,其次草图;没有 png 的目录跳过
+            const best = it.pngs.includes('final.png') ? 'final.png' : it.pngs[0];
+            if (!best) return null;
+            const url = itemUrl(it, best, sessionId);
+            const key = it.layoutsRoot + it.name;
+            return (
+              <button
+                key={key}
+                className={`artifact-card${active === key ? ' active' : ''}`}
+                onClick={() => {
+                  setActive(key);
+                  onOpen(url, it.name, key);
+                }}
+                title={url}
+              >
+                <img src={url} alt={it.name} loading="lazy" />
+                <span className="artifact-name">{it.name}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

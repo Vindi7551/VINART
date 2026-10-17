@@ -48,6 +48,10 @@ export interface RenderConfig {
   /**
    * **透明背景**（仅 PNG）。
    *
+   * ⚠️ **底色归文档，不归这里。** 画布底色是 `DesignDocument.canvas.background`
+   *    （**省略 = 白底**，要透明得在文档里显式写 `'transparent'`）。
+   *    这个开关只是"**文档没铺底色时**"的兜底，**默认 `false` ⇒ 出图是白底**。
+   *
    * 实现两层：
    * 1. 截图时 `omitBackground: true`（去掉浏览器默认的白色底）
    * 2. 注入 `html,body{background:transparent}` 覆盖根元素背景

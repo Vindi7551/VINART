@@ -13,9 +13,17 @@
 
 ## 一、现状：编辑工具的全部代码与文件分布
 
-### 1.0 项目代码地图（**当前真实结构**，2026-10-10 实测）
+### 1.0 项目代码地图（**2026-10-10 的实测快照 —— 已漂移，见下方 ⚠️**）
 
 > ⚠️ 先看这个 —— `CLAUDE.md` 的 Architecture 章节**已严重过时**（详见 §8）。
+>
+> ⚠️ **2026-10-16 复核：下面这张图已经不是当前结构了（原文保留作历史记录）**：
+> `src/preview/` **已删**；`src/editor/` **不是空的**（`vocab-editor.ts` / `text-session.ts` /
+> `editor-stack.ts` … 见 `src/editor/README.md`）；`src/workflow/{design-sketch,appearance,compose}/`
+> **都已删除**（`src/workflow/` 现在只有 `assetsgen/` 和 `translate/`）；`src/schema/` 也已删除；
+> `designharness/tools/` **只剩 `project-paths.ts`**（`design-sketch` / `generate-assets` /
+> `render-design` / `compile-appearance` / `edit-spec` 那些工具全没了）。
+> 现在的目录结构看 `CLAUDE.md` 的「架构」一节（2026-10-15 实测）。
 
 ```
 src/
@@ -51,6 +59,13 @@ src/
 > `src/preview/{layout-editor-script,interaction-script,extract-elements}.ts`
 > **已于 2026-10-11 随 M1 全部删除**（`src/preview/` 目录已不存在）；
 > `PreviewPanel.tsx` 也已重写为"父侧编辑器宿主"。当前状态看 §5.3 与 `src/editor/README.md`。
+>
+> ⚠️ **2026-10-16 复核（照下表去找文件会扑空，故逐项标注）**：
+> `src/ui/LayerInspector.tsx`、`src/ui/layer-visibility.ts`、`src/designharness/tools/edit-spec.ts`
+> **都已删除**（`designharness/tools/` 现在只剩 `project-paths.ts`，`read_spec` / `edit_spec` 两个工具没了）；
+> `src/ui/types.ts` 仍存在，但**不再导出** `LayoutData` / `LayoutSpec` / `LayerAppearance` 这些旧字段名
+> （现在只有 `Message` / `DelegationRecord` / `ElementInfo` / `PipelineStep` / `SessionItem` / `PreviewData` / `HostSignal`）；
+> `src/ui/EditPanel.tsx` 也还在，但职责已变成**字段面板**（节点级 + 选区级），不再是"图层清单"。
 
 | 文件                                     | 行数   | 角色                                                                                                                          |
 | -------------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -506,6 +521,20 @@ src/editor/                        ← M1 已实现（✅）+ 后续（⏳）
 └── commands.ts / state.ts / tools/   ⏳ M2/M3：命令栈 · 工具状态机 · 图层管理
 ```
 
+> ⚠️ **2026-10-16 复核：上面这张模块图是 M1 时期的计划，已和代码漂开 —— 找文件看
+> [`src/editor/README.md`](../src/editor/README.md) 的模块表，那才是当前清单。**
+>
+> - `index.ts` —— **已删除**（旧链的 `createEditor` 入口，随旧契约一起退役）。
+> - `geometry.ts` —— 改名 **`gesture-math.ts`**（同样纯函数、同样可 vitest 直测）。
+> - `target.ts` —— 文件**还在**，但已成**孤儿**：`createTarget()` 零调用，待清理；
+>   新链编辑器 `vocab-editor.ts` 直接从参数拿子文档 root，不再走它。
+> - `commands.ts` / `state.ts` / `tools/` —— 没有按这个名字落地：命令栈是 **`editor-stack.ts`**（M2），
+>   工具枚举与图层管理落在 `ui/tools.tsx` + `vocab-editor.ts`（M3）。
+> - `types.ts` 里**已经没有** `LayerPatch` / `EditorTarget` / `EditorSpec`（旧链类型已删）。
+> - 新链编辑器是 **`vocab-editor.ts`（`createVocabEditor`）**。顺带一个 naming 变化：
+>   旧文档里写的 `layerById` 现在叫 **`elementById`**（= 词汇表的 `findElement`）——
+>   因为 `Layer` 已改指**图层**，旧的"五类节点联合"改名叫 `ElementNode`。
+
 ⭐ **`target.ts` 是架构约束的落点**：它把"目标是谁"抽象掉 —— `Document` / `ShadowRoot` /  
 未来的 canvas 容器都实现同一组方法，编辑器其余部分**不知道差别**。  
 这就是"编辑器只能改子文档"的结构性保证（不是沙箱强制，见 §4.4）。
@@ -607,6 +636,14 @@ src/editor/                        ← M1 已实现（✅）+ 后续（⏳）
 | **M4 为 PS 化铺路**           | 层模型加 `backend: 'dom' \| 'raster'`（默认 `dom`）；覆盖层已在父侧                                                                                                                                    | 标记为 raster 的层仍可选中/移动（只是不能改文字）                                                                     |
 
 > **M1 已完成**（2026-10-11）；M2/M3 是"PS 级"的必要件；M4 不做像素编辑，只铺接口。
+>
+> **M3 的「界面那一半」已完成**（2026-10-16）：最左**主工具栏**
+> （`ui/ToolBar.tsx` + `ui/tools.tsx`）—— 6 个工具枚举（选择/外观/文字/图片/矢量/图层）
+> + 4 个动作（撤销/重做/保存/出图，**动作只此一处入口**，原来挂在检查器表头）；
+> 检查器改成**页驱动**（选了哪个工具就整块换成那一页的字段，取代原来的手风琴折叠）；
+> 新增入口补齐到**词汇表支持的全部四种几何**（原来只有 `rect`）。
+> ⚠️ **还差的**：每个工具一套指针行为 / 光标 / 快捷键（"**真模式**"，现在只有 `选择`/`矢量`
+> 有模式含义），以及图层的**置顶/置底/锁定**（现在只有 上移/下移/删除）。
 > §5.4 的 D1/D2/D3 已在 M1 中落地：**D1** 手势起点读内部工作副本（不再读 `offsetWidth`，
 > 实测位移从"±1px 量化"变成精确值）；**D2** 一次 `pointerdown…pointerup` 恰好一条 `onChange`
 > （原地单击不发提交）；**D3** `hit-test.ts` 两段式。
@@ -715,3 +752,11 @@ src/editor/                        ← M1 已实现（✅）+ 后续（⏳）
 > 另：`src/schema/` 已随搬迁**删除**；`asset-order.ts` 在 `workflow/assetsgen/`。
 > **`src/document/README.md` 的框架性重写待做**——它下方仍按"设计草图阶段（契约/校验/渲染三合一）"行文，
 > 而渲染器已移到 `src/render/declarative/`（该文件顶部已加搬迁说明）。
+>
+> ⚠️ **2026-10-16 再复核（上面这几句已过时）**：
+> `src/render/declarative/` **已整层删除**（不是"搬过去"）——渲染器就是
+> `src/render/vocabulary/emit.ts` 的 `emitDocument()`；
+> `src/document/README.md` **已于 2026-10-15 全量重写**（2026-10-16 又随"画布 → 图层 → 元素"改版更新）；
+> `src/workflow/compose/` **已删除**，`src/workflow/` 现在只剩 `assetsgen/` 与 `translate/`；
+> 上表里的 `scripts/_probe-*.ts` **整批已删**（现在只有 `scripts/migrate-doc.ts` 之类的一次性脚本，
+> 断言在 `test/*.test.ts`）。

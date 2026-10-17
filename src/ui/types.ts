@@ -1,3 +1,5 @@
+import type { DesignDocument } from '../document/vocabulary';
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant';
@@ -56,63 +58,46 @@ export interface SessionItem {
 }
 
 // ══════════════════════════════════════════════
-// 版式编辑(design-sketch / design-appearance 的前端宽松视图)
+// 版式编辑（新协议：DesignDocument 直接过线）
 // ══════════════════════════════════════════════
 
-export interface LayoutRect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-export interface LayoutLayer {
-  id: string;
-  type: 'image' | 'text' | 'shape';
-  rect: LayoutRect;
-  text?: string | string[];
-  fontScale?: number;
-  weight?: number;
-  curve?: number;
-  transform?: { rotate?: number; skewX?: number; origin?: { x: number; y: number } };
-  [key: string]: unknown;
-}
-
-export interface LayoutSpec {
-  canvas: { width: number; height: number };
-  layers: LayoutLayer[];
-  name?: string;
-  title?: string;
-  [key: string]: unknown;
-}
-
-export interface LayerAppearance {
-  color?: string;
-  fill?: string;
-  opacity?: number;
-  accent?: { words: string[]; color: string };
-  fontFamily?: string;
-  stroke?: { color: string; width: number };
-  [key: string]: unknown;
-}
-
-export interface LayoutAppearance {
-  layers?: Record<string, LayerAppearance>;
-  [key: string]: unknown;
-}
-
-/** GET /api/layout/<name>/data 的返回 */
-export interface LayoutData {
+/**
+ * ⭐ 新协议（2026-10-15）：**DesignDocument 直接过线**——词汇表文档本身就是
+ * 编辑器的输入与持久化单位。旧的 LayoutSpec/LayoutData（spec+appearance 双层、
+ * accent 染色）随旧链弃用（见 docs/MIGRATION.md）。
+ */
+export interface PreviewData {
   name: string;
-  spec: LayoutSpec;
-  appearance: LayoutAppearance;
+  /** 词汇表文档 —— 编辑器的输入，也是保存落盘的单位 */
+  doc: DesignDocument;
+  /** 服务端 `emitDocument` 现场生成的渲染 HTML（srcdoc 用；素材 URL 已解析） */
   html: string;
+  /** 素材名 → URL 映射——⭐ 前端结构性变化时**自己 emitDocument** 用（编辑即渲染，无网络往返） */
+  assets: Record<string, string>;
 }
 
-/** 宿主 → iframe 的信号(面板发起的选中/patch,seq 防重) */
+/** 宿主 → 编辑器的信号(面板/图层清单发起;seq 防重)。`patch` = 单字段（path + value）。 */
 export interface HostSignal {
   seq: number;
-  type: 'select' | 'patch';
-  id: string;
-  patch?: Record<string, unknown>;
+  type:
+    | 'select'
+    | 'patch'
+    | 'undo'
+    | 'redo'
+    | 'add-text'
+    | 'add-rect'
+    /** ⭐ 词汇表支持的五种形状，编辑器现在**五种都能加**（原来只有 rect） */
+    | 'add-ellipse'
+    | 'add-polygon'
+    | 'add-path'
+    | 'remove'
+    | 'up'
+    | 'down'
+    /** ⭐ 给**画面上选中的那几个字**刷样式（`path` 来自 `selectionFields()`） */
+    | 'style-selection';
+  /** select/patch/remove/up/down/style-selection 需要；add-* 不需要 */
+  id?: string;
+  /** `patch` / `style-selection` 要 */
+  path?: string;
+  value?: unknown;
 }
