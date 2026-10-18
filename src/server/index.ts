@@ -732,10 +732,11 @@ async function buildLayoutNote(sessionId: string, layoutName?: string | null): P
         const els = [...iterElements(l)]
           .map((e) => {
             const t = e.type === 'text' ? e.runs.map((r) => r.text).join(' ') : '';
-            return `  - ${e.id}(${e.type})${t ? `「${t.slice(0, 40)}」` : ''}`;
+            const nm = e.name ? `「${e.name}」` : '';
+            return `  - ${e.id}(${e.type})${nm}${t ? `「${t.slice(0, 40)}」` : ''}`;
           })
           .join('\n');
-        return `- 图层 ${l.id}（${l.elements.length} 个元素）\n${els}`;
+        return `- 图层 ${l.id}${l.name ? `「${l.name}」` : ''}（${l.elements.length} 个元素）\n${els}`;
       })
       .join('\n');
     return (
@@ -760,7 +761,14 @@ async function buildLayoutNote(sessionId: string, layoutName?: string | null): P
 function handleArtifacts(res: ServerResponse, sessionId: string) {
   void (async () => {
     const workDir = await transcript.getWorkDir(sessionId);
-    const items = scanArtifactRoot(join(workDir, 'designs'));
+    const items = scanArtifactRoot(join(workDir, 'designs')).map((it) => {
+      if (!it.doc) return { ...it, assets: {} };
+      const abs = join(workDir, 'designs', it.name);
+      const assets = resolveAssets(it.doc, [abs, workDir], (p) =>
+        `/api/sessions/${sessionId}/file/${relative(workDir, p).split(sep).join('/')}`,
+      );
+      return { ...it, assets };
+    });
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(items));
   })().catch(() => {
@@ -784,11 +792,21 @@ function scanArtifactRoot(layoutsRoot: string) {
       const files = readdirSync(abs).sort(
         (a, b) => rank(a) - rank(b) || a.localeCompare(b),
       );
+      const docPath = join(abs, 'doc.json');
+      let doc: DesignDocument | null = null;
+      if (existsSync(docPath)) {
+        try {
+          doc = JSON.parse(readFileSync(docPath, 'utf8')) as DesignDocument;
+        } catch {
+          doc = null;
+        }
+      }
       return {
         name: d.name,
         layoutsRoot, // 前端用它 + name 组成卡片 key（唯一标识）
         pngs: files.filter((f) => f.endsWith('.png')),
         htmls: files.filter((f) => f.endsWith('.html')),
+        doc,
       };
     });
 }

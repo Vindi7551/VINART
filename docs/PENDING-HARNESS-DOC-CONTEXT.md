@@ -264,6 +264,30 @@ AI 的上下文和未来工具都建立在"当前 doc"上，但现在：
 - `assistant-system.md` **只写字段**，不教“怎么设计字号”；设计判断放后续 skill；
 - tests 77；probe 的示例文字 26px（0.022 × 1200）。
 
+### 5. AI 上下文 + patch_doc（2026-10-18）
+
+- `buildLayoutNote()` 增加 `layer.name` / `element.name`（摘要里能看出“谁是标题/按钮”）；
+- `get_design` 工具：当前 doc 的语义视图（id / name / type / text / frame/rect / fill / stroke / font）；
+  按需调用，不每轮塞完整 doc；
+- `patch_doc` 工具：元素级、**批量**、**全部合法才写**（有错整批不写）；
+  白名单：`fill` / `stroke.paint` / `fontFamily` / `fontSizePx` / `weight` / `italic` /
+  `letterSpacing` / `lineHeight`；group 拒绝；
+- `chat-store` 工具表：`skill` + `sketch_plan` + `get_design` + `patch_doc`；
+- `assistant-system.md` 更新工具/白名单；设计判断仍留 skill；
+- tests 81；
+- 下一步 C：**画布选中元素 + 用户风格想法 → AI 局部调整**（下一轮）。
+
+### 6. 画廊 DesignThumb（2026-10-18）
+
+- `/artifacts` 每个 design 读 `doc.json` + `resolveAssets`，下发 `doc` / `assets`；
+- 新增 `ui/DesignThumb.tsx`：`emitDocument(doc, { assets })` + 只读 iframe + `scale`；
+  加载中/失败显示占位 SVG（**不是** `final.png`）；
+- `ArtifactGallery`：只有 hover / pinned（`open`）时才挂卡片和 iframe；折叠 = 0 个 iframe；
+  卡片沿用 96×72；doc-only 设计也能显示；
+- `final.png` 只用于“出图”导出，不再做缩略图/兜底；
+- tests 81。
+
+
 
 
 

@@ -11,6 +11,8 @@ import { getChatGateway } from '../../config';
 import * as transcript from './transcript';
 import { createSkillTool } from '../skills/skill-tool';
 import { createSketchTool } from '../tools/sketch-plan';
+import { createGetDesignTool } from '../tools/get-design';
+import { createPatchDocTool } from '../tools/patch-doc';
 import type { ChatSession } from './types';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -55,9 +57,15 @@ export function getChatSession(sessionId: string): ChatSession {
      * 它们建立在已删除的 `document/design-sketch.ts` 契约上（`design-sketch.json` +
      * `design-appearance.json`），而落盘协议早已换成单份 `doc.json`（词汇表）。
      * ⇒ 这一层要**重新对着词汇表长**，是独立的一步（见 CLAUDE.md 的核心链路）。
-     * 现在留：`skill`（技能加载）+ `sketch_plan`（草图 plan → 当前版式 doc.json）。
+     * 现在留：`skill`（技能加载）+ `sketch_plan`（草图 → 当前版式 doc.json）
+     * + `get_design`（当前 doc 语义视图）+ `patch_doc`（颜色/字体 patch）。
      */
-    tools: [createSkillTool({ sessionId }), createSketchTool({ sessionId })],
+    tools: [
+      createSkillTool({ sessionId }),
+      createSketchTool({ sessionId }),
+      createGetDesignTool({ sessionId }),
+      createPatchDocTool({ sessionId }),
+    ],
   });
   chatSessions.set(sessionId, session);
   void transcript

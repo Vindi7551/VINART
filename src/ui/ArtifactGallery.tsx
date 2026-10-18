@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import type { DesignDocument } from '../document/vocabulary';
+import { DesignThumb } from './DesignThumb';
 
 /**
  * 产物清单:GET /api/sessions/<sid>/artifacts（唯一的产物来源）。
@@ -19,6 +21,10 @@ interface ArtifactItem {
   layoutsRoot: string;
   pngs: string[];
   htmls: string[];
+  /** 当前 doc（画廊缩略图用；服务端 scanArtifactRoot 读 doc.json） */
+  doc: DesignDocument | null;
+  /** 素材名 → URL（服务端 resolveAssets） */
+  assets: Record<string, string>;
 }
 
 interface ArtifactGalleryProps {
@@ -47,6 +53,8 @@ export function ArtifactGallery({
 }: ArtifactGalleryProps) {
   const [items, setItems] = useState<ArtifactItem[]>([]);
   const [active, setActive] = useState<string | null>(null);
+  /** 鼠标是否在画廊上（折叠时= false：不挂 iframe；调出来才全部加载） */
+  const [hover, setHover] = useState(false);
   /**
    * **钉住**：钉住后面板不再跟着鼠标走，一直展开；再点一次解除。
    *
@@ -73,11 +81,17 @@ export function ArtifactGallery({
   // 无会话不渲染（也在 sessionId → null 的当帧拦住，避免上一条会话的卡片闪过一帧）
   if (!sessionId || items.length === 0) return null;
 
+  const open = pinned || hover;
+
   return (
     // ⚠️ `.gallery-dock` **自己就是顶部热区**（高度 = header 高度）：
     //    平时只有它露在屏幕里（透明，看不见），鼠标进来把面板滑下来。
     //    面板是它的绝对定位**子元素** ⇒ 鼠标在面板里时 `:hover` 仍然成立。
-    <div className={`gallery-dock${pinned ? ' pinned' : ''}`}>
+    <div
+      className={`gallery-dock${pinned ? ' pinned' : ''}`}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
       <div className="artifact-gallery">
         <div className="artifact-gallery-title">
           {/* ⚠️ 钉住按钮在**左边**（标题之前）—— 靠左放，不要靠右 */}
@@ -103,27 +117,31 @@ export function ArtifactGallery({
           <span>产物库 · {items.length} 套版式</span>
         </div>
         <div className="artifact-strip">
-          {items.map((it) => {
-            // 缩略图优先成品,其次草图;没有 png 的目录跳过
-            const best = it.pngs.includes('final.png') ? 'final.png' : it.pngs[0];
-            if (!best) return null;
-            const url = itemUrl(it, best, sessionId);
-            const key = it.layoutsRoot + it.name;
-            return (
-              <button
-                key={key}
-                className={`artifact-card${active === key ? ' active' : ''}`}
-                onClick={() => {
-                  setActive(key);
-                  onOpen(url, it.name, key);
-                }}
-                title={url}
-              >
-                <img src={url} alt={it.name} loading="lazy" />
-                <span className="artifact-name">{it.name}</span>
-              </button>
-            );
-          })}
+          {open &&
+            items.map((it) => {
+              // final.png 只用于“点开时的兜底预览”；缩略图用 doc iframe（doc-only 也显示）
+              const best = it.pngs.includes('final.png') ? 'final.png' : it.pngs[0];
+              const url = best ? itemUrl(it, best, sessionId) : '';
+              const key = it.layoutsRoot + it.name;
+              return (
+                <button
+                  key={key}
+                  className={`artifact-card${active === key ? ' active' : ''}`}
+                  onClick={() => {
+                    setActive(key);
+                    onOpen(url, it.name, key);
+                  }}
+                  title={it.name}
+                >
+                  {it.doc ? (
+                    <DesignThumb doc={it.doc} assets={it.assets} />
+                  ) : (
+                    <span className="design-thumb" />
+                  )}
+                  <span className="artifact-name">{it.name}</span>
+                </button>
+              );
+            })}
         </div>
       </div>
     </div>

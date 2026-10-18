@@ -205,6 +205,36 @@ html, body, #root {
   background: var(--white);
 }
 
+/* 设计缩略图：只读 iframe + scale（和 LayerThumb 同思路） */
+.design-thumb {
+  position: relative;
+  display: block;
+  width: 96px;
+  height: 72px;
+  overflow: hidden;
+  background: var(--white);
+}
+
+.design-thumb iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 0;
+  pointer-events: none;
+  transform-origin: top left;
+  background: transparent;
+}
+
+/* 加载中/失败：占位 SVG（不是 final.png） */
+.design-thumb img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--white);
+}
+
 .artifact-name {
   display: block;
   font-size: 11px;
