@@ -159,6 +159,31 @@ function rectFields(_canvas: { width: number; height: number }): Field[] {
   ];
 }
 
+/**
+ * **文字的「位置」字段** —— 文字没有 `rect`，只有 `frame`（x/y/w）。
+ *
+ * ⚠️ 以前这里直接沿用 `rectFields` 的四个字段：`has(n)` 对文字恒为 false
+ * ⇒ 「位置」页的 x/y/w/h 是**空框、改了没反应**。
+ * ⚠️ 文字**不给「高」**：普通文字的高度是排版结果（DOM 实测）；
+ * 路径文字的 viewBox 高走「沿路径 → 弧线高度」（`frame.h`），不在这里重复。
+ */
+function textFrameFields(): Field[] {
+  return [
+    num('frame.x', '左', '位置', (n) => (T(n) ? T(n)!.frame.x : undefined), (n, v) => {
+      const t = T(n);
+      if (t) t.frame.x = v;
+    }, { step: 1, suffix: 'px' }),
+    num('frame.y', '上', '位置', (n) => (T(n) ? T(n)!.frame.y : undefined), (n, v) => {
+      const t = T(n);
+      if (t) t.frame.y = v;
+    }, { step: 1, suffix: 'px' }),
+    num('frame.w', '宽', '位置', (n) => (T(n) ? T(n)!.frame.w : undefined), (n, v) => {
+      const t = T(n);
+      if (t) t.frame.w = Math.max(1, v);
+    }, { min: 1, step: 1, suffix: 'px' }),
+  ];
+}
+
 /** 旋转 / 不透明度 —— 任何节点都有 */
 function commonFields(): Field[] {
   return [
@@ -197,6 +222,38 @@ function shapeFields(n: ShapeNode): Field[] {
 
 /** 收窄成文字节点（凡是要改文字字段的地方都得先过一下） */
 const T = (l: ElementNode): TextNode | null => (l.type === 'text' ? l : null);
+
+/**
+ * 路径/弧形文字的**默认 viewBox 高**（`frame.h`）。
+ *
+ * ⚠️ 它**不是字高**：`curve` 的弧顶抬升 = `curve × frame.h`，所以它是"弧线盒子的高度"。
+ * 默认取两者较大值：
+ * - `frame.w × 0.18` —— 和示例版式（456×80，≈0.175）同一个长宽比；
+ * - `一行字高 × 2` —— 窄文字也留得下弧线和字。
+ *
+ * 只是**新建时的默认值**；面板上「弧线高度」可以改。
+ */
+function defaultPathH(t: TextNode): number {
+  const line = (t.fontSizePx ?? DEFAULT_FONT_PX) * (t.lineHeight ?? 1.15);
+  return Math.max(1, Math.round(Math.max(t.frame.w * 0.18, line * 2)));
+}
+
+/**
+ * **让 `frame.h` 跟 `curve` / `path` 成对存在**：
+ * - 有 `curve` 或 `path` 且没有 `h` ⇒ 补一个默认 viewBox 高（否则 `emitPathText` 会按 1px 铺）；
+ * - 两者都清掉 ⇒ **删掉 `h`**（回到普通文字的自动高度）。
+ *
+ * 这是 `TextFrame` 的校验规则（path/curve ⇒ 必须有 h；否则必须没有 h）在面板上的落地。
+ * 以前只改 `curve`/`path`、不管 `h` ⇒ 普通文字一加弧形就 `viewBox … 1`（一条线），
+ * 清掉弧形又留下固定的 `height:80px`。
+ */
+function syncPathBox(t: TextNode): void {
+  if (!t.path && !t.curve) {
+    delete t.frame.h;
+    return;
+  }
+  if (t.frame.h === undefined) t.frame.h = defaultPathH(t);
+}
 
 /**
  * 文字能改什么 —— 分五组：内容 / 字体 / 排版 / 装饰 / 字形。
@@ -311,12 +368,38 @@ function textFields(node: TextNode, _canvas: { width: number }): Field[] {
     //    ⚠️ 两者**二选一**：给了 `path` 就以它为准，`curve` 只是"正圆弧"的简写。
     num('curve', '弧形', '沿路径', (l) => T(l)?.curve, (l, v) => {
       const t = T(l);
-      if (t) t.curve = v || undefined; // 0 ⇒ 清掉（回到普通排版）
+      if (t) {
+        t.curve = v || undefined; // 0 ⇒ 清掉（回到普通排版）
+        syncPathBox(t);
+      }
     }, { min: -1, max: 1, step: 0.05 }),
     text('path', '沿路径（d）', '沿路径', (l) => T(l)?.path, (l, v) => {
       const t = T(l);
-      if (t) t.path = v.trim() || undefined;
+      if (t) {
+        t.path = v.trim() || undefined;
+        syncPathBox(t);
+      }
     }),
+    // ⭐ `frame.h` = 路径文字的 **SVG viewBox 高**（不是字高；弧顶抬升 = curve × h）。
+    //    只在有 curve/path 时出现（普通文字的高度是排版结果，不能存）。
+    ...(node.path || node.curve
+      ? [
+          num(
+            'frame.h',
+            '弧线高度',
+            '沿路径',
+            (l) => {
+              const t = T(l);
+              return t && (t.path || t.curve) ? t.frame.h : undefined;
+            },
+            (l, v) => {
+              const t = T(l);
+              if (t && (t.path || t.curve)) t.frame.h = Math.max(1, v);
+            },
+            { min: 1, step: 1, suffix: 'px' },
+          ),
+        ]
+      : []),
 
     // ── 装饰线 ────────────────────────────────────────────────────
     toggle('underline', '下划线', '装饰', (l) => T(l)?.underline, (l, v) => {
@@ -690,7 +773,8 @@ export function fieldsFor(node: ElementNode, canvas: { width: number; height: nu
   // ⭐ 组没有 `rect`（不给位置尺寸），但它**有一组效果**（整体旋转 / 淡出 / 滤镜…）——
   //    那正是"组"存在的理由，不给入口就等于这功能不存在。
   if (node.type === 'group') return commonFields();
-  const out: Field[] = [...rectFields(canvas), ...commonFields()];
+  // ⚠️ 文字没有 `rect`；用 `frame` 的 x/y/w（高是排版结果 / 路径文字另有「弧线高度」）
+  const out: Field[] = [...(node.type === 'text' ? textFrameFields() : rectFields(canvas)), ...commonFields()];
   if (node.type === 'shape') out.push(...shapeFields(node));
   if (node.type === 'text') out.push(...textFields(node, canvas));
   if (node.type === 'image') {

@@ -561,18 +561,44 @@ function curveToPath(curve: number): string {
  * ⚠️ 与 `runCss` 的硬区别：文字颜色在 SVG 里是 **`fill` 属性**，不是 CSS `color`
  * —— 写 `color` 会**一点反应都没有**（字形不填色）。
  */
-function runCssSvg(run: TextRun, node: TextNode, fit: number): string {
+function runCssSvg(run: TextRun, node: TextNode, fit: number, skipDeco = false): string {
   const fs = textFontSize(run.fontSizePx ?? node.fontSizePx, fit);
   const color = textColor(run, node);
+  const deco = skipDeco ? '' : decoLineCss(run, node);
+  const decoColor = deco ? decoColorSvg(run, node) : undefined;
   return joinCss([
     `font-size:${fs}px`,
     run.fontFamily && `font-family:${run.fontFamily}`,
     run.weight !== undefined && `font-weight:${run.weight}`,
     run.italic !== undefined && `font-style:${run.italic ? 'italic' : 'normal'}`,
     run.stretch !== undefined && `font-stretch:${run.stretch * 100}%`,
+    run.wordSpacing !== undefined && `word-spacing:${run.wordSpacing}em`,
+    run.textTransform && `text-transform:${run.textTransform}`,
+    run.smallCaps && 'font-variant-caps:small-caps',
     run.letterSpacing !== undefined && `letter-spacing:${run.letterSpacing}em`,
     color && `fill:${color}`,
+    deco,
+    decoColor && `text-decoration-color:${decoColor}`,
   ]);
+}
+
+/**
+ * **沿路径的装饰线颜色**。
+ *
+ * ⚠️ SVG 的 `text-decoration` 不认 `fill`；不显式给色时它是 `color`（默认黑）。
+ * 普通文字那条"红线"其实是 `#F5F5F5` 的线被 `-webkit-text-stroke` 描了红边。
+ * 这里对齐视觉：优先取**描边色**（红），没有描边就退回片段/节点的纯色填充，
+ * 都没有就交给 `currentColor`。
+ *
+ * 显式 `decoration.color` 已由 `decoLineCss` 输出，这里返回 `undefined`，不重复。
+ */
+function decoColorSvg(run: TextRun, node: TextNode): string | undefined {
+  if (run.decoration?.color ?? node.decoration?.color) return undefined;
+  const stroke = node.stroke?.paint;
+  if (stroke && isPlainColor(stroke)) return stroke;
+  if (run.fill && isPlainColor(run.fill)) return run.fill;
+  if (typeof node.fill === 'string' && isPlainColor(node.fill)) return node.fill;
+  return undefined;
 }
 
 /**
@@ -594,6 +620,96 @@ function runCssSvg(run: TextRun, node: TextNode, fit: number): string {
  * **字形不会被拉变形**。
  * （若反过来用 `viewBox="0 0 1 1" preserveAspectRatio="none"`，字会跟着被压扁 —— 那是错的。）
  */
+/**
+ * **沿路径的装饰线**（下划线 / 删除线）。
+ *
+ * ⚠️ SVG 的 `text-decoration` 在 `textPath` 上**画的是直线**（弦），弧度一大就明显
+ * "断开"——普通文字（直线）看不出来，弧形文字一眼就穿帮。
+ * 这里改成：沿同一条二次贝塞尔**采样、按法线偏移**，自己画一条跟弧线平行的线。
+ *
+ * ⚠️ 文字沿路径的**实际长度**在纯 emit 里拿不到（不能进浏览器量）；
+ * 这里按字符宽度估算：CJK 全宽 ≈ 1em，其它 ≈ 0.55em，字距按 em。只是近似。
+ */
+const CJK_CHAR = /[\u2e80-\u9fff\uf900-\ufaff\uff00-\uffef\u3000-\u303f]/;
+
+function approxRunWidth(run: TextRun, node: TextNode, fit: number): number {
+  const fs = textFontSize(run.fontSizePx ?? node.fontSizePx, fit);
+  const ls = (run.letterSpacing ?? node.letterSpacing ?? 0) * fs;
+  const chars = [...run.text.replace(/\n/g, ' ')];
+  let w = 0;
+  for (const ch of chars) w += CJK_CHAR.test(ch) ? fs : fs * 0.55;
+  w += ls * Math.max(0, chars.length - 1);
+  return w;
+}
+
+/** 二次贝塞尔（0–1 路径空间 → 像素）采样，带累计弧长 */
+function curveSamples(curve: number, W: number, H: number, n = 160): Array<{ t: number; x: number; y: number; len: number }> {
+  const p0 = { x: 0, y: 1 };
+  const p1 = { x: 0.5, y: 1 - 2 * curve };
+  const p2 = { x: 1, y: 1 };
+  const out: Array<{ t: number; x: number; y: number; len: number }> = [];
+  let len = 0;
+  let px = 0;
+  let py = 0;
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const mt = 1 - t;
+    const x = (mt * mt * p0.x + 2 * mt * t * p1.x + t * t * p2.x) * W;
+    const y = (mt * mt * p0.y + 2 * mt * t * p1.y + t * t * p2.y) * H;
+    if (i > 0) len += Math.hypot(x - px, y - py);
+    out.push({ t, x, y, len });
+    px = x;
+    py = y;
+  }
+  return out;
+}
+
+/** 弧长 → 参数 t（线性插值） */
+function tAtLength(samples: Array<{ t: number; len: number }>, dist: number): number {
+  const total = samples[samples.length - 1]?.len ?? 0;
+  const d = Math.max(0, Math.min(total, dist));
+  for (let i = 1; i < samples.length; i++) {
+    const a = samples[i - 1]!;
+    const b = samples[i]!;
+    if (d <= b.len) {
+      const span = b.len - a.len || 1;
+      return a.t + ((d - a.len) / span) * (b.t - a.t);
+    }
+  }
+  return 1;
+}
+
+/** 沿曲线从 t0 到 t1、按法线偏移 offset（正 = 上方）的一条折线路径 */
+function decoCurvePathD(
+  curve: number,
+  W: number,
+  H: number,
+  t0: number,
+  t1: number,
+  offset: number,
+): string {
+  const p0 = { x: 0, y: 1 };
+  const p1 = { x: 0.5, y: 1 - 2 * curve };
+  const p2 = { x: 1, y: 1 };
+  const N = 48;
+  const pts: string[] = [];
+  for (let i = 0; i <= N; i++) {
+    const t = t0 + ((t1 - t0) * i) / N;
+    const mt = 1 - t;
+    const x = (mt * mt * p0.x + 2 * mt * t * p1.x + t * t * p2.x) * W;
+    const y = (mt * mt * p0.y + 2 * mt * t * p1.y + t * t * p2.y) * H;
+    // 导数（像素空间）：2(1-t)(p1-p0) + 2t(p2-p1)
+    const dx = (2 * mt * (p1.x - p0.x) + 2 * t * (p2.x - p1.x)) * W;
+    const dy = (2 * mt * (p1.y - p0.y) + 2 * t * (p2.y - p1.y)) * H;
+    const len = Math.hypot(dx, dy) || 1;
+    // 法线：切线左转 90°（x 向右时指向上方）——文字基线在路径上，上/下就是这条法线
+    const nx = dy / len;
+    const ny = -dx / len;
+    pts.push(`${i === 0 ? 'M' : 'L'}${(x + nx * offset).toFixed(2)},${(y + ny * offset).toFixed(2)}`);
+  }
+  return pts.join(' ');
+}
+
 function emitPathText(
   node: TextNode,
   fit: number,
@@ -607,14 +723,28 @@ function emitPathText(
   if (node.wrap === 'normal') note('wrap', '沿路径排字不能断行');
   if (node.alignLast) note('alignLast', '沿路径排字是单行，末行对齐没有意义');
   if (node.dropCap) note('dropCap', '首字下沉与沿路径排字不兼容');
-  if (node.underline || node.strike || node.runs.some((r) => r.underline || r.strike)) {
-    note('underline', '装饰线在 SVG 文字上这一版没做');
+  const hasDeco = !!(node.underline || node.strike || node.runs.some((r) => r.underline || r.strike));
+  // 只有 `curve`（正圆弧）能沿弧线画装饰线；任意 `path` 的 d 没有纯 emit 解析器 ⇒ 退回直线
+  const customCurveDeco = hasDeco && node.path === undefined && node.curve !== undefined;
+  if (hasDeco) {
+    note(
+      'underline',
+      customCurveDeco
+        ? '沿路径的装饰线按弧线近似绘制（文字长度按字符宽度估算）'
+        : '任意 path 的装饰线暂不支持沿路径（目前是直线）',
+    );
   }
-  if (node.stroke) note('stroke', '沿路径的文字描边这一版没做');
+  // ⚠️ 描边**支持**（SVG `stroke`），但只支持纯色；渐变/图案退回 `currentColor`。
+  //    普通文字用 `-webkit-text-stroke`，沿路径用 SVG 的 `stroke` —— 两者效果对齐。
+  if (node.stroke) {
+    if (!node.stroke.paint || !isPlainColor(node.stroke.paint)) {
+      note('stroke.paint', '沿路径的文字描边只支持纯色（渐变/图案会退回 currentColor）');
+    }
+    if (Array.isArray(node.stroke.width)) {
+      note('stroke.width', '沿路径的文字描边只用了 width[0]（多档描边不支持）');
+    }
+  }
   if (node.runs.some((r) => r.baselineShift)) note('runs[].baselineShift', '沿路径的文字这一版不做上下标');
-  if (typeof node.fill !== 'string' || (node.fill && !isPlainColor(node.fill))) {
-    note('fill', '沿路径的文字只支持纯色填充（渐变要另写 SVG 定义）');
-  }
   if (node.runs.some((r) => r.fill && !isPlainColor(r.fill))) {
     note('runs[].fill', '沿路径的文字只支持纯色填充');
   }
@@ -629,15 +759,46 @@ function emitPathText(
   const d = node.path ?? curveToPath(node.curve ?? 0);
   const pid = pathIdOf(node.id);
 
+  // ── 填充：普通文字用 `background-clip:text` 铺渐变；路径文字改用 SVG 渐变定义 ──
+  //    ⚠️ 以前这里只认纯色，`fill` 是数组/渐变时退回 `currentColor`；
+  //    再叠加 tspan 的 `fill:#F5F5F5` ⇒ 字形只剩红描边，细笔画看起来"断开"。
+  const layers = Array.isArray(node.fill) ? node.fill : node.fill ? [node.fill] : [];
+  // ⚠️ `emitText` 的 background-image 是 `[...fill].reverse()` ⇒ **数组末尾的在最上层**。
+  //    路径文字也要取"最上层"的那个渐变，否则多渐变时和普通文字不一致。
+  const gradientCss = [...layers].reverse().find((f) => /gradient\(/i.test(f)) ?? null;
+  const fallbackFill =
+    [...layers].reverse().find((f) => isPlainColor(f)) ??
+    (typeof node.fill === 'string' && isPlainColor(node.fill) ? node.fill : undefined);
+  const gid = `${pid}-fill`;
+  const gradDef = gradientCss ? cssGradientToSvgDef(gradientCss, gid) : null;
+  if (gradientCss && !gradDef) {
+    note('fill', '沿路径的文字只支持线性渐变（这个渐变解析不了，退回纯色）');
+  } else if (!gradDef && node.fill !== undefined && (typeof node.fill !== 'string' || !isPlainColor(node.fill))) {
+    note('fill', '沿路径的文字只支持纯色/线性渐变（多层 fill 只取纯色兜底）');
+  }
+  const fill = gradDef ? `url(#${gid})` : (fallbackFill ?? 'currentColor');
+
+  // ⚠️ 图层顺序和普通文字一致：`<text fill>` 是节点 fill（渐变/纯色），
+  //    tspan 的 run fill 在它上面。**不要为了露出渐变而跳过 run fill** ——
+  //    那会把 tx-stroke 这种"浅色字面 + 红描边"变成一整块红色，样式就不一致了。
   const runs = node.runs
     .map(
       (r, i) =>
         // ⚠️ `data-run` 照打：选区（改样式）仍要按它把画面上的字对回 `runs[i]`
-        `<tspan data-run="${i}" style="${runCssSvg(r, node, fit)}">${escText(r.text).split('\n').join(' ')}</tspan>`,
+        `<tspan data-run="${i}" style="${runCssSvg(r, node, fit, customCurveDeco)}">${escText(r.text).split('\n').join(' ')}</tspan>`,
     )
     .join('');
 
-  const fill = typeof node.fill === 'string' && isPlainColor(node.fill) ? node.fill : 'currentColor';
+  // ── 描边：SVG 的 `stroke`（普通文字是 `-webkit-text-stroke`，语义对齐）──
+  //    `node.stroke.width` 可能是多档数组；路径文字只取第一档（已在上面 note）。
+  let strokeAttrs = '';
+  if (node.stroke) {
+    const raw = node.stroke.width;
+    const w = Array.isArray(raw) ? raw[0] : (raw ?? 1);
+    const paint = node.stroke.paint && isPlainColor(node.stroke.paint) ? node.stroke.paint : 'currentColor';
+    // ⚠️ 描边宽度是**像素**：路径只被 `transform` 缩放，`<text>` 本身不缩放，所以这里不用乘 W/H。
+    strokeAttrs = ` stroke="${escAttr(paint)}" stroke-width="${w}"`;
+  }
   // ⚠️ 对齐要**两件事一起**才成立（实测踩过）：
   //    `startOffset` 只说"从路径的哪个点开始排"，`text-anchor` 才说"文字相对那个点怎么摆"。
   //    只给 `startOffset="50%"` = **从正中间往后排**（后半段路径装不下的就没了）——
@@ -657,13 +818,60 @@ function emitPathText(
       : '',
   ]);
 
+  // ── 沿弧线的装饰线（curve 专用；任意 path 走 tspan 的 text-decoration 直线）──
+  let deco = '';
+  if (customCurveDeco) {
+    const curve = node.curve ?? 0;
+    const samples = curveSamples(curve, W, H);
+    const totalPath = samples[samples.length - 1]!.len;
+    const widths = node.runs.map((r) => approxRunWidth(r, node, fit));
+    const totalText = widths.reduce((a, b) => a + b, 0);
+    const alignFrac = node.align === 'center' ? 0.5 : node.align === 'right' ? 1 : 0;
+    const start =
+      totalPath * alignFrac - (node.align === 'center' ? totalText / 2 : node.align === 'right' ? totalText : 0);
+    const lines: string[] = [];
+    let cursor = start;
+    node.runs.forEach((r, i) => {
+      const w = widths[i] ?? 0;
+      const u = !!(r.underline ?? node.underline ?? false);
+      const s = !!(r.strike ?? node.strike ?? false);
+      if ((u || s) && w > 0) {
+        const t0 = tAtLength(samples, cursor);
+        const t1 = tAtLength(samples, cursor + w);
+        if (t1 > t0) {
+          const fs = textFontSize(r.fontSizePx ?? node.fontSizePx, fit);
+          const color = decoColorSvg(r, node) ?? 'currentColor';
+          const thick =
+            r.decoration?.thickness ?? node.decoration?.thickness ?? Math.max(1, Math.round(fs / 30));
+          const style = r.decoration?.style ?? node.decoration?.style;
+          const dash =
+            style === 'dashed'
+              ? ` stroke-dasharray="${thick * 3} ${thick * 2}"`
+              : style === 'dotted'
+                ? ` stroke-dasharray="${thick} ${thick * 2}"`
+                : '';
+          const attrs = `fill="none" stroke="${escAttr(color)}" stroke-width="${thick}"${dash}`;
+          // 删除线在基线上方（0.3em），下划线在下方（0.12em）；沿法线偏移
+          if (s) lines.push(`<path d="${decoCurvePathD(curve, W, H, t0, t1, 0.3 * fs)}" ${attrs}/>`);
+          if (u) lines.push(`<path d="${decoCurvePathD(curve, W, H, t0, t1, -0.12 * fs)}" ${attrs}/>`);
+        }
+      }
+      cursor += w;
+    });
+    if (lines.length) deco = lines.join('');
+  }
+
+  const defs = gradDef ? `<defs>${gradDef}</defs>` : '';
   return (
     `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="position:absolute;left:0;top:0;overflow:visible">` +
+    defs +
     // `scale(W,H)`：路径在 0–1 空间里写，铺到像素空间由 SVG 负责；`<text>` 不受它影响
     `<path id="${pid}" d="${escAttr(d)}" transform="scale(${W},${H})" fill="none"/>` +
-    `<text text-anchor="${textAnchor}" fill="${escAttr(fill)}" style="${textCss}">` +
+    `<text text-anchor="${textAnchor}" fill="${escAttr(fill)}"${strokeAttrs} style="${textCss}">` +
     `<textPath href="#${pid}" startOffset="${anchor}">${runs}</textPath>` +
-    `</text></svg>`
+    `</text>` +
+    deco +
+    `</svg>`
   );
 }
 
