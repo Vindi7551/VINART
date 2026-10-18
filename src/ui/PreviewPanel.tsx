@@ -500,8 +500,23 @@ export function PreviewPanel({
     if (boundNameRef.current !== layoutData.name) return;
     if (JSON.stringify(ed.doc) === JSON.stringify(layoutData.doc)) return;
     ed.updateDoc(layoutData.doc);
-    ed.updateDoc(layoutData.doc);
-    ed.updateDoc(layoutData.doc);
+    // ⚠️ `updateDoc` 只换编辑器的**工作副本**，不碰 iframe DOM（它只负责
+    //    重置撤销栈 / 选中态 / overlay）。AI patch、另一个标签页这类**外部文档变更**
+    //    必须像 undo 路径一样把整层 HTML 重发一遍，否则 fill/font 这类字段
+    //    在 DOM 里不会变——表现就是“改了颜色但画布不动，刷新才出现”。
+    const realm = iframeRef.current?.contentDocument;
+    if (realm) {
+      for (const l of layoutData.doc.layers) {
+        const n = realm.querySelector(`[data-layer="${CSS.escape(l.id)}"]`);
+        if (!n) continue;
+        n.insertAdjacentHTML(
+          'beforebegin',
+          emitLayerHtml(l, layoutData.doc.canvas, { assets: layoutData.assets }).html,
+        );
+        n.remove();
+      }
+      ed.refreshDom();
+    }
   }, [layoutData]);
 
   /**

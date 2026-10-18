@@ -9,7 +9,7 @@
  * - 任何一条失败 → **整批不写**，返回 errors（AI 改完再来）。
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DesignDocument, ElementNode } from '../../document/vocabulary';
 import { findElement } from '../../document/vocabulary';
@@ -28,7 +28,7 @@ export interface PatchResult {
   errors: string[];
 }
 
-/** 白名单：先只放颜色/字体 */
+/** 白名单：颜色/字体 + 素材引用（image/svg 的 asset 文件名） */
 const ALLOWED = new Map<string, (v: unknown) => boolean>([
   ['fill', (v) => typeof v === 'string' || (Array.isArray(v) && v.every((x) => typeof x === 'string'))],
   ['stroke.paint', (v) => typeof v === 'string' || (Array.isArray(v) && v.every((x) => typeof x === 'string'))],
@@ -38,6 +38,7 @@ const ALLOWED = new Map<string, (v: unknown) => boolean>([
   ['italic', (v) => typeof v === 'boolean'],
   ['letterSpacing', (v) => typeof v === 'number' && Number.isFinite(v)],
   ['lineHeight', (v) => typeof v === 'number' && Number.isFinite(v) && v > 0],
+  ['asset', (v) => typeof v === 'string' && v.trim().length > 0],
 ]);
 
 export function allowedPatchPaths(): string[] {
@@ -91,6 +92,10 @@ export function applyPatches(doc: DesignDocument, patches: DocPatch[]): PatchRes
       errors.push(`节点 '${id}' 是 group，不支持颜色/字体 patch`);
       continue;
     }
+    if (path === 'asset' && node.type !== 'image' && node.type !== 'svg') {
+      errors.push(`节点 '${id}' 是 ${node.type}，只有 image/svg 能改 asset`);
+      continue;
+    }
     if (path === 'stroke.paint') {
       (node as { stroke?: Record<string, unknown> }).stroke = {
         ...((node as { stroke?: Record<string, unknown> }).stroke ?? {}),
@@ -109,9 +114,9 @@ export function createPatchDocTool(config: { sessionId: string }): AgentTool {
   return {
     name: 'patch_doc',
     description:
-      '按节点 id 批量 patch 当前版式 doc 的颜色/字体：fill / stroke.paint / fontFamily / fontSizePx / ' +
-      'weight / italic / letterSpacing / lineHeight。全部合法才写；有任何一条错就整批不写。' +
-      '先用 get_design 确认节点 id。',
+      '按节点 id 批量 patch 当前版式 doc：颜色/字体 fill / stroke.paint / fontFamily / fontSizePx / ' +
+      'weight / italic / letterSpacing / lineHeight；素材引用 asset（仅 image/svg，填 generate_assets 产出的文件名）。' +
+      '全部合法才写；有任何一条错就整批不写。先用 get_design 确认节点 id。',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -157,16 +162,9 @@ export function createPatchDocTool(config: { sessionId: string }): AgentTool {
         };
       }
 
-      try {
-        writeFileSync(p, JSON.stringify(r.doc, null, 2), 'utf8');
-      } catch (e) {
-        return {
-          content: `ERROR: 写 doc.json 失败：${e instanceof Error ? e.message : String(e)}`,
-          isError: true,
-        };
-      }
-
-      ctx.onEvent?.({ kind: 'artifacts', layout });
+      // 不写盘：由 App 应用到当前内存 doc + 编辑器 DOM，自动保存再落盘。
+      // 这样不会重挂编辑器，也不会和 App 的自动保存互相覆盖。
+      ctx.onEvent?.({ kind: 'doc-patch', layout, doc: r.doc });
       return { content: JSON.stringify({ ok: true, layout, applied: r.applied, errors: [] }) };
     },
   };

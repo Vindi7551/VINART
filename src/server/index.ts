@@ -659,6 +659,7 @@ async function handleSessions(
             );
             send('tool', evt);
           } else if (evt.kind === 'artifacts') send('artifacts', evt);
+          else if (evt.kind === 'doc-patch') send('doc-patch', evt);
           else send('agent', evt);
         },
       })) {

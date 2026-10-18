@@ -514,6 +514,21 @@ export function App() {
   }
 
   /**
+   * 工具**就地**改当前版式（doc-patch）：
+   * - 不写盘、不重挂编辑器；DOM 由 PreviewPanel 的同步 effect（updateDoc）更新；
+   * - 这里只换内存 doc + 触发自动保存。
+   * ⚠️ 第一拍沿用 updateDoc 的 resetStack 语义；AI 修改进撤销栈是第二拍。
+   */
+  function applyDocPatch(data: { layout?: unknown; doc?: unknown }) {
+    const name = typeof data.layout === 'string' ? data.layout : '';
+    const doc = data.doc as PreviewData['doc'] | undefined;
+    const cur = layoutRef.current;
+    if (!cur || !doc || cur.name !== name) return;
+    commitLayout({ ...cur, doc });
+    scheduleAutoSave();
+  }
+
+  /**
    * ⭐ **编辑动作只更新 doc + 自动保存；DOM 由编辑器 / PreviewPanel 就地同步。**
    *
    * 这里**绝不再 `emitDocument` / 换 `srcdoc`**：整页重渲会换掉 iframe 的 document
@@ -732,15 +747,27 @@ export function App() {
     const onArtifacts = (ev: MessageEvent) => {
       setGalleryKey((k) => k + 1);
       try {
-        const data = JSON.parse(ev.data) as { layout?: unknown };
-        if (typeof data.layout === 'string' && data.layout) void openLayoutByName(data.layout);
+        const data = JSON.parse(ev.data) as { layout?: unknown; open?: unknown };
+        // open=false（系列里的新图）只刷画廊，不抢预览、不重挂编辑器
+        if (data.open !== false && typeof data.layout === 'string' && data.layout) {
+          void openLayoutByName(data.layout);
+        }
       } catch {
         /* 非 JSON 也照常刷画廊 */
       }
     };
+    const onDocPatch = (ev: MessageEvent) => {
+      try {
+        applyDocPatch(JSON.parse(ev.data) as { layout?: unknown; doc?: unknown });
+      } catch {
+        /* 忽略坏事件 */
+      }
+    };
     es.addEventListener('artifacts', onArtifacts);
+    es.addEventListener('doc-patch', onDocPatch);
     return () => {
       es.removeEventListener('artifacts', onArtifacts);
+      es.removeEventListener('doc-patch', onDocPatch);
       es.close();
     };
   }, [sessionId, openLayoutByName]);
@@ -1220,13 +1247,17 @@ export function App() {
                 },
               ]);
             }
-            // 工具产出新图/草图 → 实时刷画廊 + 打开/刷新预览
+            // 工具产出新图/草图 → 实时刷画廊；只有 open!==false 才打开/刷新预览
             if (ev === 'artifacts') {
               setGalleryKey((k) => k + 1);
-              const layoutName = (data as { layout?: unknown }).layout;
-              if (typeof layoutName === 'string' && layoutName) {
-                void openLayoutByName(layoutName);
+              const a = data as { layout?: unknown; open?: unknown };
+              if (a.open !== false && typeof a.layout === 'string' && a.layout) {
+                void openLayoutByName(a.layout);
               }
+            }
+            // 工具就地改当前版式 → 不重挂编辑器
+            if (ev === 'doc-patch') {
+              applyDocPatch(data as { layout?: unknown; doc?: unknown });
             }
             if (ev === 'error') throw new Error(data.message ?? 'unknown');
           }

@@ -301,6 +301,29 @@ AI 的上下文和未来工具都建立在"当前 doc"上，但现在：
   **不自动打开最近/唯一**；
 - tests 81。
 
+### 8. generate_assets（2026-10-18）
+
+- 新增 `designharness/tools/generate-assets.ts`：
+  - `images`：商品/场景，走 `assetsgen` 的生图模型（PNG）；临时 `createBlinkRenderer` 作为候图 host；
+  - `icons`：主 AI 直接写的**线框 SVG**，`sanitizeSvg` 检查（script/on*/javascript:/foreignObject/外链）后落盘；
+  - **只写文件，不改 doc、不发 artifacts**；
+- `patch_doc` 白名单加 `asset`（仅 `image` / `svg`）；AI 生成后用 `patch_doc` 把节点指向文件；
+- `chat-store` 注册；`assistant-system.md` 写清用法与“不要重跑 sketch_plan”；
+- 素材库兜底/子 agent 暂不做；
+- tests 85。
+
+### 9. doc-patch / artifacts.open（第一拍，2026-10-18）
+
+- `sketch_plan`：
+  - 新建 layout → `artifacts { layout, created, open: !hadActive }`；
+  - 已有版式更新 → `doc-patch { layout, doc }`；
+- `patch_doc`：**不写盘**，发 `doc-patch { layout, doc }`；App 应用到当前内存 doc +
+  `commitLayout` + 自动保存；`PreviewPanel` 的 `updateDoc` 就地更新 DOM，不重挂编辑器；
+- `artifacts.open=false` 只刷画廊，不抢预览；`open=true` 才 `openLayoutByName`；
+- 第一拍沿用 `updateDoc` 的 `resetStack` 语义（AI 修改会清空撤销历史）；
+- 第二拍：编辑器加 `applyExternalDoc(next, label)`，把 AI 修改 push 进撤销栈；
+- tests 85。
+
 
 
 

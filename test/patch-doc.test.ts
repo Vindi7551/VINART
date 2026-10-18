@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyPatches } from '../src/designharness/tools/patch-doc';
 import { semanticView } from '../src/designharness/tools/get-design';
-import type { DesignDocument, ShapeNode, TextNode } from '../src/document/vocabulary';
+import type { DesignDocument, ImageNode, ShapeNode, TextNode } from '../src/document/vocabulary';
 
 const doc: DesignDocument = {
   canvas: { width: 100, height: 100 },
@@ -27,6 +27,13 @@ const doc: DesignDocument = {
           name: '色块',
           rect: { x: 0.1, y: 0.5, w: 0.2, h: 0.2 },
           fill: '#eeeeee',
+        },
+        {
+          id: 'i1',
+          type: 'image',
+          name: '主图',
+          rect: { x: 0.5, y: 0.5, w: 0.4, h: 0.3 },
+          asset: '@placeholder',
         },
       ],
     },
@@ -67,6 +74,16 @@ describe('applyPatches', () => {
   it('节点不存在 / 值类型不对', () => {
     expect(applyPatches(doc, [{ id: 'nope', path: 'fill', value: '#111' }]).errors[0]).toContain('找不到节点');
     expect(applyPatches(doc, [{ id: 't1', path: 'fontSizePx', value: '24' }]).errors[0]).toContain('值类型不对');
+  });
+
+  it('asset 只改 image/svg', () => {
+    const r = applyPatches(doc, [{ id: 'i1', path: 'asset', value: 'hero.png' }]);
+    expect(r.errors).toEqual([]);
+    expect(r.applied).toBe(1);
+    expect((r.doc.layers[0].elements[2] as ImageNode).asset).toBe('hero.png');
+
+    const bad = applyPatches(doc, [{ id: 't1', path: 'asset', value: 'x.png' }]);
+    expect(bad.errors[0]).toContain('只有 image/svg');
   });
 });
 

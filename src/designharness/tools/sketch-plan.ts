@@ -148,6 +148,7 @@ export function createSketchTool(config: { sessionId: string }): AgentTool {
       },
     },
     async execute(args, ctx) {
+      const hadActive = Boolean(ctx.activeLayout?.trim());
       const resolved = resolveSketchLayout(
         ctx.activeLayout,
         typeof args.layout === 'string' ? args.layout : undefined,
@@ -176,8 +177,13 @@ export function createSketchTool(config: { sessionId: string }): AgentTool {
       }
 
       const doc = r.doc!;
-      // 新建或更新都通知前端：刷新画廊 + 打开/刷新预览区。
-      ctx.onEvent?.({ kind: 'artifacts', layout, created });
+      if (created) {
+        // 新建布局才需要“打开”：从无 active 新建 → 打开；已有 active 新建系列里的另一张 → 只刷画廊。
+        ctx.onEvent?.({ kind: 'artifacts', layout, created, open: !hadActive });
+      } else {
+        // 已有版式更新 → 就地 doc-patch（不重挂编辑器、不刷新预览）。
+        ctx.onEvent?.({ kind: 'doc-patch', layout, doc });
+      }
       return {
         content: JSON.stringify({
           ok: true,

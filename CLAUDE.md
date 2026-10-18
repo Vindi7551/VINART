@@ -99,7 +99,7 @@ src/
 │   ├── session/           会话（chat-session · chat-store · manager · transcript）
 │   ├── skills/            技能（registry 三层来源 · skill-tool · types）
 │   ├── subagent/          子 agent（agent-loop · runner · types）⚠️ 工具已摘，见上
-│   ├── tools/             sketch-plan.ts + get-design.ts + patch-doc.ts + project-paths.ts
+│   ├── tools/             sketch-plan.ts + get-design.ts + patch-doc.ts + generate-assets.ts + project-paths.ts
 │   ├── SESSIONS.md        会话层设计文档
 │   └── SKILLS.md          技能层设计文档（三层来源 + 优先级 bundled>project>user）
 ├── document/              ⭐**唯一文档模型**
@@ -131,10 +131,11 @@ src/
 ### 工具集（`src/designharness/tools/`）
 
 当前主 AI 工具：`skill` + `sketch_plan`（草图 → 当前版式 `doc.json` 草稿）
-+ `get_design`（当前 doc 语义视图）+ `patch_doc`（颜色/字体 patch，元素级、批量）。
++ `get_design`（当前 doc 语义视图）+ `patch_doc`（颜色/字体/asset patch，元素级、批量）
++ `generate_assets`（`images` 生图 / `icons` 主 AI 线框 SVG；只落盘、不改 doc）。
 `sketch_plan` 的 `layout` 不传，由 `ctx.activeLayout`（来自 `/chat`）决定；
 没有 activeLayout 时可用可选 `layout` 新建。
-其余设计工具（素材/读改文档）待重写；`workflow/assetsgen/` 已吃 `DesignDocument`，可直接复用。
+其余设计工具（读改文档）待重写；`workflow/assetsgen/` 已吃 `DesignDocument`，可直接复用。
 
 ---
 

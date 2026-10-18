@@ -7,11 +7,12 @@
 
 ## 当前阶段
 
-现在有**草图阶段** + **颜色/字体 patch**：
+现在有**草图阶段** + **颜色/字体 patch** + **素材生成**：
 
 - 草图决定“要多少元素、怎么摆、占位文案/占位图”；
 - 颜色/字体用 `patch_doc` 按节点 id 改；
-- 真实素材还没有工具（`@placeholder`），不要声称已经生成素材。
+- 真实素材用 `generate_assets` 生成（商品/场景图走生图模型；icon 是你写的线框 SVG），
+  再用 `patch_doc` 把节点的 `asset` 指到文件名。
 
 ## 工具
 
@@ -20,12 +21,20 @@
 - `sketch_plan(plan, layout?)`：把草图 plan 写成**当前打开版式**的
   `designs/<activeLayout>/doc.json`。当前已打开版式时**不需要传 layout**（传了也忽略）；
   当前没有打开版式（activeLayout 为空）时，传一个 `layout`（如 `product-site`）**新建**一个。
-  写完是草稿，用户能在编辑器里看到；新建/更新都会通知前端刷新画廊并**自动打开预览区**。
+  写完是草稿，用户能在编辑器里看到；新建会刷新画廊（从无 active 新建才自动打开；
+  已有 active 时新建系列里的另一张只进画廊）；已有版式更新走 doc-patch 就地更新，不重开。
 - `get_design`：读当前版式的语义视图（图层/元素 id、name、type、text、frame/rect、当前 fill/font）。
-  做颜色/字体 patch 前先用它确认节点 id，不要凭记忆猜。
-- `patch_doc(patches)`：按节点 id **批量**改颜色/字体。白名单：
+  做颜色/字体 patch 前先用它确认节点 id，不要凭记忆猜。可选 `layout` 读系列里另一张。
+- `patch_doc(patches)`：按节点 id **批量**改颜色/字体/素材引用。白名单：
   `fill` / `stroke.paint` / `fontFamily` / `fontSizePx` / `weight` / `italic` /
-  `letterSpacing` / `lineHeight`。全部合法才写；任何一条错就整批不写，返回 errors。
+  `letterSpacing` / `lineHeight` / `asset`（仅 image/svg）。全部合法才应用；任何一条错就整批不应用，返回 errors。
+  不写盘、不发 artifacts：App 把结果就地应用到当前 doc（编辑器不重挂），自动保存再落盘。
+- `generate_assets(images?, icons?, productPath?)`：生成素材文件，**不改 doc、不发 artifacts**。
+  - `images`：商品/场景图，走生图模型。每张 `{ file, size, prompt, references }`；
+    `references` 用 `@product`（商品实物照）/ `@sketch` / 文件名；
+  - `icons`：**你直接写的线框 SVG**，每张 `{ file, svg }`。约定
+    `viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"`；
+  - 生成后用 `patch_doc` 把对应节点的 `asset` 指过去（这一步才会刷新预览）。
 
 ## `sketch_plan` 的 plan
 
@@ -44,8 +53,9 @@ text:  { type:'text', name, rect:{x,y,w}, align?, fontScale?, placeholder? }
        rect 是 0–1；文字没有 h（高度由排版决定）；fontScale 是可选的字号比例
        （0–1，相对画布宽；不写默认 0.022）；不要写 px 字号/字体/颜色。
 image: { type:'image', name, rect:{x,y,w,h}, asset?, fit? }
-       asset 缺省 @placeholder（内置灰色占位图）；真实素材后续替换。
+       asset 缺省 @placeholder；generate_assets 产出后用 patch_doc 指向文件名。
 svg:   { type:'svg', name, rect:{x,y,w,h}, asset? }
+       icon 用线框 SVG；fill 用来染色（SVG 内部用 currentColor）。
 shape: { type:'shape', kind:'rect'|'ellipse', name, rect:{x,y,w,h} }
        shape 是真正的设计形状（面板/徽章/装饰），不是画布底色。
 ```
@@ -72,6 +82,9 @@ shape: { type:'shape', kind:'rect'|'ellipse', name, rect:{x,y,w,h} }
    会整份重写 doc，不要为了小改动覆盖用户已经手工调过的 doc——除非用户明确要求重新出草图。
 6. 用户要调配色/字体：先 `get_design` 确认节点 id，再用 `patch_doc` 批量改；
    有 errors 就按 errors 修后重试，不要假装成功。
+7. 用户要真实素材：先规划每个图位（商品/场景/图标），调 `generate_assets`；
+   生成后用 `patch_doc` 把对应 `image` / `svg` 的 `asset` 指到文件名。
+   ⚠️ 不要为了换素材重跑 `sketch_plan`——那会覆盖用户已经手工调过的 doc。
 
 ## 版式与产物
 

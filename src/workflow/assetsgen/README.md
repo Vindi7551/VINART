@@ -23,8 +23,9 @@
 | `README.md` | 本文件 |
 
 **入口**：本目录的 `generateAssets()`。
-⚠️ **旧入口已删除**：聊天链的 `generate_assets` 工具 / `designharness/tools/generate-assets.ts`
-随旧契约整层摘除（`designharness/tools/` 现在只剩 `project-paths.ts`），还没有长回来。
+聊天链的 `generate_assets` 工具已在 `designharness/tools/generate-assets.ts` 重新长回来：
+`images` 走本目录，`icons` 是主 AI 写的线框 SVG（工具只做安全检查 + 落盘）。
+它不是旧契约的 `generate_assets`，产物仍是 `doc.json` 引用的素材文件。
 
 ---
 
