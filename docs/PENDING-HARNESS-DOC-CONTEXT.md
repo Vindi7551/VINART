@@ -321,7 +321,8 @@ AI 的上下文和未来工具都建立在"当前 doc"上，但现在：
   `commitLayout` + 自动保存；`PreviewPanel` 的 `updateDoc` 就地更新 DOM，不重挂编辑器；
 - `artifacts.open=false` 只刷画廊，不抢预览；`open=true` 才 `openLayoutByName`；
 - 第一拍沿用 `updateDoc` 的 `resetStack` 语义（AI 修改会清空撤销历史）；
-- 第二拍：编辑器加 `applyExternalDoc(next, label)`，把 AI 修改 push 进撤销栈；
+- 第二拍：`VocabEditorHandle.applyExternalDoc(next, label)` 用 `pushCommand` 追加进撤销栈
+  （不 reset）；`PreviewPanel` 外部 doc 改走它，DOM 仍整层重发。已实现。
 - tests 85。
 
 

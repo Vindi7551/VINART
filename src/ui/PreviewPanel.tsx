@@ -499,7 +499,8 @@ export function PreviewPanel({
     //    ⇒ 编辑器只接受**它自己绑定的那个产物**的文档。
     if (boundNameRef.current !== layoutData.name) return;
     if (JSON.stringify(ed.doc) === JSON.stringify(layoutData.doc)) return;
-    ed.updateDoc(layoutData.doc);
+    // 外部文档变更（AI patch / 另一标签页）——追加进撤销栈，而不是 reset。
+    ed.applyExternalDoc(layoutData.doc, 'AI 修改');
     // ⚠️ `updateDoc` 只换编辑器的**工作副本**，不碰 iframe DOM（它只负责
     //    重置撤销栈 / 选中态 / overlay）。AI patch、另一个标签页这类**外部文档变更**
     //    必须像 undo 路径一样把整层 HTML 重发一遍，否则 fill/font 这类字段

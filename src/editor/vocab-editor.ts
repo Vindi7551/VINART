@@ -220,6 +220,14 @@ export interface VocabEditorHandle {
   refreshDom(): void;
   updateDoc(doc: DesignDocument): void;
   /**
+   * 外部文档变更（AI patch / 另一个标签页 / 手改文件）——**追加进撤销栈**，不 reset。
+   *
+   * `updateDoc` = "整体换文档" ⇒ 历史作废；`applyExternalDoc` = "在当前历史后加一条"，
+   * 这样 AI 的修改和用户手改走同一个撤销栈，Ctrl+Z 能撤回。
+   * ⚠️ DOM 仍由宿主（PreviewPanel）整层重发；编辑器 handle 不碰 iframe。
+   */
+  applyExternalDoc(doc: DesignDocument, label?: string): void;
+  /**
    * ⭐ 编辑器**内部工作副本**的引用（不是拷贝、不是宿主手里那份）。
    *
    * 用途只有一个：**宿主判断"我手里这份是不是就是编辑器那一份"**。
@@ -1974,6 +1982,23 @@ export function createVocabEditor(
       // ⚠️ JSON 比较不严谨（key 顺序 / 浮点格式可能误判），但误判的后果是
       //    "多清一次历史"（安全方向），不会造成数据错误。等服务端有 rev 了再换成比 hash。
       if (JSON.stringify(stack.head) !== JSON.stringify(doc)) resetStack(stack, doc);
+      if (selectedId && !elementById(selectedId)) {
+        selectedId = null;
+        outline(null);
+      }
+      syncOverlay();
+    },
+
+    /**
+     * 外部文档变更（AI patch / 另一个标签页 / 手改文件）——**追加进撤销栈**。
+     *
+     * 和 `updateDoc` 的区别：`updateDoc` 是"整体换文档 ⇒ 历史作废"；
+     * 这里是"当前历史后加一条"，所以 AI 的修改也能 Ctrl+Z 撤回。
+     * ⚠️ 只换编辑器的 model + 撤销栈；DOM 由 PreviewPanel 整层重发。
+     */
+    applyExternalDoc(next, label = 'AI 修改') {
+      doc = cloneDoc(next);
+      pushCommand(stack, doc, label);
       if (selectedId && !elementById(selectedId)) {
         selectedId = null;
         outline(null);
