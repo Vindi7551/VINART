@@ -22,6 +22,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSy
 import { dirname, join, relative, resolve, sep } from 'node:path';
 // 文档模型（`buildLayoutNote` 要把"当前打开的版式"讲给 LLM 听 —— 结构见 `vocabulary.ts` 文件头）
 import { iterElements, type DesignDocument } from '../document/vocabulary';
+// 草图里的内置占位图 id（`planToIntent` 用同一个常量）
+import { PLACEHOLDER_ASSET } from '../schema/plan';
 
 const PORT = Number(process.env.PORT) || 8787;
 
@@ -165,7 +167,13 @@ function resolveAssets(
   urlFor: (abs: string) => string,
 ): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const nm of collectAssetNames(doc)) {
+  const names = collectAssetNames(doc);
+  // 内置占位图：不在版式目录/工作目录里找，永远用 data URL（预览和出图都自包含）。
+  if (names.includes(PLACEHOLDER_ASSET)) {
+    const p = resolve('designassets/builtin/placeholder.svg');
+    if (existsSync(p)) out[PLACEHOLDER_ASSET] = dataUrlOf(p);
+  }
+  for (const nm of names) {
     for (const r of roots) {
       const p = resolve(r, nm);
       if (existsSync(p)) {
@@ -617,6 +625,7 @@ async function handleSessions(
       const pendingWrites: Promise<void>[] = [];
       for await (const chunk of session.send(text, attachments.length ? attachments : undefined, {
         systemNote,
+        activeLayout: body.activeLayout as string | undefined,
         // 进度事件分流：子 agent spawn/result → 'agent'（委派卡片）；
         // kind:'tool-call'（主 AI 工具循环中间轮）→ 落转录账本 + 'tool' 实时推——
         // 不落账的话刷新会话后「AI 调过工具」完全蒸发；不进模型上下文，纯审计

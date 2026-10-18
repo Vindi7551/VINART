@@ -99,12 +99,15 @@ src/
 │   ├── session/           会话（chat-session · chat-store · manager · transcript）
 │   ├── skills/            技能（registry 三层来源 · skill-tool · types）
 │   ├── subagent/          子 agent（agent-loop · runner · types）⚠️ 工具已摘，见上
-│   ├── tools/             只剩 project-paths.ts（设计工具待重写）
+│   ├── tools/             sketch-plan.ts（草图 → 当前版式 doc）+ project-paths.ts
 │   ├── SESSIONS.md        会话层设计文档
 │   └── SKILLS.md          技能层设计文档（三层来源 + 优先级 bundled>project>user）
 ├── document/              ⭐**唯一文档模型**
 │   ├── vocabulary.ts         契约：画布 / text / image / svg / shape / group
 │   └── README.md             完整规范 + **⭐分母表** ← 改这里之前先读
+├── schema/                0–1 契约层（DesignIntent / SketchPlan + planToIntent）
+│   ├── intent.ts             DesignIntent / Intent*（翻译器的输入契约）
+│   └── plan.ts               SketchPlan（AI 子集）+ JSON Schema + planToIntent()
 ├── render/                渲染流水线
 │   ├── vocabulary/           ② 文档 → HTML（emit.ts）+ 文字实测（fit.ts）
 │   ├── rasterize/            ③ HTML → 位图（blink-renderer）
@@ -119,6 +122,7 @@ src/
 | 环节 | 真源 |
 |---|---|
 | 文档模型 | `document/vocabulary.ts`（**唯一**） |
+| 0–1 契约 / 草图 | `schema/intent.ts` + `schema/plan.ts` |
 | 文档 → HTML | `render/vocabulary/emit.ts` 的 `emitDocument(doc, opts)` |
 | 文字自适应 | `render/vocabulary/fit.ts` 的 `emitFitted(doc, page)` |
 | 编辑器 | `editor/vocab-editor.ts` + `editor/text-session.ts` |
@@ -126,9 +130,9 @@ src/
 
 ### 工具集（`src/designharness/tools/`）
 
-⚠️ **设计相关工具全部已删除**（它们建在旧契约上）。当前主 AI 只有 `skill` 工具。
-要重新长出来的（对着 `vocabulary.ts`）：落盘 · 校验 · 渲草图 · 出图 · 读改文档。
-`workflow/assetsgen/` 已经改成吃 `DesignDocument`，`generate_assets` 重写时可直接复用。
+当前主 AI 工具：`skill` + `sketch_plan`（草图 plan → 当前版式 `doc.json` 草稿）。
+`sketch_plan` 的 `layout` 不传，由 `ctx.activeLayout`（来自 `/chat`）决定。
+其余设计工具（渲染/素材/读改文档）待重写；`workflow/assetsgen/` 已吃 `DesignDocument`，可直接复用。
 
 ---
 
@@ -299,7 +303,7 @@ src/
 ⚠️ **已知过时文档（待清）**：`docs/CODE-TOUR.md`（2026-10-16 已加"已过期"横幅 + 就地标注，
 但正文仍是旧契约口径）、`docs/LISTING-QUALITY-ALIGNMENT.md` / `docs/PHOTOSHOP-CAPABILITIES.md` /
 `docs/HYBRID-RENDERING.md`（提到已删除的 `render_sketch` / `generate_assets` / `compile_appearance`）、
-`src/designharness/session/assistant-system.md` + `subagent/subagent-system.md`（整篇按旧契约写）。
+`src/designharness/subagent/subagent-system.md`（整篇按旧契约写）。
 `docs/MIGRATION.md` / `docs/DOCUMENT-MODEL.md` **已不存在**（此前这里列着它们）。
 `src/bitmap/` 与 `designharness/memory/` 是空目录。
 

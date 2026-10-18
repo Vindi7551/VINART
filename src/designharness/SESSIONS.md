@@ -10,6 +10,10 @@
 >
 > **核心原则：会话事件流（JSONL）是持久层；索引与内存态都是派生物** —— 崩溃安全、可重放、可对账重建。
 
+> ⚠️ **待决策（2026-10-18 记录，未实现）**：harness 与词表 / emit / 编辑器的接线，
+> 尤其是"AI 读当前 doc"的三种方案（服务端内存 / chat 带 doc / chat 前 flush），见
+> [`docs/PENDING-HARNESS-DOC-CONTEXT.md`](../../docs/PENDING-HARNESS-DOC-CONTEXT.md)。先记录，别当已实现。
+
 ## 0. 语义：会话 = 一次连续的设计工作史
 
 对话消息与设计操作（打开版式 / 保存 spec / 重渲 / 派子 agent）走**同一条事件流**——

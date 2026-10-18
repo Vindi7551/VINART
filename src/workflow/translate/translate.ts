@@ -40,101 +40,38 @@
  */
 
 import type {
-  Canvas,
   DesignDocument,
-  GroupNode,
-  ImageNode,
-  /** ⚠️ 名字带 Node 后缀：`Element` 会和 DOM 全局的 `Element` 撞名 */
   ElementNode,
-  /** 元素的基础字段（`id` / `rect` / 外观）—— intent 那几个类型都从它派生 */
-  ElementBase,
+  GroupNode,
   ShapeNode,
   TextNode,
   TextRun,
-  VisualBase,
 } from '../../document/vocabulary';
 // ⚠️ 兜底字号 / 扁平→图层的折叠规则都从**文档模型**取，不自己写一份（理由见文件末那条 note）。
 import { DEFAULT_FONT_PX, wrapIntoLayers } from '../../document/vocabulary';
+import type {
+  DesignIntent,
+  IntentGroupNode,
+  IntentImageNode,
+  IntentLayer,
+  IntentShapeNode,
+  IntentSvgNode,
+  IntentTextNode,
+  Rect01,
+} from '../../schema/intent';
 
-// ══════════════════════════════════════════════════════════════════════
-// ① 意图（比例版）
-// ══════════════════════════════════════════════════════════════════════
-
-/** 位置尺寸（**0–1 比例，相对画布**）—— `Rect` 的比例版 */
-export interface Rect01 {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-/**
- * **哪些字段是"分母 = 画布"的** —— 只有这两个（族）：
- *
- * - `rect`：位置尺寸（x/w 除画布宽，y/h 除画布高）
- * - `fontSizePx`：字号（除画布宽）
- *
- * ⚠️ 这张表是**整份翻译器的规格**。往里头加字段之前，先回答：
- * **它的分母会被用户的编辑动作改变吗？**
- * 会（盒子 / 短边 / 字号）⇒ **不许加进来**，它必须留在比例形态。
- */
-type CanvasRelative = {
-  rect: Rect01;
-  /** 字号：0–1，相对**画布宽**（沿用旧名 `fontScale`，因为这就是它的含义） */
-  fontScale?: number;
-};
-
-/**
- * ⚠️ 为什么要显式写回 `type`：`Omit` 产出的对象类型会**丢掉判别联合的判别能力**
- * （`switch (l.type)` 收不窄），于是每个 `case` 里的 `l` 还是整个联合。
- * 把 `type` 显式重新声明在顶层，"按 `type` 收窄"才成立。
- */
-type IntentElementBase = Omit<ElementBase, 'rect'> & CanvasRelative;
-type IntentVisualBase = VisualBase;
-
-export type IntentTextRun = Omit<TextRun, 'fontSizePx'> & { fontScale?: number };
-export type IntentTextNode = Omit<TextNode, 'rect' | 'fontSizePx' | 'runs' | 'type'> &
-  IntentElementBase & { type: 'text'; runs: IntentTextRun[] };
-
-/**
- * ⚠️ **形状必须逐个几何写**，不能 `Omit<ShapeNode, …>` 一把过。
- *
- * `ShapeNode` 是 `ElementBase & ShapeGeometry & { type: 'shape' }` —— 一个**交叉类型**，
- * 而 `ShapeGeometry` 又是按 `kind` 判别的联合。`Omit` 作用在交叉类型上会把它
- * **压成一个对象类型**，`kind` 的判别能力随之消失（`points` / `d` 都读不到了）。
- *
- * ⇒ 这里按 `ShapeGeometry` 的形状**逐个**声明。
- * ⚠️ **词汇表将来加新几何时，这里要跟着加**（否则那个几何的字段会掉出意图类型）。
- */
-export type IntentShapeNode = IntentElementBase &
-  (
-    | { kind: 'rect' }
-    | { kind: 'ellipse' }
-    | { kind: 'polygon'; points: Array<[number, number]> }
-    | { kind: 'path'; d: string }
-  ) & { type: 'shape' };
-export type IntentImageNode = IntentElementBase & { type: 'image'; asset: string; fit?: ImageNode['fit']; render?: ImageNode['render']; position?: ImageNode['position'] };
-export type IntentSvgNode = IntentElementBase & { type: 'svg'; asset: string };
-export type IntentGroupNode = IntentVisualBase &
-  Pick<GroupNode, 'transform' | 'opacity' | 'blend' | 'clip' | 'mask' | 'backdrop' | 'filter'> & {
-    type: 'group';
-    id: string;
-    children: IntentLayer[];
-  };
-
-export type IntentLayer =
-  | IntentTextNode
-  | IntentImageNode
-  | IntentSvgNode
-  | IntentShapeNode
-  | IntentGroupNode;
-
-/** 翻译器的**输入**：一份用比例写的文档 + 它打算画在多大的画布上 */
-export interface DesignIntent {
-  /** 画布尺寸（**px**——这是唯一的绝对量，也是所有换算的分母） */
-  canvas: Canvas;
-  layers: IntentLayer[];
-}
+// 兼容旧引用：这些类型已搬到 `src/schema/intent.ts`，这里只做 re-export。
+export type {
+  DesignIntent,
+  IntentGroupNode,
+  IntentImageNode,
+  IntentLayer,
+  IntentShapeNode,
+  IntentSvgNode,
+  IntentTextNode,
+  IntentTextRun,
+  Rect01,
+} from '../../schema/intent';
 
 // ══════════════════════════════════════════════════════════════════════
 // ② 产出与问题
@@ -246,9 +183,20 @@ export function translate(intent: DesignIntent): TranslateResult {
   };
 
   const textNode = (n: IntentTextNode): TextNode => {
-    const { fontScale, runs, ...rest } = n;
+    const { fontScale, runs, frame, ...rest } = n;
     const fontSizePx = fontPxOf(n.id, 'fontScale', fontScale);
     if (!runs?.length) err(n.id, 'runs', '文字至少要有一个片段（`runs` 不能为空）');
+    if (!frame) {
+      err(n.id, 'frame', '缺少 `frame`（文字位置）');
+    } else {
+      for (const k of ['x', 'y', 'w'] as const) {
+        if (!Number.isFinite(frame[k])) err(n.id, `frame.${k}`, `必须是有限数，实为 ${frame[k]}`);
+      }
+      if (frame.w <= 0) err(n.id, 'frame.w', `宽必须是正数（${frame.w}）—— 否则文字不可见`);
+      if (frame.x < 0 || frame.y < 0 || frame.x + frame.w > 1.0001) {
+        note(n.id, 'frame', `超出画布范围（x=${frame.x} y=${frame.y} w=${frame.w}）—— 会被裁掉一部分`);
+      }
+    }
     const outRuns: TextRun[] = (runs ?? []).map((r, i) => {
       const { fontScale: rs, ...runRest } = r;
       const px = fontPxOf(n.id, `runs[${i}].fontScale`, rs);
@@ -256,7 +204,12 @@ export function translate(intent: DesignIntent): TranslateResult {
     });
     return {
       ...rest,
-      rect: rectOf(n.id, n.rect),
+      // 文字位置是 frame（0–1 → px，无 h）；不再产出 rect。
+      frame: {
+        x: byW(frame?.x ?? 0, W),
+        y: byH(frame?.y ?? 0, H),
+        w: byW(frame?.w ?? 0, W),
+      },
       ...(fontSizePx === undefined ? {} : { fontSizePx }),
       runs: outRuns,
     } as TextNode;

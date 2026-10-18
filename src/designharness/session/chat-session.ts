@@ -97,6 +97,8 @@ export function createChatSession(config: SessionConfig): ChatSession {
       attachments?: Attachment[],
       opts?: {
         systemNote?: string;
+        /** 当前打开的版式名（来自 /chat 的 activeLayout），传给工具上下文 */
+        activeLayout?: string;
         /** 进度事件回调：工具执行中的中间状态（如子 agent spawn/result）实时上抛 */
         onEvent?: (evt: Record<string, unknown>) => void;
       },
@@ -164,6 +166,7 @@ export function createChatSession(config: SessionConfig): ChatSession {
                 dir: process.cwd(),
                 signal: controller.signal,
                 onEvent: opts?.onEvent,
+                activeLayout: opts?.activeLayout,
               });
               resultContent = (result.isError ? 'ERROR: ' : '') + result.content;
             } catch (e) {

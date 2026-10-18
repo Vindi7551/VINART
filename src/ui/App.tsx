@@ -310,26 +310,6 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /**
-   * **常驻事件流**：服务端**主动推**的那些事（现在只有 `artifacts` —— 出图了 ⇒ 画廊重拉）。
-   *
-   * ⚠️ 在此之前前端**没有任何常驻通道**：`/chat` 那条 SSE 只活一轮对话。
-   *    于是"**别人**出了图"（直接 `POST /api/layout/<n>/render`，或别的工具）
-   *    前端完全不知道 ⇒ 画廊要等下次对话结束、或者手动 F5。
-   *
-   * `EventSource` **自带断线重连**（含服务重启），所以这里只管收摊，不用写重试。
-   */
-  useEffect(() => {
-    if (!sessionId) return;
-    const es = new EventSource(`/api/sessions/${sessionId}/stream`);
-    const onArtifacts = () => setGalleryKey((k) => k + 1);
-    es.addEventListener('artifacts', onArtifacts);
-    return () => {
-      es.removeEventListener('artifacts', onArtifacts);
-      es.close();
-    };
-  }, [sessionId]);
-
   // 取「当前用的模型」——来自服务端注册表（keys.json），UI 只做展示不做选择
   useEffect(() => {
     void (async () => {
@@ -677,7 +657,7 @@ export function App() {
             {
               id: crypto.randomUUID(),
               role: 'assistant',
-              text: `⚠️ 「${name}」没有可编辑的版式数据（HTTP ${resp.status}），预览保持图片。常见原因：旧格式产物（缺 design-sketch.json）或项目路径不匹配。`,
+              text: `⚠️ 「${name}」没有可编辑的版式数据（HTTP ${resp.status}），预览保持图片。常见原因：还没有生成 doc.json，或项目路径不匹配。`,
             },
           ]);
           return;
@@ -710,6 +690,43 @@ export function App() {
     },
     [sessionId, logSessionAction],
   );
+
+  /** 打开/刷新当前会话的版式（来自 AI 工具事件；没有 PNG URL，直接拉 data） */
+  const openLayoutByName = useCallback(
+    async (name: string) => {
+      await handleOpenArtifact('', name, '');
+    },
+    [handleOpenArtifact],
+  );
+
+  /**
+   * **常驻事件流**：服务端**主动推**的那些事（现在只有 `artifacts` —— 出图/草图写入
+   * ⇒ 画廊重拉 + 预览区打开对应版式）。
+   *
+   * ⚠️ 在此之前前端**没有任何常驻通道**：`/chat` 那条 SSE 只活一轮对话。
+   *    于是"**别人**出了图"（直接 `POST /api/layout/<n>/render`，或别的工具）
+   *    前端完全不知道 ⇒ 画廊要等下次对话结束、或者手动 F5。
+   *
+   * `EventSource` **自带断线重连**（含服务重启），所以这里只管收摊，不用写重试。
+   */
+  useEffect(() => {
+    if (!sessionId) return;
+    const es = new EventSource(`/api/sessions/${sessionId}/stream`);
+    const onArtifacts = (ev: MessageEvent) => {
+      setGalleryKey((k) => k + 1);
+      try {
+        const data = JSON.parse(ev.data) as { layout?: unknown };
+        if (typeof data.layout === 'string' && data.layout) void openLayoutByName(data.layout);
+      } catch {
+        /* 非 JSON 也照常刷画廊 */
+      }
+    };
+    es.addEventListener('artifacts', onArtifacts);
+    return () => {
+      es.removeEventListener('artifacts', onArtifacts);
+      es.close();
+    };
+  }, [sessionId, openLayoutByName]);
 
   /**
    * 📂 设置工作目录。
@@ -1186,8 +1203,14 @@ export function App() {
                 },
               ]);
             }
-            // 工具产出新图（render_design / generate_assets / spawn 批次）→ 实时刷画廊
-            if (ev === 'artifacts') setGalleryKey((k) => k + 1);
+            // 工具产出新图/草图 → 实时刷画廊 + 打开/刷新预览
+            if (ev === 'artifacts') {
+              setGalleryKey((k) => k + 1);
+              const layoutName = (data as { layout?: unknown }).layout;
+              if (typeof layoutName === 'string' && layoutName) {
+                void openLayoutByName(layoutName);
+              }
+            }
             if (ev === 'error') throw new Error(data.message ?? 'unknown');
           }
         }
@@ -1209,7 +1232,7 @@ export function App() {
         setIsGenerating(false);
       }
     },
-    [sessionId, ensureSession, layout, refreshSessions, toChatImageDataURL],
+    [sessionId, ensureSession, layout, refreshSessions, toChatImageDataURL, openLayoutByName],
   );
 
   // 供 UI 判断：agent 层(对话式生成)是否可用

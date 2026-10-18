@@ -29,7 +29,12 @@ export interface ChatSession {
   send(
     userMessage: string,
     attachments?: Attachment[],
-    opts?: { systemNote?: string; onEvent?: (evt: Record<string, unknown>) => void },
+    opts?: {
+      systemNote?: string;
+      /** 当前打开的版式名（来自 /chat 的 activeLayout），传给工具上下文 */
+      activeLayout?: string;
+      onEvent?: (evt: Record<string, unknown>) => void;
+    },
   ): AsyncIterable<ChatChunk>;
 
   /** 中止当前流式请求。send() 的迭代器将提前结束 */

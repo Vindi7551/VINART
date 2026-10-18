@@ -2,6 +2,9 @@
 
 > **一句话**：整个项目里**唯一**该做"比例 → px"换算的地方。
 > 其他地方出现这个乘法，就是回退。
+>
+> **2026-10-18**：`DesignIntent` / `Intent*` 类型已移到 `src/schema/intent.ts`，本文件只保留
+> `translate()`；AI 的草图契约 `SketchPlan` + `planToIntent()` 在 `src/schema/plan.ts`。
 
 ---
 
