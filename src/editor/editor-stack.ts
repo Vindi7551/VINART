@@ -45,6 +45,8 @@ export interface EditorStack {
    * （顺带：有了它，每条命令的 `before` 就是冗余的 —— 见 `gotoStep` 的注释）
    */
   base: DesignDocument;
+  /** 第 0 步（初始文档）的建立时间 —— 历史面板把它也画成一行 */
+  baseAt: number;
 }
 
 /** 合并窗口（ms）：同类操作在此间隔内连续发生 ⇒ 并成一条 */
@@ -64,7 +66,7 @@ export function stateAfterDone(stack: EditorStack): DesignDocument {
 }
 
 export function createEditorStack(base: DesignDocument, limit = 100): EditorStack {
-  return { done: [], undone: [], limit, head: clone(base), base: clone(base) };
+  return { done: [], undone: [], limit, head: clone(base), base: clone(base), baseAt: Date.now() };
 }
 
 /**
@@ -122,6 +124,7 @@ export function resetStack(stack: EditorStack, base: DesignDocument): void {
   stack.undone = [];
   stack.head = clone(base);
   stack.base = clone(base);
+  stack.baseAt = Date.now();
 }
 
 /** 历史总步数（含已撤销的）—— 面板要画"第 k 步 / 共 n 步" */
@@ -194,9 +197,16 @@ export function removeStep(stack: EditorStack, index: number): DesignDocument | 
   stack.head = stateAfterDone(stack);
   return stack.head;
 }
-/** 历史列表（给面板用）：`[{ index, label, at }]`，index 从 1 开始（0 = 初始，不在列表里） */
+/**
+ * 历史列表（给面板用）：`[{ index, label, at, undone }]`。
+ *
+ * ⭐ **index 0 = 初始文档**（`base`），和 PS 一样把"打开时的样子"也画成一行；
+ *    命令从 1 开始。面板点第 0 行 = `gotoStep(0)` 回到最初。
+ * ⚠️ 第 0 行不可删除（它不是一个 command，`removeStep` 也拒绝 `index < 1`）。
+ */
 export function historyEntries(s: EditorStack): Array<{ index: number; label: string; at: number; undone: boolean }> {
   return [
+    { index: 0, label: '初始状态', at: s.baseAt, undone: false },
     ...s.done.map((c, i) => ({ index: i + 1, label: c.label, at: c.at, undone: false })),
     // ⚠️ `undone` 是**栈**（栈顶 = 最近被撤销的那条）⇒ 要 `reverse` 才是**升序的步号**，
     //    否则面板里会出现 "3 排在 2 前面" ✗（实测踩过）

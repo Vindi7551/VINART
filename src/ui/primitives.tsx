@@ -54,9 +54,9 @@ export function PanelHeader({
   );
 }
 
-/** 面板正文（唯一的滚动区） */
-export function PanelBody({ children }: { children: ReactNode }) {
-  return <div className="ui-panel-body">{children}</div>;
+/** 面板正文（唯一的滚动区）。`className` 给"整页只有一个长列表"的页面（如图层页）撑满用。 */
+export function PanelBody({ className, children }: { className?: string; children: ReactNode }) {
+  return <div className={`ui-panel-body${className ? ` ${className}` : ''}`}>{children}</div>;
 }
 
 /**

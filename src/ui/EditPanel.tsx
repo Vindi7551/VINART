@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { fieldsFor, fieldsForLayer, type Field, type SelectionSnapshot } from '../editor/inspector';
 import { findElement, findLayer, type ElementNode } from '../document/vocabulary';
+import { LayerThumb, baseCssOf } from './LayerThumb';
 import { SelectionStylePanel } from './SelectionStylePanel';
 import { Button, ContextMenu, Field as FieldRow, FieldGrid, Hint, ListItem, Panel, PanelBody, PanelHeader, Row, Section } from './primitives';
 import { FieldControl, isCheckKind, isWideKind } from './field-control';
@@ -163,10 +164,12 @@ export function EditPanel({
    * ⚠️ 不看它的话就是"点了没反应"（编辑器 `addElement` 会拒绝写入）—— 静默失败。
    */
   const currentLayerLocked = findLayer(layout.doc, currentLayerId)?.locked === true;
+  /** 缩略图 iframe 的基础样式 + @font-face（从主文档 HTML 里取，避免服务端再发一次） */
+  const baseCss = useMemo(() => baseCssOf(layout.html), [layout.html]);
   /** 历史行的右键菜单（x/y = 屏幕坐标；index = 哪一步） */
   const [historyMenu, setHistoryMenu] = useState<{ x: number; y: number; index: number } | null>(null);
-  /** 历史里**当前所在那一步** = 没被撤销的最后一条（面板要高亮它） */
-  const currentStep = history.filter((h) => !h.undone).length;
+  /** 历史里**当前所在那一步** = 最后一个没被撤销的条目（第 0 条 = 初始状态） */
+  const currentStep = history.reduce((cur, h) => (h.undone ? cur : h.index), 0);
   const allFields = node ? fieldsFor(node, layout.doc.canvas) : [];
   const shown = fieldsOfTool(allFields, tool);
   const toolDef = TOOLS.find((t) => t.id === tool);
@@ -236,7 +239,7 @@ export function EditPanel({
         title="版式编辑"
         subtitle={node ? `${TYPE_NAMES[node.type] ?? node.type} · ${node.id}` : toolDef?.label}
       />
-      <PanelBody>
+      <PanelBody className={tool === 'layers' ? 'ui-panel-body--fill' : undefined}>
         {/* ⭐ 画面上选了字 ⇒ 最上面先摆"选中的字"。
             它是**片段级**样式（只改那几个字），与下面的**节点级**表单是两回事，
             所以独立一块、置顶、带强调色 —— 免得让人以为下面那些框也改的是这几个字。 */}
@@ -300,11 +303,13 @@ export function EditPanel({
                   <span
                     className={`layer-name${h.undone ? ' is-undone' : ''}`}
                     // ⭐ 右键 ⇒ 删除这条历史（PS 历史记录里的 Delete）
+                    // ⚠️ 第 0 条是初始状态，不是 command，不能删
                     onContextMenu={(e) => {
                       e.preventDefault();
+                      if (h.index === 0) return;
                       setHistoryMenu({ x: e.clientX, y: e.clientY, index: h.index });
                     }}
-                    title="右键：删除这条历史"
+                    title={h.index === 0 ? '初始状态（不可删除）' : '右键：删除这条历史'}
                   >
                     {h.index}. {h.label}
                   </span>
@@ -328,10 +333,10 @@ export function EditPanel({
                 onClose={() => setHistoryMenu(null)}
               />
             ) : null}
-            {history.length === 0 ? (
-              <Hint>还没有任何编辑 —— 改点东西就会出现在这里。</Hint>
+            {history.length <= 1 ? (
+              <Hint>还没有任何编辑 —— 改点东西就会出现在这里（第 0 条是打开时的初始状态）。</Hint>
             ) : (
-              <Hint>灰掉的是已撤销的步骤，点一下就能重做回去。</Hint>
+              <Hint>灰掉的是已撤销的步骤，点一下就能重做回去；第 0 条是初始状态，可点、不可删。</Hint>
             )}
           </Section>
         ) : null}
@@ -341,6 +346,7 @@ export function EditPanel({
              元素在 `Layer.elements` 里。倒序 = 最上层在顶部。
              ⚠️ 组里的元素（组内元素）这一版还不在清单里 —— 那要递归展开，属第二步。 */}
         {tool === 'layers' ? (
+          <div className="ui-layer-page">
           <Section title="图层" icon={<IconLayers />} count={layout.doc.layers.length} collapsible={false}>
             {/* ⭐ 新建图层：追加到最上层并选中它。
                 ⚠️ 这建的是**图层**（画布的孩子）；"新增元素"在各自的工具页里（进第一个图层）。 */}
@@ -353,6 +359,7 @@ export function EditPanel({
               {[...layout.doc.layers].reverse().map((L) => (
                 <div key={L.id} className={`ui-layer-block${L.id === currentLayerId ? ' is-current' : ''}`}>
                   <ListItem active={selectedLayer === L.id} onClick={() => onSelectLayer(L.id)}>
+                    <LayerThumb layer={L} doc={layout.doc} assets={layout.assets} baseCss={baseCss} />
                     <span className="layer-name layer-name-layer">图层 · {L.id}</span>
                     <span className="ui-layer-actions">
                       {/* ⭐ **显示 / 锁定 就摆在这一行**（像 PS 的图层行），不藏在属性页里 */}
@@ -378,6 +385,7 @@ export function EditPanel({
               ))}
             </div>
           </Section>
+          </div>
         ) : null}
 
         {/* ── 这一页的字段（页内小节不折叠 —— 页本身就是"一次只看一类"）── */}

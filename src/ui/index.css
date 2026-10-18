@@ -2067,6 +2067,52 @@ html, body, #root {
   border-radius: var(--radius-sm);
 }
 
+/*
+ * 图层页：这一页**只有**清单，所以让正文不滚、清单撑满面板；
+ * 滚动条只在图层真的多到装不下时才出现。
+ * （历史页仍用上面的 216px 限高 —— 它下面还有说明文字。）
+ */
+.ui-panel-body--fill {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.ui-layer-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ui-layer-page > .ui-section {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+.ui-layer-page .ui-layer-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
+/* 图层缩略图：只读 iframe，按画布比例 scale 到行内 */
+.ui-layer-thumb {
+  flex: none;
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+}
+.ui-layer-thumb iframe {
+  display: block;
+  border: 0;
+  pointer-events: none;
+  transform-origin: top left;
+  background: transparent;
+}
+
 /* 图层块 = 图层那一行 + 它下面缩进的元素行（结构：画布 → 图层 → 元素） */
 .ui-layer-block + .ui-layer-block {
   margin-top: 3px;
@@ -2166,13 +2212,25 @@ html, body, #root {
   opacity: 0.45;
 }
 /* 行内动作：平时藏起来，hover / 选中才出现 —— 一屏 18×3 个按钮太吵 */
+/* ⚠️ 用绝对定位浮在名字上，不占横向宽度 —— 否则加了缩略图后图层名会被挤成省略号 */
 .ui-layer-actions {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
   display: flex;
   align-items: center;
   gap: 1px;
   flex: none;
+  padding-left: 10px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(to right, transparent, var(--bg-hover) 22%);
   opacity: 0;
   transition: opacity 0.12s ease;
+}
+.ui-list-item.active .ui-layer-actions {
+  background: linear-gradient(to right, transparent, var(--accent-light) 22%);
 }
 .ui-list-item:hover .ui-layer-actions,
 .ui-list-item.active .ui-layer-actions {
@@ -2344,8 +2402,9 @@ html, body, #root {
   color: var(--danger);
 }
 
-/* 列表项（图层清单）：横向排布 = 眼睛 + 名字 */
+/* 列表项（图层清单）：横向排布 = 缩略图 + 眼睛 + 名字 */
 .ui-list-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
