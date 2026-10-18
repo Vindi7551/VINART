@@ -52,7 +52,7 @@ export function LayerThumb({
   );
 
   return (
-    <span className="ui-layer-thumb" style={{ width: THUMB_W, height: th }} title={`图层 · ${layer.id}`}>
+    <span className="ui-layer-thumb" style={{ width: THUMB_W, height: th }} title={`图层 · ${layer.name ?? layer.id}`}>
       <iframe
         srcDoc={html}
         sandbox="allow-same-origin"

@@ -201,9 +201,21 @@ function textFrameFields(): Field[] {
   ];
 }
 
-/** 旋转 / 不透明度 —— 任何节点都有 */
+/** 旋转 / 不透明度 / 显示名 —— 任何节点都有 */
 function commonFields(): Field[] {
   return [
+    {
+      path: 'name',
+      label: '名称',
+      group: '名称',
+      kind: { kind: 'text' },
+      get: (n) => n.name ?? '',
+      set: (n, v) => {
+        const s = String(v ?? '').trim();
+        if (s) n.name = s;
+        else delete n.name;
+      },
+    },
     num('transform.rotate', '旋转', '变换', (n) => n.transform?.rotate, (n, v) => {
       n.transform = { ...(n.transform ?? {}), rotate: v };
     }, { step: 0.5, suffix: '°' }),
@@ -856,6 +868,18 @@ export interface LayerField {
  */
 export function fieldsForLayer(): LayerField[] {
   return [
+    {
+      path: 'name',
+      label: '名称',
+      group: '名称',
+      kind: { kind: 'text' },
+      get: (l) => l.name ?? '',
+      set: (l, v) => {
+        const s = String(v ?? '').trim();
+        if (s) l.name = s;
+        else delete l.name;
+      },
+    },
     {
       path: 'visible',
       label: '显示',

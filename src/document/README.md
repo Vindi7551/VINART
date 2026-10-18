@@ -12,11 +12,15 @@
 
 ```ts
 DesignDocument = { canvas: Canvas, layers: Layer[] }                   // layers 是【图层】，不是元素
-Layer          = { id, …效果, elements: ElementNode[] }                // ⚠️ 没有 rect、没有 background
+Layer          = { id, name?, …效果, elements: ElementNode[] }          // ⚠️ 没有 rect、没有 background
 ElementNode    = LeafNode | GroupNode                                  // 图层的孩子 = 元素
 LeafNode       = TextNode | ImageNode | SvgNode | ShapeNode
-GroupNode      = { type: 'group', id, …效果, elements: ElementNode[] } // 组的孩子 = 组内元素
+GroupNode      = { type: 'group', id, name?, …效果, elements: ElementNode[] } // 组的孩子 = 组内元素
 ```
+
+> **显示名 `name`**：图层的 `Layer.name?`、元素的 `VisualBase.name?` 只是给人看的标签。
+> 省略 / 空 ⇒ UI 回退显示 `id`；它**不参与身份、坐标、渲染和 `data-*`**，
+> 改它不需要重新 emit 画布（只影响面板/图层列表的显示）。
 
 ⚠️ **图层和元素是父子，不是平级**：`layers` 的孩子一律是**图层**，元素在 `Layer.elements` 里；
 组（`GroupNode`）是**元素里的一类**，它的孩子也在这同一个 `elements` 字段里（组里还能再套组）。

@@ -290,6 +290,12 @@ export interface Shadow {
  * 组能对**一整组**做同样的事（整体旋转、整体淡出、整体打滤镜……）。
  */
 export interface VisualBase {
+  /**
+   * **显示名**（给人看的标签，不是身份）。
+   * 省略 / 空 ⇒ UI 回退显示 `id`。改它**不影响** `id` / DOM 的 `data-*` / 选中 / 渲染。
+   */
+  name?: string;
+
   /** 视觉变换（旋转 / 斜切 / 非等比缩放 + 支点）。省略 = 不动它 —— 见 `Transform` */
   transform?: Transform;
 
@@ -792,6 +798,8 @@ export interface LayerEffects {
  */
 export interface Layer extends LayerEffects {
   id: string;
+  /** **显示名**（同 `VisualBase.name`）：省略 / 空 ⇒ UI 回退显示 `id`；不参与渲染与身份 */
+  name?: string;
   /**
    * **显示 / 隐藏**。省略 = 显示。
    *

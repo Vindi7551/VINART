@@ -472,7 +472,11 @@ export function createVocabEditor(
     if (patchTimer) clearTimeout(patchTimer);
     patchTimer = setTimeout(() => {
       patchTimer = undefined;
-      if (patchId) submit(patchId, `改 ${patchPath}`, `patch:${patchId}:${patchPath}`);
+      if (patchId) {
+        // 显示名改名在历史里记成“重命名”，别记成“改 name”
+        const label = patchPath === 'name' ? '重命名' : `改 ${patchPath}`;
+        submit(patchId, label, `patch:${patchId}:${patchPath}`);
+      }
       patchId = null;
     }, PATCH_DEBOUNCE);
   }

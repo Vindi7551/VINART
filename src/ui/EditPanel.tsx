@@ -199,7 +199,10 @@ export function EditPanel({
    */
   const [expandedLayers, setExpandedLayers] = useState<Set<string>>(() => new Set());
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
-  const [layerMenu, setLayerMenu] = useState<{ x: number; y: number; layerId: string } | null>(null);
+  const [rowMenu, setRowMenu] = useState<{ x: number; y: number; id: string; kind: 'layer' | 'element' } | null>(null);
+  /** 正在行内改名的节点（图层/元素/组） */
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
 
   const toggleLayer = (id: string) =>
     setExpandedLayers((prev) => {
@@ -215,6 +218,45 @@ export function EditPanel({
       else next.add(id);
       return next;
     });
+
+  /** 开始行内改名；输入框初值是当前 `name`（空 = 显示 id） */
+  const beginRename = (id: string, kind: 'layer' | 'element') => {
+    const target =
+      kind === 'layer' ? layout.doc.layers.find((l) => l.id === id) : findElement(layout.doc, id);
+    if (!target) return;
+    setRenamingId(id);
+    setRenameValue(target.name ?? '');
+    setRowMenu(null);
+  };
+  /** 提交：空串也交给字段 setter —— 它会把 `name` 删掉，UI 回退显示 id */
+  const commitRename = () => {
+    if (!renamingId) return;
+    const id = renamingId;
+    setRenamingId(null);
+    onLayerPatch(id, 'name', renameValue.trim());
+  };
+  const cancelRename = () => setRenamingId(null);
+
+  const renameInput = () => (
+    <input
+      className="ui-rename-input"
+      autoFocus
+      value={renameValue}
+      placeholder="显示名（空 = 用 id）"
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => setRenameValue(e.target.value)}
+      onBlur={commitRename}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commitRename();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          cancelRename();
+        }
+      }}
+    />
+  );
 
   /** 选中元素时**自动展开**它所在的图层和沿途的组，把它露出来；之后保持直到手动收起 */
   useEffect(() => {
@@ -286,6 +328,7 @@ export function EditPanel({
    * ⚠️ 只是**面板**展开；画布上"点空白选中某个组"仍只认直接待在图层里的组
    *    （内层组靠点它的成员来选，走 `outermostGroupOf`）。
    * ⚠️ 组默认收起；**点组行**才展开它自己的子元素（图层是右键“元素列表”展开）。
+   * ⚠️ 元素/组右键 → “重命名”，和图层行同一套行内输入。
    */
   const elementRows = (els: ElementNode[], depth: number): ReactNode =>
     [...els].reverse().map((e) => {
@@ -299,10 +342,20 @@ export function EditPanel({
               onSelectLayer(e.id);
               if (isGroup) toggleGroup(e.id);
             }}
+            onContextMenu={(ev) => {
+              ev.preventDefault();
+              setRowMenu({ x: ev.clientX, y: ev.clientY, id: e.id, kind: 'element' });
+            }}
           >
             <span className="layer-name layer-name-el" style={{ paddingLeft: 12 + depth * 12 }}>
               {isGroup ? <span className={`ui-group-caret${open ? ' open' : ''}`}>▸</span> : null}
-              {TYPE_NAMES[e.type] ?? e.type} · {e.id}
+              {renamingId === e.id ? (
+                renameInput()
+              ) : (
+                <>
+                  {TYPE_NAMES[e.type] ?? e.type} · {e.name ?? e.id}
+                </>
+              )}
             </span>
             {isGroup ? <span className="ui-layer-count">{e.elements.length}</span> : null}
             <span className="ui-layer-actions">
@@ -320,7 +373,13 @@ export function EditPanel({
     <Panel>
       <PanelHeader
         title="版式编辑"
-        subtitle={node ? `${TYPE_NAMES[node.type] ?? node.type} · ${node.id}` : toolDef?.label}
+        subtitle={
+          node
+            ? `${TYPE_NAMES[node.type] ?? node.type} · ${node.name ?? node.id}`
+            : layer
+              ? `图层 · ${layer.name ?? layer.id}`
+              : toolDef?.label
+        }
       />
       <PanelBody className={tool === 'layers' ? 'ui-panel-body--fill' : undefined}>
         {/* ⭐ 画面上选了字 ⇒ 最上面先摆"选中的字"。
@@ -447,11 +506,15 @@ export function EditPanel({
                     onClick={() => onSelectLayer(L.id)}
                     onContextMenu={(e) => {
                       e.preventDefault();
-                      setLayerMenu({ x: e.clientX, y: e.clientY, layerId: L.id });
+                      setRowMenu({ x: e.clientX, y: e.clientY, id: L.id, kind: 'layer' });
                     }}
                   >
                     <LayerThumb layer={L} doc={layout.doc} assets={layout.assets} baseCss={baseCss} />
-                    <span className="layer-name layer-name-layer">图层 · {L.id}</span>
+                    {renamingId === L.id ? (
+                      renameInput()
+                    ) : (
+                      <span className="layer-name layer-name-layer">图层 · {L.name ?? L.id}</span>
+                    )}
                     <span className="ui-layer-count">{L.elements.length}</span>
                     <span className="ui-layer-actions">
                       {/* ⭐ **显示 / 锁定 就摆在这一行**（像 PS 的图层行），不藏在属性页里 */}
@@ -474,21 +537,36 @@ export function EditPanel({
                 </div>
               ))}
             </div>
-            {layerMenu ? (
+            {rowMenu ? (
               <ContextMenu
-                x={layerMenu.x}
-                y={layerMenu.y}
-                items={[
-                  {
-                    key: 'elements',
-                    label: expandedLayers.has(layerMenu.layerId) ? '收起元素列表' : '元素列表',
-                    onPick: () => {
-                      toggleLayer(layerMenu.layerId);
-                      setLayerMenu(null);
-                    },
-                  },
-                ]}
-                onClose={() => setLayerMenu(null)}
+                x={rowMenu.x}
+                y={rowMenu.y}
+                items={
+                  rowMenu.kind === 'layer'
+                    ? [
+                        {
+                          key: 'elements',
+                          label: expandedLayers.has(rowMenu.id) ? '收起元素列表' : '元素列表',
+                          onPick: () => {
+                            toggleLayer(rowMenu.id);
+                            setRowMenu(null);
+                          },
+                        },
+                        {
+                          key: 'rename',
+                          label: '重命名',
+                          onPick: () => beginRename(rowMenu.id, 'layer'),
+                        },
+                      ]
+                    : [
+                        {
+                          key: 'rename',
+                          label: '重命名',
+                          onPick: () => beginRename(rowMenu.id, 'element'),
+                        },
+                      ]
+                }
+                onClose={() => setRowMenu(null)}
               />
             ) : null}
           </Section>
