@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { fieldsFor, fieldsForLayer, type Field, type SelectionSnapshot } from '../editor/inspector';
-import { findElement, findLayer, type ElementNode } from '../document/vocabulary';
+import { findElement, findLayer, type DesignDocument, type ElementNode } from '../document/vocabulary';
 import { LayerThumb, baseCssOf } from './LayerThumb';
 import { SelectionStylePanel } from './SelectionStylePanel';
 import { Button, ContextMenu, Field as FieldRow, FieldGrid, Hint, ListItem, Panel, PanelBody, PanelHeader, Row, Section } from './primitives';
@@ -73,6 +73,31 @@ const TYPE_NAMES: Record<string, string> = {
   svg: '图标',
   group: '组',
 };
+
+/**
+ * 选中项在文档里的位置：所在图层 + 从图层往下的**祖先组**。
+ * 选中元素时用它自动展开图层和沿途的组，把选中的那行露出来。
+ * 选中图层本身 ⇒ groupIds 为空；选中组本身 ⇒ 只展开它的祖先，不展开它自己。
+ */
+function pathOfElement(doc: DesignDocument, id: string): { layerId: string; groupIds: string[] } | null {
+  for (const layer of doc.layers) {
+    if (layer.id === id) return { layerId: layer.id, groupIds: [] };
+    const found = findInElements(layer.elements, id, []);
+    if (found) return { layerId: layer.id, groupIds: found };
+  }
+  return null;
+}
+
+function findInElements(els: ElementNode[], id: string, ancestors: string[]): string[] | null {
+  for (const e of els) {
+    if (e.id === id) return ancestors;
+    if (e.type === 'group') {
+      const found = findInElements(e.elements, id, [...ancestors, e.id]);
+      if (found) return found;
+    }
+  }
+  return null;
+}
 
 /**
  * 小节图标（这一页里的**字段分类**）。
@@ -168,6 +193,51 @@ export function EditPanel({
   const baseCss = useMemo(() => baseCssOf(layout.html), [layout.html]);
   /** 历史行的右键菜单（x/y = 屏幕坐标；index = 哪一步） */
   const [historyMenu, setHistoryMenu] = useState<{ x: number; y: number; index: number } | null>(null);
+  /**
+   * 图层页的展开状态（**纯 UI**，不持久化；刷新恢复全收起）。
+   * 图层由右键菜单“元素列表”展开；组由**点击组行**展开。
+   */
+  const [expandedLayers, setExpandedLayers] = useState<Set<string>>(() => new Set());
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
+  const [layerMenu, setLayerMenu] = useState<{ x: number; y: number; layerId: string } | null>(null);
+
+  const toggleLayer = (id: string) =>
+    setExpandedLayers((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const toggleGroup = (id: string) =>
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  /** 选中元素时**自动展开**它所在的图层和沿途的组，把它露出来；之后保持直到手动收起 */
+  useEffect(() => {
+    if (!selectedLayer) return;
+    const path = pathOfElement(layout.doc, selectedLayer);
+    if (!path) return;
+    // ⚠️ 选中**图层本身**只选中、不展开 —— 元素列表只由右键“元素列表”打开。
+    //    只有选中图层里的**元素/组**时才自动展开，把它露出来。
+    if (path.layerId === selectedLayer) return;
+    setExpandedLayers((prev) => (prev.has(path.layerId) ? prev : new Set(prev).add(path.layerId)));
+    if (path.groupIds.length) {
+      setExpandedGroups((prev) => {
+        let next: Set<string> | null = null;
+        for (const id of path.groupIds) {
+          if (!prev.has(id)) {
+            if (!next) next = new Set(prev);
+            next.add(id);
+          }
+        }
+        return next ?? prev;
+      });
+    }
+  }, [selectedLayer]);
   /** 历史里**当前所在那一步** = 最后一个没被撤销的条目（第 0 条 = 初始状态） */
   const currentStep = history.reduce((cur, h) => (h.undone ? cur : h.index), 0);
   const allFields = node ? fieldsFor(node, layout.doc.canvas) : [];
@@ -215,23 +285,36 @@ export function EditPanel({
    * ⚠️ 倒序：数组后面的画在上面 ⇒ 清单顶部 = 最上层（和图层行一致）。
    * ⚠️ 只是**面板**展开；画布上"点空白选中某个组"仍只认直接待在图层里的组
    *    （内层组靠点它的成员来选，走 `outermostGroupOf`）。
+   * ⚠️ 组默认收起；**点组行**才展开它自己的子元素（图层是右键“元素列表”展开）。
    */
   const elementRows = (els: ElementNode[], depth: number): ReactNode =>
-    [...els].reverse().map((e) => (
-      <div key={e.id}>
-        <ListItem active={selectedLayer === e.id} onClick={() => onSelectLayer(e.id)}>
-          <span className="layer-name layer-name-el" style={{ paddingLeft: 12 + depth * 12 }}>
-            {TYPE_NAMES[e.type] ?? e.type} · {e.id}
-          </span>
-          <span className="ui-layer-actions">
-            {layerAction('上移一个', <IconUp />, () => onSignal({ type: 'up', id: e.id }))}
-            {layerAction('下移一个', <IconDown />, () => onSignal({ type: 'down', id: e.id }))}
-            {layerAction('删除', <IconTrash />, () => onSignal({ type: 'remove', id: e.id }))}
-          </span>
-        </ListItem>
-        {e.type === 'group' ? elementRows(e.elements, depth + 1) : null}
-      </div>
-    ));
+    [...els].reverse().map((e) => {
+      const isGroup = e.type === 'group';
+      const open = isGroup && expandedGroups.has(e.id);
+      return (
+        <div key={e.id}>
+          <ListItem
+            active={selectedLayer === e.id}
+            onClick={() => {
+              onSelectLayer(e.id);
+              if (isGroup) toggleGroup(e.id);
+            }}
+          >
+            <span className="layer-name layer-name-el" style={{ paddingLeft: 12 + depth * 12 }}>
+              {isGroup ? <span className={`ui-group-caret${open ? ' open' : ''}`}>▸</span> : null}
+              {TYPE_NAMES[e.type] ?? e.type} · {e.id}
+            </span>
+            {isGroup ? <span className="ui-layer-count">{e.elements.length}</span> : null}
+            <span className="ui-layer-actions">
+              {layerAction('上移一个', <IconUp />, () => onSignal({ type: 'up', id: e.id }))}
+              {layerAction('下移一个', <IconDown />, () => onSignal({ type: 'down', id: e.id }))}
+              {layerAction('删除', <IconTrash />, () => onSignal({ type: 'remove', id: e.id }))}
+            </span>
+          </ListItem>
+          {e.type === 'group' && open ? elementRows(e.elements, depth + 1) : null}
+        </div>
+      );
+    });
 
   return (
     <Panel>
@@ -358,9 +441,18 @@ export function EditPanel({
             <div className="ui-layer-list">
               {[...layout.doc.layers].reverse().map((L) => (
                 <div key={L.id} className={`ui-layer-block${L.id === currentLayerId ? ' is-current' : ''}`}>
-                  <ListItem active={selectedLayer === L.id} onClick={() => onSelectLayer(L.id)}>
+                  <ListItem
+                    className="ui-layer-row"
+                    active={selectedLayer === L.id}
+                    onClick={() => onSelectLayer(L.id)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setLayerMenu({ x: e.clientX, y: e.clientY, layerId: L.id });
+                    }}
+                  >
                     <LayerThumb layer={L} doc={layout.doc} assets={layout.assets} baseCss={baseCss} />
                     <span className="layer-name layer-name-layer">图层 · {L.id}</span>
+                    <span className="ui-layer-count">{L.elements.length}</span>
                     <span className="ui-layer-actions">
                       {/* ⭐ **显示 / 锁定 就摆在这一行**（像 PS 的图层行），不藏在属性页里 */}
                       {layerAction(
@@ -376,14 +468,29 @@ export function EditPanel({
                       {layerAction('删除', <IconTrash />, () => onSignal({ type: 'remove', id: L.id }))}
                     </span>
                   </ListItem>
-                  {/* ⭐ **组内元素递归展开**：组里还能是组，一层层摊开。
-                      缩进按深度算（`paddingLeft`），不新增 CSS 类。
-                      ⚠️ 只在面板里展开 —— 画布上"点空白选中某个组"仍只认直接待在图层里的组
-                         （内层组靠点它的成员来选，走 `outermostGroupOf`）。 */}
-                  {elementRows(L.elements, 1)}
+                  {/* ⭐ 图层默认**不展开**；右键“元素列表”才把这一层的元素放出来。
+                      组再各自点开（见 `elementRows` 的 `expandedGroups`）。 */}
+                  {expandedLayers.has(L.id) ? elementRows(L.elements, 1) : null}
                 </div>
               ))}
             </div>
+            {layerMenu ? (
+              <ContextMenu
+                x={layerMenu.x}
+                y={layerMenu.y}
+                items={[
+                  {
+                    key: 'elements',
+                    label: expandedLayers.has(layerMenu.layerId) ? '收起元素列表' : '元素列表',
+                    onPick: () => {
+                      toggleLayer(layerMenu.layerId);
+                      setLayerMenu(null);
+                    },
+                  },
+                ]}
+                onClose={() => setLayerMenu(null)}
+              />
+            ) : null}
           </Section>
           </div>
         ) : null}

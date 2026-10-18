@@ -2096,6 +2096,12 @@ html, body, #root {
   max-height: none;
 }
 
+/* 图层行比元素/组行高：给缩略图留出能看清的高度；元素/组行保持紧凑 */
+.ui-layer-row {
+  min-height: 64px;
+  padding: 6px 8px;
+}
+
 /* 图层缩略图：只读 iframe，按画布比例 scale 到行内 */
 .ui-layer-thumb {
   flex: none;
@@ -2111,6 +2117,31 @@ html, body, #root {
   pointer-events: none;
   transform-origin: top left;
   background: transparent;
+}
+
+/* 图层 / 组的**直接**子元素数量（不递归） */
+.ui-layer-count {
+  flex: none;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
+  color: var(--text-muted);
+  background: var(--bg-hover);
+}
+
+/* 组行的展开箭头：点组行切换；和图层行的右键菜单展开是两套 */
+.ui-group-caret {
+  display: inline-block;
+  width: 10px;
+  margin-right: 2px;
+  color: var(--text-muted);
+  transition: transform 0.12s ease;
+}
+.ui-group-caret.open {
+  transform: rotate(90deg);
 }
 
 /* 图层块 = 图层那一行 + 它下面缩进的元素行（结构：画布 → 图层 → 元素） */

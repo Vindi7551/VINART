@@ -271,11 +271,13 @@ export function Button({
 export function ListItem({
   active,
   onClick,
+  onContextMenu,
   className,
   children,
 }: {
   active?: boolean;
   onClick?: () => void;
+  onContextMenu?: (e: React.MouseEvent<HTMLDivElement>) => void;
   className?: string;
   children: ReactNode;
 }) {
@@ -283,6 +285,7 @@ export function ListItem({
     <div
       className={`ui-list-item${active ? ' active' : ''}${className ? ` ${className}` : ''}`}
       onClick={onClick}
+      onContextMenu={onContextMenu}
     >
       {children}
     </div>
