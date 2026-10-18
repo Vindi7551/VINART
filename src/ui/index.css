@@ -2098,7 +2098,7 @@ html, body, #root {
 
 /* 图层行比元素/组行高：给缩略图留出能看清的高度；元素/组行保持紧凑 */
 .ui-layer-row {
-  min-height: 64px;
+  min-height: 88px;
   padding: 6px 8px;
 }
 

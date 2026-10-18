@@ -17,7 +17,7 @@ import { emitLayerHtml } from '../render/vocabulary/emit';
  *    每次渲染都重新 emit，靠 `iframe.srcDoc` 的字符串比较决定要不要真正重载。
  */
 
-const THUMB_W = 80;
+const THUMB_W = 112;
 
 /** 从主文档 HTML 里取 `<style>`（基础样式 + extraCss + @font-face） */
 export function baseCssOf(html: string): string {
