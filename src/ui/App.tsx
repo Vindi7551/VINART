@@ -3,6 +3,7 @@ import { Header } from './Header';
 import { PreviewPanel } from './PreviewPanel';
 import { ConversationPanel } from './ConversationPanel';
 import { ArtifactGallery, artifactDataUrl } from './ArtifactGallery';
+import { applyPatches, type DocPatch } from '../document/patch';
 import { SessionListPanel } from './SessionListPanel';
 import { DirectoryBrowser } from './DirectoryBrowser';
 import { EditPanel } from './EditPanel';
@@ -515,16 +516,30 @@ export function App() {
 
   /**
    * 工具**就地**改当前版式（doc-patch）：
-   * - 不写盘、不重挂编辑器；DOM 由 PreviewPanel 的同步 effect（updateDoc）更新；
+   * - `patches`：应用到当前内存 doc → 保留用户尚未自动保存的改动；
+   * - `doc`：整体替换（sketch_plan 已有版式重写）；
+   * - 不重挂编辑器；DOM 由 PreviewPanel 的同步 effect 更新；
    * - 这里只换内存 doc + 触发自动保存。
-   * ⚠️ 第一拍沿用 updateDoc 的 resetStack 语义；AI 修改进撤销栈是第二拍。
    */
-  function applyDocPatch(data: { layout?: unknown; doc?: unknown }) {
+  function applyDocPatch(data: { layout?: unknown; doc?: unknown; patches?: unknown }) {
     const name = typeof data.layout === 'string' ? data.layout : '';
-    const doc = data.doc as PreviewData['doc'] | undefined;
     const cur = layoutRef.current;
-    if (!cur || !doc || cur.name !== name) return;
-    commitLayout({ ...cur, doc });
+    if (!cur || cur.name !== name) return;
+
+    let nextDoc: PreviewData['doc'] | null = null;
+    if (Array.isArray(data.patches)) {
+      const r = applyPatches(cur.doc, data.patches as DocPatch[]);
+      if (r.errors.length) {
+        console.warn('[doc-patch] 应用失败', r.errors);
+        return;
+      }
+      nextDoc = r.doc;
+    } else if (data.doc && typeof data.doc === 'object') {
+      nextDoc = data.doc as PreviewData['doc'];
+    }
+    if (!nextDoc) return;
+
+    commitLayout({ ...cur, doc: nextDoc });
     scheduleAutoSave();
   }
 

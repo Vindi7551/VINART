@@ -28,7 +28,8 @@
 - `patch_doc(patches)`：按节点 id **批量**改颜色/字体/素材引用。白名单：
   `fill` / `stroke.paint` / `fontFamily` / `fontSizePx` / `weight` / `italic` /
   `letterSpacing` / `lineHeight` / `asset`（仅 image/svg）。全部合法才应用；任何一条错就整批不应用，返回 errors。
-  不写盘、不发 artifacts：App 把结果就地应用到当前 doc（编辑器不重挂），自动保存再落盘。
+  合法后会**立刻写盘**（同一轮 `get_design` 能读到新值），并给 App 发 `doc-patch { patches }`；
+  App 把 patches 应用到当前 doc（保留用户未保存的编辑），编辑器不重挂。
 - `generate_assets(images?, icons?, productPath?)`：生成素材文件，**不改 doc、不发 artifacts**。
   - `images`：商品/场景图，走生图模型。每张 `{ file, size, prompt, references }`；
     `references` 用 `@product`（商品实物照）/ `@sketch` / 文件名；

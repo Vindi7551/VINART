@@ -317,12 +317,12 @@ AI 的上下文和未来工具都建立在"当前 doc"上，但现在：
 - `sketch_plan`：
   - 新建 layout → `artifacts { layout, created, open: !hadActive }`；
   - 已有版式更新 → `doc-patch { layout, doc }`；
-- `patch_doc`：**不写盘**，发 `doc-patch { layout, doc }`；App 应用到当前内存 doc +
-  `commitLayout` + 自动保存；`PreviewPanel` 的 `updateDoc` 就地更新 DOM，不重挂编辑器；
+- `patch_doc`：**写盘**（同一轮 `get_design` 立刻一致）+ 发 `doc-patch { patches }`；
+  App 把 patches 应用到**当前内存 doc**（保留用户尚未自动保存的改动）+ `commitLayout` +
+  自动保存；`PreviewPanel` 就地更新 DOM，不重挂编辑器；
 - `artifacts.open=false` 只刷画廊，不抢预览；`open=true` 才 `openLayoutByName`；
-- 第一拍沿用 `updateDoc` 的 `resetStack` 语义（AI 修改会清空撤销历史）；
-- 第二拍：`VocabEditorHandle.applyExternalDoc(next, label)` 用 `pushCommand` 追加进撤销栈
-  （不 reset）；`PreviewPanel` 外部 doc 改走它，DOM 仍整层重发。已实现。
+- `VocabEditorHandle.applyExternalDoc(next, label)` 用 `pushCommand` 追加进撤销栈
+  （不 reset）；`PreviewPanel` 外部 doc 改走它，DOM 仍整层重发。AI 修改可 Ctrl+Z；
 - tests 85。
 
 

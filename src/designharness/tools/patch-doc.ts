@@ -1,114 +1,28 @@
 /**
- * `patch_doc` 工具 —— 按节点 id 批量 patch 当前版式 doc 的**颜色/字体**。
- *
- * 第一版白名单刻意很窄（只颜色/字体），"设计风格"交给后续 skill；
- * 多次试验后再逐步开放 radius/shadow/opacity 等。
+ * `patch_doc` 工具 —— 按节点 id 批量 patch 当前版式 doc 的**颜色/字体/素材引用**。
  *
  * 语义：
- * - 全部 patch 通过 → 写 doc.json，发 artifacts；
+ * - 全部 patch 通过 → **立刻写盘**（AI 回读一致）+ 发 `doc-patch { patches }`；
  * - 任何一条失败 → **整批不写**，返回 errors（AI 改完再来）。
+ *
+ * ⚠️ 发的是 **patches**（不是整份 doc）：App 把它应用到当前内存 doc，
+ *    这样用户编辑器里尚未自动保存的改动不会被工具按旧盘算出的整份 doc 覆盖。
+ * ⚠️ 写盘仍按旧盘算：盘上暂时没有用户未保存的那一下；自动保存后一致。
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { DesignDocument, ElementNode } from '../../document/vocabulary';
-import { findElement } from '../../document/vocabulary';
+import type { DesignDocument } from '../../document/vocabulary';
+import {
+  applyPatches,
+  allowedPatchPaths,
+  type DocPatch,
+  type PatchResult,
+} from '../../document/patch';
 import { getWorkDir } from '../session/transcript';
 import type { AgentTool } from '../subagent/types';
 
-export interface DocPatch {
-  id: string;
-  path: string;
-  value: unknown;
-}
-
-export interface PatchResult {
-  doc: DesignDocument;
-  applied: number;
-  errors: string[];
-}
-
-/** 白名单：颜色/字体 + 素材引用（image/svg 的 asset 文件名） */
-const ALLOWED = new Map<string, (v: unknown) => boolean>([
-  ['fill', (v) => typeof v === 'string' || (Array.isArray(v) && v.every((x) => typeof x === 'string'))],
-  ['stroke.paint', (v) => typeof v === 'string' || (Array.isArray(v) && v.every((x) => typeof x === 'string'))],
-  ['fontFamily', (v) => typeof v === 'string'],
-  ['fontSizePx', (v) => typeof v === 'number' && Number.isFinite(v) && v > 0],
-  ['weight', (v) => typeof v === 'number' && Number.isFinite(v)],
-  ['italic', (v) => typeof v === 'boolean'],
-  ['letterSpacing', (v) => typeof v === 'number' && Number.isFinite(v)],
-  ['lineHeight', (v) => typeof v === 'number' && Number.isFinite(v) && v > 0],
-  ['asset', (v) => typeof v === 'string' && v.trim().length > 0],
-]);
-
-export function allowedPatchPaths(): string[] {
-  return [...ALLOWED.keys()];
-}
-
-/**
- * 纯函数：克隆 doc，逐条应用 patch。**不写盘**。
- * 返回的 doc 只在 errors 为空时才可以落盘。
- */
-export function applyPatches(doc: DesignDocument, patches: DocPatch[]): PatchResult {
-  const next = structuredClone(doc) as DesignDocument;
-  const errors: string[] = [];
-  let applied = 0;
-
-  if (!Array.isArray(patches)) {
-    return { doc: next, applied, errors: ['patches 必须是数组'] };
-  }
-
-  for (const [i, p] of patches.entries()) {
-    if (!p || typeof p !== 'object') {
-      errors.push(`patches[${i}] 不是对象`);
-      continue;
-    }
-    const id = (p as { id?: unknown }).id;
-    const path = (p as { path?: unknown }).path;
-    const value = (p as { value?: unknown }).value;
-    if (typeof id !== 'string' || !id) {
-      errors.push(`patches[${i}].id 缺失`);
-      continue;
-    }
-    if (typeof path !== 'string' || !path) {
-      errors.push(`patches[${i}].path 缺失`);
-      continue;
-    }
-    const check = ALLOWED.get(path);
-    if (!check) {
-      errors.push(`patches[${i}].path '${path}' 不在白名单`);
-      continue;
-    }
-    if (!check(value)) {
-      errors.push(`patches[${i}] 的值类型不对（${path}）`);
-      continue;
-    }
-    const node = findElement(next, id) as ElementNode | null;
-    if (!node) {
-      errors.push(`找不到节点 '${id}'`);
-      continue;
-    }
-    if (node.type === 'group') {
-      errors.push(`节点 '${id}' 是 group，不支持颜色/字体 patch`);
-      continue;
-    }
-    if (path === 'asset' && node.type !== 'image' && node.type !== 'svg') {
-      errors.push(`节点 '${id}' 是 ${node.type}，只有 image/svg 能改 asset`);
-      continue;
-    }
-    if (path === 'stroke.paint') {
-      (node as { stroke?: Record<string, unknown> }).stroke = {
-        ...((node as { stroke?: Record<string, unknown> }).stroke ?? {}),
-        paint: value,
-      };
-    } else {
-      (node as unknown as Record<string, unknown>)[path] = value;
-    }
-    applied++;
-  }
-
-  return { doc: next, applied, errors };
-}
+export { applyPatches, allowedPatchPaths, type DocPatch, type PatchResult };
 
 export function createPatchDocTool(config: { sessionId: string }): AgentTool {
   return {
@@ -162,9 +76,18 @@ export function createPatchDocTool(config: { sessionId: string }): AgentTool {
         };
       }
 
-      // 不写盘：由 App 应用到当前内存 doc + 编辑器 DOM，自动保存再落盘。
-      // 这样不会重挂编辑器，也不会和 App 的自动保存互相覆盖。
-      ctx.onEvent?.({ kind: 'doc-patch', layout, doc: r.doc });
+      // 立刻写盘：同一轮里 get_design / buildLayoutNote 立刻能读到新值。
+      try {
+        writeFileSync(p, JSON.stringify(r.doc, null, 2), 'utf8');
+      } catch (e) {
+        return {
+          content: `ERROR: 写 doc.json 失败：${e instanceof Error ? e.message : String(e)}`,
+          isError: true,
+        };
+      }
+
+      // 只发 patches：App 应用到当前内存 doc，保留用户尚未自动保存的改动。
+      ctx.onEvent?.({ kind: 'doc-patch', layout, patches });
       return { content: JSON.stringify({ ok: true, layout, applied: r.applied, errors: [] }) };
     },
   };
