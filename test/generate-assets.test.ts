@@ -11,6 +11,8 @@ describe('sanitizeSvg', () => {
     expect(r.errors).toEqual([]);
     expect(r.ok).toBe(true);
     expect(r.svg.startsWith('<svg')).toBe(true);
+    // 外部 <img src="...svg"> 需要 xmlns，否则浏览器破图
+    expect(r.svg).toContain('xmlns="http://www.w3.org/2000/svg"');
   });
 
   it('拒绝脚本 / 事件 / javascript: / foreignObject / 外链', () => {

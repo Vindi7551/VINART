@@ -30,7 +30,7 @@ export interface IconResult {
  * 线框图标本身是纯 path/stroke，正常不会碰这些。
  */
 export function sanitizeSvg(raw: string): { ok: boolean; svg: string; errors: string[] } {
-  const svg = raw.trim();
+  let svg = raw.trim();
   const errors: string[] = [];
   if (!/^<svg[\s>]/i.test(svg)) errors.push('不是 <svg> 开头');
   if (/<script\b/i.test(svg)) errors.push('包含 <script>');
@@ -39,6 +39,11 @@ export function sanitizeSvg(raw: string): { ok: boolean; svg: string; errors: st
   if (/<foreignObject\b/i.test(svg)) errors.push('包含 <foreignObject>');
   if (/(?:href|src)\s*=\s*["']?\s*(?:https?:)?\/\//i.test(svg)) errors.push('包含外链');
   if (/url\(\s*["']?\s*(?:https?:)?\/\//i.test(svg)) errors.push('包含外链 url()');
+  // ⚠️ emit 把 svg 节点渲染成 `<img src="...svg">`：外部 SVG 作为独立图片解析时
+  //    必须有 xmlns，否则浏览器直接破图（内联 <svg> 才可省略）。
+  if (svg.startsWith('<svg') && !/\sxmlns\s*=/i.test(svg)) {
+    svg = svg.replace(/^<svg\b/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+  }
   return { ok: errors.length === 0, svg, errors };
 }
 
