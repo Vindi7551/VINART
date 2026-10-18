@@ -101,7 +101,9 @@ export type SessionEvent =
       detail: Record<string, unknown>;
     }
   // project 字段仅老数据仍带（2026-10-10 拆除项目层后的读取兼容）——新写入不再产生
-  | { seq?: number; ts: string; kind: 'meta'; title?: string; workDir?: string; project?: string };
+  | { seq?: number; ts: string; kind: 'meta'; title?: string; workDir?: string; project?: string }
+  /** 当前打开的版式（UI 状态；只记最后一次；null = 没有 active） */
+  | { seq?: number; ts: string; kind: 'active-layout'; layout: string | null };
 
 export interface SessionIndexEntry {
   id: string;
@@ -327,6 +329,33 @@ export async function loadTranscript(sessionId: string): Promise<SessionEvent[]>
   const loc = await resolveSessionLocation(sessionId);
   if (!loc) return [];
   return readEvents(loc.file);
+}
+
+/**
+ * 记录当前打开的版式（session meta 的追加事件；只记最后一次）。
+ *
+ * ⚠️ **不创建会话**：文件不存在直接返回 false——「打开一张旧图」不应该凭空建 session。
+ * 会话还不存在时，active 由客户端内存持有，第一次 /chat 再落。
+ */
+export async function setActiveLayout(sessionId: string, layout: string | null): Promise<boolean> {
+  const loc = await resolveSessionLocation(sessionId);
+  if (!loc || !existsSync(loc.file)) return false;
+  await appendEvent(sessionId, {
+    ts: new Date().toISOString(),
+    kind: 'active-layout',
+    layout,
+  });
+  return true;
+}
+
+/** 会话最后一次记录的 active 版式；没有则 null */
+export async function getActiveLayout(sessionId: string): Promise<string | null> {
+  const events = await loadTranscript(sessionId);
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.kind === 'active-layout') return e.layout ?? null;
+  }
+  return null;
 }
 
 /**

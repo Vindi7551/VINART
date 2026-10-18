@@ -189,6 +189,8 @@ export function App() {
           /** 助手消息的整轮耗时（含工具）；老数据无此字段 → 不渲染计时 */
           durationMs?: number;
         }>;
+        /** 服务端 session meta 记录的当前版式（set-active / 上一轮 chat） */
+        activeLayout?: string | null;
       };
       const out: Message[] = [];
       let card: Message | null = null;
@@ -258,6 +260,13 @@ export function App() {
       }
       flush();
       setMessages(out);
+      // 恢复服务端记录的 active：有就打开；没有就空预览（不自动开最近/唯一）
+      const active = data.activeLayout;
+      if (typeof active === 'string' && active) {
+        void openLayoutByName(active, id);
+      } else {
+        commitLayout(null as unknown as PreviewData);
+      }
     } catch {
       /* 忽略 */
     }
@@ -328,11 +337,12 @@ export function App() {
     setSessionId(id);
     setSelectedLayer(null);
     savePendingEnv({});
+    // 先清空；active 由 loadSessionMessages 按服务端记录恢复（没有就保持空）
+    commitLayout(null as unknown as PreviewData);
     await loadSessionMessages(id);
     const wd = await fetchWorkDir(id);
     setWorkDir(wd);
     if (wd) rememberWorkDir(wd); // 自愈燃料
-    commitLayout(null as unknown as PreviewData);
   }, []);
 
   /**
@@ -629,10 +639,11 @@ export function App() {
 
   /** 打开产物:fetch data(会话工作目录模式带 session query) */
   const handleOpenArtifact = useCallback(
-    async (url: string, name: string, _dir: string) => {
+    async (url: string, name: string, _dir: string, sidOverride?: string) => {
+      const sid = sidOverride ?? sessionId;
       setPreviewUrl(url); // 兜底:数据没到之前先给 PNG
       try {
-        const dataUrl = artifactDataUrl(sessionId, name);
+        const dataUrl = artifactDataUrl(sid, name);
         // 网络失败自动重试一次（覆盖「8787 刚重启」的窗口期——点开瞬间服务未就绪）
         let resp: Response | null = null;
         let lastErr: Error | null = null;
@@ -677,6 +688,12 @@ export function App() {
         commitLayout(data);
         setSelectedLayer(null);
         logSessionAction('open-layout', { layout: name });
+        // 记录 active：session 不存在时服务端返回 noSession（客户端内存已更新，等首条 /chat 落）
+        void fetch(`/api/sessions/${sid}/active`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ layout: name }),
+        }).catch(() => {});
       } catch (e) {
         setMessages((prev) => [
           ...prev,
@@ -693,8 +710,8 @@ export function App() {
 
   /** 打开/刷新当前会话的版式（来自 AI 工具事件；没有 PNG URL，直接拉 data） */
   const openLayoutByName = useCallback(
-    async (name: string) => {
-      await handleOpenArtifact('', name, '');
+    async (name: string, sidOverride?: string) => {
+      await handleOpenArtifact('', name, '', sidOverride);
     },
     [handleOpenArtifact],
   );

@@ -333,7 +333,7 @@ async function handleSessions(
 ) {
   const JSON_HDR = { 'Content-Type': 'application/json; charset=utf-8' };
   const sessionIdMatch =
-    /^\/api\/sessions\/([\w.-]+)(?:\/(events|chat|artifacts|workdir|file|stream)(?:\/(.*))?)?$/.exec(path);
+    /^\/api\/sessions\/([\w.-]+)(?:\/(events|chat|artifacts|workdir|file|stream|active)(?:\/(.*))?)?$/.exec(path);
 
   // 列表：一级分组——条目带 home（= 工作目录 = 项目根），前端按它分组
   if (path === '/api/sessions' && method === 'GET') {
@@ -372,8 +372,23 @@ async function handleSessions(
         events,
         messages: await transcript.deriveMessages(events, workDir),
         title: transcript.deriveTitle(events),
+        activeLayout: await transcript.getActiveLayout(sessionId),
       }),
     );
+  }
+  // 设置当前打开的版式（不创建会话：session 不存在 → noSession，客户端只存内存）
+  if (sub === 'active' && method === 'POST') {
+    let body: { layout?: unknown };
+    try {
+      body = (await readJsonBody(req, 1024 * 1024)) as { layout?: unknown };
+    } catch (e) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end(`请求体无效：${(e as Error).message}`);
+    }
+    const layout = typeof body.layout === 'string' && body.layout.trim() ? body.layout.trim() : null;
+    const ok = await transcript.setActiveLayout(sessionId, layout);
+    res.writeHead(200, JSON_HDR);
+    return res.end(JSON.stringify({ ok, noSession: !ok, layout }));
   }
   // 删除（流式中拒绝——生成到一半的对话删了等于白烧钱，且 abort 时序不可控）
   if (!sub && method === 'DELETE') {
@@ -613,6 +628,8 @@ async function handleSessions(
         text,
         ...(savedImages.length ? { images: savedImages, fileIds } : {}),
       } as Parameters<typeof transcript.appendEvent>[1]);
+      // 本轮 activeLayout 落 session meta（此时会话已存在；不创建）
+      await transcript.setActiveLayout(sessionId, (body.activeLayout as string | undefined) ?? null);
 
       // 整轮耗时计时起点：用户消息已落盘之后、模型请求之前。
       // 口径 = 含工具执行的整轮（用户明确要求），不是首字节延迟。
@@ -720,10 +737,23 @@ async function buildSystemNote(sessionId: string, layoutName?: string | null): P
  *    则**什么都不注入**（`doc.json` 在、但 `design-sketch.json` 不在 ⇒ 早退）。
  */
 async function buildLayoutNote(sessionId: string, layoutName?: string | null): Promise<string> {
-  if (!layoutName) return '';
   const wd = await transcript.getWorkDir(sessionId);
+  const designsDir = join(wd, 'designs');
+  const designs = existsSync(designsDir)
+    ? readdirSync(designsDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name)
+    : [];
+  const series = designs.length ? `【本会话的版式】${designs.join('、')}` : '';
+
+  if (!layoutName) {
+    return series ? `${series}\n【当前没有打开的版式】` : '';
+  }
   const docPath = join(wd, 'designs', layoutName, 'doc.json');
-  if (!existsSync(docPath)) return '';
+  if (!existsSync(docPath)) {
+    const activeNote = `【当前打开的版式】${layoutName}（还没有 doc.json）`;
+    return series ? `${series}\n${activeNote}` : activeNote;
+  }
   try {
     const doc = JSON.parse(readFileSync(docPath, 'utf8')) as DesignDocument;
     // 结构是「画布 → 图层 → 元素」（见 `vocabulary.ts` 文件头）⇒ 逐图层展开它的元素。
@@ -739,13 +769,13 @@ async function buildLayoutNote(sessionId: string, layoutName?: string | null): P
         return `- 图层 ${l.id}${l.name ? `「${l.name}」` : ''}（${l.elements.length} 个元素）\n${els}`;
       })
       .join('\n');
-    return (
+    const activeNote =
       `【当前打开的版式】${layoutName}(${doc.canvas.width}×${doc.canvas.height})\n` +
       `图层:\n${layers}\n` +
-      `用户说「标题/按钮/某个词」时,指的就是上面清单里的对应元素。`
-    );
+      `用户说「标题/按钮/某个词」时,指的就是上面清单里的对应元素。`;
+    return series ? `${series}\n${activeNote}` : activeNote;
   } catch {
-    return '';
+    return series;
   }
 }
 

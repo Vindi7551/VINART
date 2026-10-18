@@ -52,17 +52,23 @@ export function createGetDesignTool(config: { sessionId: string }): AgentTool {
   return {
     name: 'get_design',
     description:
-      '读取当前打开版式的语义视图：图层/元素 id、name、type、text、frame/rect、当前 fill/stroke/font。' +
-      '做颜色/字体 patch 前先用它确认节点；不要凭记忆猜 id。',
+      '读取版式的语义视图：图层/元素 id、name、type、text、frame/rect、当前 fill/stroke/font。' +
+      '默认读当前 active；也可以传 layout 读本会话系列里的另一张。做颜色/字体 patch 前先用它确认节点。',
     parameters: {
       type: 'object',
       additionalProperties: false,
-      properties: {},
+      properties: {
+        layout: {
+          type: 'string',
+          description: '可选：读本会话系列里的哪一张；不传读当前 active',
+        },
+      },
     },
-    async execute(_args, ctx) {
-      const layout = ctx.activeLayout?.trim() ?? '';
+    async execute(args, ctx) {
+      const requested = typeof args.layout === 'string' && args.layout.trim() ? args.layout.trim() : '';
+      const layout = requested || ctx.activeLayout?.trim() || '';
       if (!layout) {
-        return { content: 'ERROR: 当前没有打开的版式。', isError: true };
+        return { content: 'ERROR: 当前没有打开的版式，也没有传 layout。', isError: true };
       }
       const workDir = await getWorkDir(config.sessionId);
       const p = join(workDir, 'designs', layout, 'doc.json');

@@ -287,6 +287,20 @@ AI 的上下文和未来工具都建立在"当前 doc"上，但现在：
 - `final.png` 只用于“出图”导出，不再做缩略图/兜底；
 - tests 81。
 
+### 7. set-active / active 恢复（2026-10-18）
+
+- `transcript`：新增 `active-layout` 事件 + `setActiveLayout()` / `getActiveLayout()`；
+  **`setActiveLayout` 只在 session 文件已存在时写**，不会为了打开旧图创建 session；
+- `GET /api/sessions/:id` 返回 `activeLayout`；新增 `POST /api/sessions/:id/active`；
+  session 不存在 → `{ ok:false, noSession:true }`，客户端只存内存，首次 `/chat` 再落；
+- `/chat` 时把本轮 `activeLayout` 写进 session meta；
+- `buildLayoutNote`：系列名字 + 当前 active 摘要；没有 active 时只给系列名字 / 空；
+- `get_design` 增加可选 `layout`（默认 active，传了读系列另一张）；
+- App：`loadSessionMessages` 按服务端 `activeLayout` 恢复（有就打开，没有就空预览）；
+  切会话/刷新同样；打开版式时 POST `set-active`；新会话/改 workdir 清空；
+  **不自动打开最近/唯一**；
+- tests 81。
+
 
 
 
