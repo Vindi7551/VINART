@@ -60,6 +60,8 @@ export type FieldKind =
   | { kind: 'number'; min?: number; max?: number; step?: number; suffix?: string }
   | { kind: 'text'; multiline?: boolean }
   | { kind: 'color' }
+  /** 纯色 / 线性渐变 / 径向渐变（以及可选的多层 fill）——见 `ui/paint-editor.tsx` */
+  | { kind: 'paint'; layers?: boolean; hint?: string }
   | { kind: 'toggle' }
   | { kind: 'enum'; options: string[] };
 
@@ -108,13 +110,28 @@ const text = (
   set: (n, v) => set(n, String(v ?? '')),
 });
 
-const color = (
+/**
+ * **可填纯色或渐变的字段**（`fill` / `stroke.paint` / `decoration.color`）。
+ *
+ * `layers: true` 时值可以是 `string[]`（多层 fill，数组靠前在底层、靠后在顶层）；
+ * 单值的描边/装饰线只能是字符串。UI 见 `ui/paint-editor.tsx`。
+ */
+const paint = (
   path: string,
   label: string,
   group: string,
-  get: (n: ElementNode) => string | undefined,
-  set: (n: ElementNode, v: string) => void,
-): Field => ({ path, label, group, kind: { kind: 'color' }, get, set: (n, v) => set(n, String(v ?? '')) });
+  get: (n: ElementNode) => string | string[] | undefined,
+  set: (n: ElementNode, v: string | string[] | undefined) => void,
+  layers = false,
+  hint?: string,
+): Field => ({
+  path,
+  label,
+  group,
+  kind: { kind: 'paint', layers, hint },
+  get,
+  set: (n, v) => set(n, v as string | string[] | undefined),
+});
 
 /** 开关（下划线 / 斜体 / 小型大写……） */
 const toggle = (
@@ -199,11 +216,11 @@ function commonFields(): Field[] {
 /** 形状：填充 / 描边 / 圆角 */
 function shapeFields(n: ShapeNode): Field[] {
   const out: Field[] = [
-    color('fill', '填充', '外观', (l) => (typeof P(l).fill === 'string' ? (P(l).fill as string) : undefined), (l, v) => {
+    paint('fill', '填充', '外观', (l) => P(l).fill, (l, v) => {
       P(l).fill = v;
-    }),
-    color('stroke.paint', '描边色', '外观', (l) => P(l).stroke?.paint, (l, v) => {
-      P(l).stroke = { ...(P(l).stroke ?? {}), paint: v };
+    }, true),
+    paint('stroke.paint', '描边色', '外观', (l) => P(l).stroke?.paint, (l, v) => {
+      P(l).stroke = { ...(P(l).stroke ?? {}), paint: v as string | undefined };
     }),
     num('stroke.width', '描边粗细', '外观', (l) => P(l).stroke?.width as number | undefined, (l, v) => {
       P(l).stroke = { ...(P(l).stroke ?? {}), width: v };
@@ -267,6 +284,7 @@ function syncPathBox(t: TextNode): void {
  */
 function textFields(node: TextNode, _canvas: { width: number }): Field[] {
   const many = node.runs.length > 1;
+  const normalText = !node.curve && !node.path;
   return [
     // ── 内容：**逐片段**（多段文本的编辑入口）──────────────────────
     //    ⚠️ `get` **必须逐片段**。早先只给 `runs[0]` 写了 getter（`(l) => T(l)?.runs[i]?.text`
@@ -316,15 +334,15 @@ function textFields(node: TextNode, _canvas: { width: number }): Field[] {
       const t = T(l);
       if (t) t.stretch = v;
     }, { min: 0.5, max: 2, step: 0.01 }),
-    color('fill', '文字色', '字体', (l) => (typeof P(l).fill === 'string' ? (P(l).fill as string) : undefined), (l, v) => {
+    paint('fill', '文字色', '字体', (l) => P(l).fill, (l, v) => {
       P(l).fill = v;
-    }),
+    }, true),
 
     // ── 描边：形状那份落到容器 `outline`，文字这份落到 `-webkit-text-stroke`（字形轮廓）──
-    color('stroke.paint', '描边色', '描边', (l) => T(l)?.stroke?.paint, (l, v) => {
+    paint('stroke.paint', '描边色', '描边', (l) => T(l)?.stroke?.paint, (l, v) => {
       const t = T(l);
-      if (t) t.stroke = { ...(t.stroke ?? {}), paint: v };
-    }),
+      if (t) t.stroke = { ...(t.stroke ?? {}), paint: v as string | undefined };
+    }, false, normalText ? '普通文字只支持纯色描边；渐变用首色近似（弧线文字支持完整渐变）' : undefined),
     num('stroke.width', '描边粗细', '描边', (l) => T(l)?.stroke?.width as number | undefined, (l, v) => {
       const t = T(l);
       if (t) t.stroke = { ...(t.stroke ?? {}), width: v };
@@ -410,10 +428,10 @@ function textFields(node: TextNode, _canvas: { width: number }): Field[] {
       const t = T(l);
       if (t) t.strike = v || undefined;
     }),
-    color('decoration.color', '线色', '装饰', (l) => T(l)?.decoration?.color, (l, v) => {
+    paint('decoration.color', '线色', '装饰', (l) => T(l)?.decoration?.color, (l, v) => {
       const t = T(l);
-      if (t) t.decoration = { ...(t.decoration ?? {}), color: v };
-    }),
+      if (t) t.decoration = { ...(t.decoration ?? {}), color: v as string | undefined };
+    }, false, normalText ? '普通文字只支持纯色装饰线；渐变用首色近似（弧线文字支持完整渐变）' : undefined),
     pick(
       'decoration.style',
       '线型',
@@ -602,7 +620,7 @@ export function selectionFields(): SelField[] {
     {
       path: 'sel.fill',
       label: '颜色',
-      kind: { kind: 'color' },
+      kind: { kind: 'paint' },
       get: (run, node) => run?.fill ?? (typeof node.fill === 'string' ? node.fill : ''),
     },
     {
@@ -621,7 +639,7 @@ export function selectionFields(): SelField[] {
     {
       path: 'sel.decoration.color',
       label: '线色',
-      kind: { kind: 'color' },
+      kind: { kind: 'paint' },
       get: (run, node) => run?.decoration?.color ?? node.decoration?.color ?? '',
     },
     {

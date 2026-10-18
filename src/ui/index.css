@@ -1885,6 +1885,149 @@ html, body, #root {
   color: var(--text-muted);
 }
 
+/* ── 颜色 / 渐变编辑器（paint） ───────────────────────────────── */
+.ui-paint-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+.ui-paint-row > .ui-input,
+.ui-paint-row > .ui-paint-text {
+  flex: 1;
+  min-width: 0;
+}
+.ui-paint-preview {
+  flex: none;
+  width: 30px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+  background-repeat: repeat;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+.ui-paint-preview:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.ui-paint-dialog {
+  display: grid;
+  gap: 14px;
+}
+.ui-paint-big-preview {
+  height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background-repeat: repeat;
+}
+.ui-paint-layers {
+  display: grid;
+  gap: 6px;
+}
+.ui-paint-layers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.ui-paint-layers-actions {
+  display: flex;
+  gap: 4px;
+}
+.ui-paint-layer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+}
+.ui-paint-layer.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.ui-paint-layer-preview {
+  flex: none;
+  width: 26px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  background-repeat: repeat;
+}
+.ui-paint-layer-name {
+  font-size: 12px;
+  color: var(--text);
+}
+.ui-paint-layer-kind {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.ui-paint-add {
+  justify-self: start;
+}
+.ui-paint-editor {
+  display: grid;
+  gap: 10px;
+}
+.ui-paint-rowline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ui-paint-label {
+  flex: none;
+  min-width: 52px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.ui-paint-color {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.ui-paint-color > .ui-input {
+  flex: 1;
+  min-width: 0;
+}
+.ui-paint-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.ui-paint-stops {
+  display: grid;
+  gap: 6px;
+}
+.ui-paint-stops-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.ui-paint-stop {
+  display: grid;
+  grid-template-columns: 1fr 76px 28px;
+  align-items: center;
+  gap: 8px;
+}
+.ui-paint-raw {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+}
+
 /* 复选框 */
 .ui-check {
   flex: none;

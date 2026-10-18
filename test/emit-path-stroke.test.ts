@@ -54,16 +54,15 @@ describe('沿路径文字的描边', () => {
     expect(notes.some((n) => n.field === 'underline' && n.reason.includes('弧线'))).toBe(true);
   });
 
-  it('节点渐变作为底色，run fill 仍是字面（和普通文字一致）', () => {
+  it('run fill 等于节点纯色兜底时视为冗余，让节点渐变生效', () => {
     const node = text(undefined);
     node.fill = ['linear-gradient(#C8323C, #B8722F)', '#F5F5F5'];
     node.runs[0].fill = '#F5F5F5';
     const { html, notes } = emitElementHtml(node, canvas);
     expect(html).toMatch(/<linearGradient id="tp-t-fill"/);
     expect(html).toMatch(/<text\b[^>]*fill="url\(#tp-t-fill\)"/);
-    // ⚠️ run fill 是普通文字里的字面（在节点底色之上）——不能为了露渐变而跳过它，
-    //    否则 tx-stroke 的"浅色字面 + 红描边"会变成一整块红。
-    expect(html).toMatch(/<tspan[^>]*style="[^"]*fill:#F5F5F5/);
+    // run fill 与节点纯色兜底相同 = 冗余，不能盖住节点渐变
+    expect(html).not.toMatch(/<tspan[^>]*style="[^"]*fill:#F5F5F5/);
     expect(notes.some((n) => n.field === 'fill')).toBe(false);
   });
 
@@ -76,15 +75,32 @@ describe('沿路径文字的描边', () => {
     expect(html).not.toMatch(/<tspan[^>]*style="[^"]*fill:/);
   });
 
-  it('多层渐变取最上层（数组末尾）的那个，和普通文字一致', () => {
+  it('多层 fill 按底层→顶层堆叠，最上层带 run fill', () => {
     const node = text(undefined);
     node.fill = [
       'linear-gradient(#111111, #222222)',
       'linear-gradient(#C8323C, #B8722F)',
     ];
     const { html } = emitElementHtml(node, canvas);
-    expect(html).toMatch(/stop-color="#C8323C"/);
-    expect(html).not.toMatch(/stop-color="#111111"/);
+    // 底层：tp-t-fill-0，无 data-run、aria-hidden
+    expect(html).toMatch(/<linearGradient id="tp-t-fill-0"[\s\S]*?stop-color="#111111"/);
+    expect(html).toMatch(/<text[^>]*fill="url\(#tp-t-fill-0\)"[^>]*aria-hidden="true"/);
+    // 顶层：tp-t-fill，带 data-run
+    expect(html).toMatch(/<linearGradient id="tp-t-fill"[\s\S]*?stop-color="#C8323C"/);
+    const top = html.split('</text>').find((s) => s.includes('url(#tp-t-fill)') && !s.includes('tp-t-fill-0'));
+    expect(top).toBeTruthy();
+    expect(top).toMatch(/data-run="0"/);
+  });
+
+  it('run 级渐变落到 tspan 的 fill，节点 fill 保留为底', () => {
+    const node = text(undefined);
+    node.fill = ['linear-gradient(#111111, #222222)'];
+    node.runs[0].fill = 'linear-gradient(90deg, #f00, #00f)';
+    const { html, notes } = emitElementHtml(node, canvas);
+    expect(html).toMatch(/<linearGradient id="tp-t-run-0"/);
+    expect(html).toMatch(/<tspan[^>]*style="[^"]*fill:url\(#tp-t-run-0\)/);
+    expect(html).toMatch(/<text\b[^>]*fill="url\(#tp-t-fill\)"/);
+    expect(notes.some((n) => n.field === 'runs[].fill')).toBe(false);
   });
 
   it('radial-gradient 落到 SVG radialGradient（支持 at 位置）', () => {
@@ -173,5 +189,35 @@ describe('沿路径文字的描边', () => {
     const { html } = emitElementHtml(shape, canvas);
     expect(html).toMatch(/<linearGradient id="grad-stroke-s"/);
     expect(html).toMatch(/stroke="url\(#grad-stroke-s\)"/);
+  });
+
+  it('普通文字的渐变描边/装饰线用首色近似，不丢描边', () => {
+    const n: TextNode = {
+      id: 'nt',
+      type: 'text',
+      frame: { x: 0, y: 0, w: 300 },
+      runs: [{ text: '描边字', strike: true, decoration: { color: 'linear-gradient(180deg, #e42121, #4e0e0e)' } }],
+      fontSizePx: 40,
+      stroke: { paint: 'linear-gradient(180deg, #e42121, #4e0e0e)', width: 2 },
+    };
+    const { html, notes } = emitElementHtml(n, canvas);
+    expect(html).toMatch(/-webkit-text-stroke:2px #e42121/);
+    expect(html).toMatch(/text-decoration-color:#e42121/);
+    expect(notes.some((x) => x.field === 'stroke.paint' && x.reason.includes('首色'))).toBe(true);
+    expect(notes.some((x) => x.field === 'decoration.color' && x.reason.includes('首色'))).toBe(true);
+  });
+
+  it('普通文字的 run fill 等于节点纯色兜底时，不盖住节点渐变', () => {
+    const n: TextNode = {
+      id: 'nt2',
+      type: 'text',
+      frame: { x: 0, y: 0, w: 300 },
+      runs: [{ text: '描边字', fill: '#F5F5F5' }],
+      fontSizePx: 40,
+      fill: ['linear-gradient(#C8323C, #B8722F)', '#F5F5F5'],
+    };
+    const { html } = emitElementHtml(n, canvas);
+    expect(html).toMatch(/background-image:[\s\S]*linear-gradient/);
+    expect(html).not.toMatch(/<span[^>]*style="[^"]*color:#F5F5F5/);
   });
 });

@@ -357,6 +357,38 @@ function textColor(run: TextRun, node: TextNode): string | undefined {
   return c && isPlainColor(c) ? c : undefined;
 }
 
+/** 节点 `fill` 里最后一个纯色层（CSS 里纯色不是合法 background-image，只当兜底） */
+function lastPlainFill(fill: string | string[] | undefined): string | undefined {
+  const layers = Array.isArray(fill) ? fill : fill ? [fill] : [];
+  return [...layers].reverse().find((f) => isPlainColor(f));
+}
+
+/**
+ * 这一段**实际生效**的字色。
+ *
+ * ⚠️ 如果 run fill 恰好等于节点 fill 的纯色兜底，它是冗余的：
+ * 普通文字会用它盖住节点渐变/多层 fill，路径文字也会把 tspan 填死。
+ * 这种情况按“没有 run fill”处理，让节点的 fill 生效。
+ */
+function effectiveRunColor(run: TextRun, node: TextNode): string | undefined {
+  const color = textColor(run, node);
+  const fallback = lastPlainFill(node.fill);
+  if (run.fill && fallback && run.fill === fallback) return undefined;
+  return color;
+}
+
+/**
+ * 渐变/纯色的**首色** —— 普通文字的 `-webkit-text-stroke`、`text-decoration-color`
+ * 只吃纯色；渐变值在 HTML 文字上退化成首色近似（弧线/形状走 SVG，支持完整渐变）。
+ */
+function firstPaintColor(paint: string | undefined): string | undefined {
+  if (!paint) return undefined;
+  if (isPlainColor(paint)) return paint;
+  if (!/gradient\(/i.test(paint)) return undefined;
+  const def = cssGradientToSvgDef(paint, 'paint-probe');
+  return def ? /stop-color="([^"]+)"/.exec(def)?.[1] : undefined;
+}
+
 /**
  * **装饰线**（下划线 / 删除线）的 CSS。
  *
@@ -368,7 +400,8 @@ function decoLineCss(run: TextRun, node: TextNode): string {
   const s = run.strike ?? node.strike ?? false;
   const lines = [u && 'underline', s && 'line-through'].filter(Boolean) as string[];
   if (!lines.length) return '';
-  const color = run.decoration?.color ?? node.decoration?.color;
+  const rawColor = run.decoration?.color ?? node.decoration?.color;
+  const color = rawColor && /gradient\(/i.test(rawColor) ? firstPaintColor(rawColor) : rawColor;
   const style = run.decoration?.style ?? node.decoration?.style;
   const thick = run.decoration?.thickness ?? node.decoration?.thickness;
   return joinCss([
@@ -387,7 +420,7 @@ function decoLineCss(run: TextRun, node: TextNode): string {
  */
 function runCss(run: TextRun, node: TextNode, fit: number): string {
   const fs = textFontSize(run.fontSizePx ?? node.fontSizePx, fit);
-  const color = textColor(run, node);
+  const color = effectiveRunColor(run, node);
   const shift = run.baselineShift ?? node.baselineShift;
   // ⚠️ **基线偏移必须落在片段上**：放整块那层是无效 CSS（整块是 `position:absolute` 的块，
   //    `vertical-align` 对它没有意义）—— 实测踩过。
@@ -463,14 +496,14 @@ function emitText(
     if (Array.isArray(node.stroke.width)) no('stroke.width', '文字描边只做统一线宽（四边不同对文字没有意义）');
     if (node.stroke.paint && /url\(/i.test(node.stroke.paint)) no('stroke.paint', '图片描边要 border-image，文字上做不了');
     if (node.stroke.paint && /gradient\(/i.test(node.stroke.paint)) {
-      no('stroke.paint', '普通文字的渐变描边做不了（-webkit-text-stroke 只吃纯色）；弧线文字/形状支持');
+      note('stroke.paint', '普通文字的渐变描边用首色近似（弧线文字/形状支持完整渐变）');
     }
     if (node.stroke.inset) note('stroke.inset', '文字描边是**居中**描（一半在外一半在内），没有"向内描"这个选项');
     if (node.stroke.over) note('stroke.over', '文字描边永远画在字面之上，没有"画在下面"这个选项');
     if (node.stroke.cap || node.stroke.join) note('stroke.cap', '端点 / 拐角只对**开放路径**有意义，字形轮廓上不适用');
   }
   if (node.runs.some((r) => /gradient\(/i.test(r.decoration?.color ?? node.decoration?.color ?? ''))) {
-    no('decoration.color', '普通文字的装饰线渐变做不了（text-decoration-color 只吃纯色）；弧线文字支持');
+    note('decoration.color', '普通文字的装饰线渐变用首色近似（弧线文字支持完整渐变）');
   }
   if (node.dropCap && node.wrap !== 'normal') {
     note('dropCap', '首字下沉要有意义，这段文字**必须多行** —— 建议同时把 `wrap` 设成 `normal`');
@@ -480,10 +513,21 @@ function emitText(
   const runs = emitRunsHtml(node, fit);
 
   // 整块渐变填字（片段级的那条在 `runCss` 里）
-  const gradFill = node.fill !== undefined && (typeof node.fill !== 'string' || !isPlainColor(node.fill));
-  const fillClip = gradFill
+  // ⚠️ `background-image` 里**纯色不是合法图层**：把数组整个塞进去会让整条声明失效，
+  //    字面变成 `color:transparent` ⇒ 只剩描边。纯色层取最后一个当 `background-color`，
+  //    只把渐变/url 图层放进 `background-image`。
+  const fillLayers = node.fill === undefined ? [] : Array.isArray(node.fill) ? node.fill : [node.fill];
+  const fillImages = fillLayers.filter(
+    (f): f is string => typeof f === 'string' && (/gradient\(/i.test(f) || /^url\(/i.test(f)),
+  );
+  const fillBase = [...fillLayers]
+    .reverse()
+    .find((f): f is string => typeof f === 'string' && isPlainColor(f));
+  const hasFillClip = fillImages.length > 0 || (Array.isArray(node.fill) && !!fillBase);
+  const fillClip = hasFillClip
     ? joinCss([
-        `background-image:${[...(Array.isArray(node.fill) ? node.fill : [node.fill as string])].reverse().join(',')}`,
+        fillImages.length ? `background-image:${[...fillImages].reverse().join(',')}` : '',
+        fillBase ? `background-color:${fillBase}` : '',
         '-webkit-background-clip:text',
         'background-clip:text',
         'color:transparent',
@@ -494,7 +538,11 @@ function emitText(
   let strokeInline = '';
   if (node.stroke) {
     const w = Array.isArray(node.stroke.width) ? node.stroke.width[0] : (node.stroke.width ?? 1);
-    const paint = node.stroke.paint && !/url\(/i.test(node.stroke.paint) && !/gradient\(/i.test(node.stroke.paint) ? node.stroke.paint : 'currentColor';
+    const gradientFirst = node.stroke.paint && /gradient\(/i.test(node.stroke.paint) ? firstPaintColor(node.stroke.paint) : undefined;
+    const paint =
+      node.stroke.paint && !/url\(/i.test(node.stroke.paint) && !/gradient\(/i.test(node.stroke.paint)
+        ? node.stroke.paint
+        : (gradientFirst ?? 'currentColor');
     strokeInline = joinCss([`-webkit-text-stroke:${w}px ${paint}`]);
   }
 
@@ -567,9 +615,10 @@ function curveToPath(curve: number): string {
  * ⚠️ 与 `runCss` 的硬区别：文字颜色在 SVG 里是 **`fill` 属性**，不是 CSS `color`
  * —— 写 `color` 会**一点反应都没有**（字形不填色）。
  */
-function runCssSvg(run: TextRun, node: TextNode, fit: number, skipDeco = false): string {
+function runCssSvg(run: TextRun, node: TextNode, fit: number, skipDeco = false, fillOverride?: string | null): string {
   const fs = textFontSize(run.fontSizePx ?? node.fontSizePx, fit);
-  const color = textColor(run, node);
+  const color = effectiveRunColor(run, node);
+  const fillCss = fillOverride === null ? '' : (fillOverride ?? color);
   const deco = skipDeco ? '' : decoLineCss(run, node);
   const decoColor = deco ? decoColorSvg(run, node) : undefined;
   return joinCss([
@@ -582,7 +631,7 @@ function runCssSvg(run: TextRun, node: TextNode, fit: number, skipDeco = false):
     run.textTransform && `text-transform:${run.textTransform}`,
     run.smallCaps && 'font-variant-caps:small-caps',
     run.letterSpacing !== undefined && `letter-spacing:${run.letterSpacing}em`,
-    color && `fill:${color}`,
+    fillCss && `fill:${fillCss}`,
     deco,
     decoColor && `text-decoration-color:${decoColor}`,
   ]);
@@ -601,7 +650,10 @@ function runCssSvg(run: TextRun, node: TextNode, fit: number, skipDeco = false):
 function decoColorSvg(run: TextRun, node: TextNode): string | undefined {
   if (run.decoration?.color ?? node.decoration?.color) return undefined;
   const stroke = node.stroke?.paint;
-  if (stroke && isPlainColor(stroke)) return stroke;
+  if (stroke) {
+    const first = firstPaintColor(stroke);
+    if (first) return first;
+  }
   if (run.fill && isPlainColor(run.fill)) return run.fill;
   if (typeof node.fill === 'string' && isPlainColor(node.fill)) return node.fill;
   return undefined;
@@ -740,7 +792,7 @@ function emitPathText(
         : '任意 path 的装饰线暂不支持沿路径（目前是直线）',
     );
     if (!customCurveDeco && node.runs.some((r) => /gradient\(/i.test(r.decoration?.color ?? node.decoration?.color ?? ''))) {
-      note('decoration.color', '任意 path 的装饰线渐变暂不支持（text-decoration-color 只吃纯色）');
+      note('decoration.color', '任意 path 的装饰线渐变用首色近似（curve 支持完整渐变）');
     }
   }
   // ⚠️ 描边支持 SVG `stroke`：纯色 / 线性渐变 / 径向渐变；解析不了的图案退回 `currentColor`。
@@ -751,9 +803,6 @@ function emitPathText(
     }
   }
   if (node.runs.some((r) => r.baselineShift)) note('runs[].baselineShift', '沿路径的文字这一版不做上下标');
-  if (node.runs.some((r) => r.fill && !isPlainColor(r.fill))) {
-    note('runs[].fill', '沿路径的文字只支持纯色填充');
-  }
   // ⚠️ 这是 SVG 的规矩，不是 bug：文字比路径长时，超出那段**根本不渲染**
   note('path', '文字比路径长时，超出路径的那部分**不会显示**（SVG 的规矩）—— 路径给长一点、或字号小一点');
 
@@ -766,32 +815,70 @@ function emitPathText(
   const pid = pathIdOf(node.id);
 
   // ── 填充：普通文字用 `background-clip:text` 铺渐变；路径文字改用 SVG 渐变定义 ──
-  //    ⚠️ 以前这里只认纯色，`fill` 是数组/渐变时退回 `currentColor`；
-  //    再叠加 tspan 的 `fill:#F5F5F5` ⇒ 字形只剩红描边，细笔画看起来"断开"。
+  //    ⚠️ `emitText` 的 background-image 是 `[...fill].reverse()` ⇒ **数组末尾的在最上层**。
+  //    多层 fill = 多个 `<text>` 副本：数组靠前的在底层，靠后的在顶层（普通文字同序）。
+  //    纯色数组项在 CSS background-image 里不是合法图层（会被忽略）⇒ 这里只把纯色当兜底，
+  //    不单独画一层；最后兜底色只在没有任何渐变/图案层时才作为字面。
   const layers = Array.isArray(node.fill) ? node.fill : node.fill ? [node.fill] : [];
-  // ⚠️ `emitText` 的 background-image 是 `[...fill].reverse()` ⇒ **数组末尾的在最上层**。
-  //    路径文字也要取"最上层"的那个渐变，否则多渐变时和普通文字不一致。
-  const gradientCss = [...layers].reverse().find((f) => /gradient\(/i.test(f)) ?? null;
   const fallbackFill =
     [...layers].reverse().find((f) => isPlainColor(f)) ??
     (typeof node.fill === 'string' && isPlainColor(node.fill) ? node.fill : undefined);
-  const gid = `${pid}-fill`;
-  const gradDef = gradientCss ? cssGradientToSvgDef(gradientCss, gid) : null;
-  if (gradientCss && !gradDef) {
-    note('fill', '沿路径的文字只支持线性/径向渐变（这个渐变解析不了，退回纯色）');
-  } else if (!gradDef && node.fill !== undefined && (typeof node.fill !== 'string' || !isPlainColor(node.fill))) {
-    note('fill', '沿路径的文字只支持纯色/线性/径向渐变（多层 fill 只取纯色兜底）');
-  }
-  const fill = gradDef ? `url(#${gid})` : (fallbackFill ?? 'currentColor');
 
-  // ⚠️ 图层顺序和普通文字一致：`<text fill>` 是节点 fill（渐变/纯色），
-  //    tspan 的 run fill 在它上面。**不要为了露出渐变而跳过 run fill** ——
-  //    那会把 tx-stroke 这种"浅色字面 + 红描边"变成一整块红色，样式就不一致了。
-  const runs = node.runs
+  interface ResolvedFill {
+    fill: string;
+    def?: string;
+  }
+  const resolvedFills: ResolvedFill[] = [];
+  const rawImageLayers = layers.filter((f) => /gradient\(/i.test(f) || /^url\(/i.test(f));
+  rawImageLayers.forEach((f, i) => {
+    if (/^url\(/i.test(f)) {
+      note('fill', '沿路径的文字暂不支持图片/图案填充（只支持纯色/渐变）');
+      return;
+    }
+    const isTop = i === rawImageLayers.length - 1;
+    const lid = isTop ? `${pid}-fill` : `${pid}-fill-${i}`;
+    const def = cssGradientToSvgDef(f, lid);
+    if (!def) {
+      note('fill', '沿路径的文字只支持线性/径向渐变（这个渐变解析不了，已跳过）');
+      return;
+    }
+    resolvedFills.push({ fill: `url(#${lid})`, def });
+  });
+  const topFillLayer = resolvedFills.length ? resolvedFills[resolvedFills.length - 1] : undefined;
+  const lowerFillLayers = resolvedFills.slice(0, -1);
+  const topFill = topFillLayer?.fill ?? fallbackFill ?? 'currentColor';
+
+  // ── runs：最上层带 run fill（纯色/渐变）；下层副本不画 run fill / 装饰线 ──
+  const runDefs: string[] = [];
+  const topRuns = node.runs
+    .map((r, i) => {
+      let override: string | null | undefined;
+      const rf = r.fill;
+      if (rf && !isPlainColor(rf)) {
+        if (/gradient\(/i.test(rf)) {
+          const rid = `${pid}-run-${i}`;
+          const rd = cssGradientToSvgDef(rf, rid);
+          if (rd) {
+            runDefs.push(rd);
+            override = `url(#${rid})`;
+          } else {
+            note('runs[].fill', 'run 渐变只支持线性/径向；解析不了会退回节点填充');
+            override = null;
+          }
+        } else {
+          note('runs[].fill', 'run 的图片/图案 fill 沿路径暂不支持');
+          override = null;
+        }
+      }
+      // ⚠️ `data-run` 照打：选区（改样式）仍要按它把画面上的字对回 `runs[i]`
+      return `<tspan data-run="${i}" style="${runCssSvg(r, node, fit, customCurveDeco, override)}">${escText(r.text).split('\n').join(' ')}</tspan>`;
+    })
+    .join('');
+  // 下层副本：不带 run fill / data-run，只继承图层自己的 fill
+  const lowerRuns = node.runs
     .map(
-      (r, i) =>
-        // ⚠️ `data-run` 照打：选区（改样式）仍要按它把画面上的字对回 `runs[i]`
-        `<tspan data-run="${i}" style="${runCssSvg(r, node, fit, customCurveDeco)}">${escText(r.text).split('\n').join(' ')}</tspan>`,
+      (r) =>
+        `<tspan style="${runCssSvg(r, node, fit, true, null)}">${escText(r.text).split('\n').join(' ')}</tspan>`,
     )
     .join('');
 
@@ -901,15 +988,31 @@ function emitPathText(
     decoDefs.push(...decoGradDefs);
   }
 
-  const defParts = [gradDef, strokeGradDef, ...decoDefs].filter((x): x is string => !!x).join('');
+  const defParts = [
+    ...resolvedFills.flatMap((l) => (l.def ? [l.def] : [])),
+    ...runDefs,
+    strokeGradDef,
+    ...decoDefs,
+  ]
+    .filter((x): x is string => !!x)
+    .join('');
   const defs = defParts ? `<defs>${defParts}</defs>` : '';
+  // 多层 fill：底层副本（无 stroke/装饰线/run fill）→ 顶层（带 run fill/stroke/装饰线）
+  const lowerTexts = lowerFillLayers
+    .map(
+      (l) =>
+        `<text text-anchor="${textAnchor}" fill="${escAttr(l.fill)}" style="${textCss}" aria-hidden="true">` +
+        `<textPath href="#${pid}" startOffset="${anchor}">${lowerRuns}</textPath></text>`,
+    )
+    .join('');
   return (
     `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="position:absolute;left:0;top:0;overflow:visible">` +
     defs +
     // `scale(W,H)`：路径在 0–1 空间里写，铺到像素空间由 SVG 负责；`<text>` 不受它影响
     `<path id="${pid}" d="${escAttr(d)}" transform="scale(${W},${H})" fill="none"/>` +
-    `<text text-anchor="${textAnchor}" fill="${escAttr(fill)}"${strokeAttrs} style="${textCss}">` +
-    `<textPath href="#${pid}" startOffset="${anchor}">${runs}</textPath>` +
+    lowerTexts +
+    `<text text-anchor="${textAnchor}" fill="${escAttr(topFill)}"${strokeAttrs} style="${textCss}">` +
+    `<textPath href="#${pid}" startOffset="${anchor}">${topRuns}</textPath>` +
     `</text>` +
     deco +
     `</svg>`

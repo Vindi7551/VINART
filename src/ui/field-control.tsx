@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 
 import type { FieldKind } from '../editor/inspector';
 import { Checkbox, ColorSwatch, NumberInput, Select, TextArea, TextInput } from './primitives';
+import { PaintControl } from './paint-editor';
 
 /**
  * **字段控件** —— 把 `FieldKind` 渲染成一个输入控件。
@@ -64,6 +65,17 @@ export function FieldControl({
         </span>
       );
 
+    case 'paint':
+      return (
+        <PaintControl
+          value={value}
+          disabled={disabled}
+          allowLayers={!!kind.layers}
+          hint={kind.hint}
+          onCommit={onCommit}
+        />
+      );
+
     case 'number':
       return (
         <span className="ui-num-wrap">
@@ -105,7 +117,7 @@ export function FieldControl({
  * 数字/复选框/单行文本放半格，两列排开。
  */
 export const isWideKind = (kind: FieldKind): boolean =>
-  kind.kind === 'enum' || kind.kind === 'color' || (kind.kind === 'text' && !!kind.multiline);
+  kind.kind === 'enum' || kind.kind === 'color' || kind.kind === 'paint' || (kind.kind === 'text' && !!kind.multiline);
 
 /** 这一格要不要用"复选框在右"的排法 */
 export const isCheckKind = (kind: FieldKind): boolean => kind.kind === 'toggle';
