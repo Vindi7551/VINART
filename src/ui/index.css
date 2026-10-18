@@ -2119,6 +2119,12 @@ html, body, #root {
   background: transparent;
 }
 
+/* 隐藏的图层：缩略图仍显示内容（忽略 visible），只压暗/去饱和提示“这层没显示” */
+.ui-layer-thumb.is-hidden {
+  opacity: 0.5;
+  filter: grayscale(0.5);
+}
+
 /* 图层 / 组的**直接**子元素数量（不递归） */
 .ui-layer-count {
   flex: none;

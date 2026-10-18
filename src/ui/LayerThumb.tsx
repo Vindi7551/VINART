@@ -39,8 +39,10 @@ export function LayerThumb({
   const ch = Math.max(1, doc.canvas.height);
   const scale = THUMB_W / cw;
   const th = Math.max(1, Math.round(ch * scale));
-  // 不缓存：图层是原地改的，每次重算才能拿到最新元素
-  const layerHtml = emitLayerHtml(layer, doc.canvas, { assets }).html;
+  // 不缓存：图层是原地改的，每次重算才能拿到最新元素。
+  // ⚠️ 缩略图是“这层有什么”的预览 ⇒ **忽略 visible**：隐藏的图层也要能看到内容；
+  //    主画布的 emitDocument 仍然尊重 visible（隐藏的图层在画布上不出现）。
+  const layerHtml = emitLayerHtml({ ...layer, visible: true }, doc.canvas, { assets }).html;
   const canvasBg = Array.isArray(doc.canvas.background)
     ? `background-image:${[...doc.canvas.background].reverse().join(',')};background-color:transparent`
     : `background:${doc.canvas.background ?? '#FFFFFF'}`;
@@ -52,7 +54,11 @@ export function LayerThumb({
   );
 
   return (
-    <span className="ui-layer-thumb" style={{ width: THUMB_W, height: th }} title={`图层 · ${layer.name ?? layer.id}`}>
+    <span
+      className={`ui-layer-thumb${layer.visible === false ? ' is-hidden' : ''}`}
+      style={{ width: THUMB_W, height: th }}
+      title={`图层 · ${layer.name ?? layer.id}${layer.visible === false ? '（已隐藏）' : ''}`}
+    >
       <iframe
         srcDoc={html}
         sandbox="allow-same-origin"
