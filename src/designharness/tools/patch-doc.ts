@@ -87,7 +87,22 @@ export function createPatchDocTool(config: { sessionId: string }): AgentTool {
       }
 
       // 只发 patches：App 应用到当前内存 doc，保留用户尚未自动保存的改动。
-      ctx.onEvent?.({ kind: 'doc-patch', layout, patches });
+      // 同时带上这次新引用素材的 URL：App 的 assets map 是上次 /data 的，
+      // 不含刚生成的图片；不带的话就地重发图层会得到空 src（刷新才出现）。
+      const assets: Record<string, string> = {};
+      for (const p of patches as DocPatch[]) {
+        if (p.path === 'asset' && typeof p.value === 'string' && p.value.trim()) {
+          const file = p.value.trim();
+          assets[file] =
+            `/api/sessions/${config.sessionId}/file/designs/${layout}/${encodeURIComponent(file)}`;
+        }
+      }
+      ctx.onEvent?.({
+        kind: 'doc-patch',
+        layout,
+        patches,
+        ...(Object.keys(assets).length ? { assets } : {}),
+      });
       return { content: JSON.stringify({ ok: true, layout, applied: r.applied, errors: [] }) };
     },
   };

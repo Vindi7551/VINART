@@ -521,7 +521,12 @@ export function App() {
    * - 不重挂编辑器；DOM 由 PreviewPanel 的同步 effect 更新；
    * - 这里只换内存 doc + 触发自动保存。
    */
-  function applyDocPatch(data: { layout?: unknown; doc?: unknown; patches?: unknown }) {
+  function applyDocPatch(data: {
+    layout?: unknown;
+    doc?: unknown;
+    patches?: unknown;
+    assets?: unknown;
+  }) {
     const name = typeof data.layout === 'string' ? data.layout : '';
     const cur = layoutRef.current;
     if (!cur || cur.name !== name) return;
@@ -539,7 +544,17 @@ export function App() {
     }
     if (!nextDoc) return;
 
-    commitLayout({ ...cur, doc: nextDoc });
+    // 新引用素材的 URL（generate_assets 刚生成的文件）——合并进当前 assets，
+    // 否则 PreviewPanel 就地重发图层时拿不到文件地址（刷新 /data 后才对）。
+    const newAssets =
+      data.assets && typeof data.assets === 'object'
+        ? (data.assets as Record<string, string>)
+        : null;
+    commitLayout({
+      ...cur,
+      doc: nextDoc,
+      ...(newAssets ? { assets: { ...cur.assets, ...newAssets } } : {}),
+    });
     scheduleAutoSave();
   }
 
