@@ -462,9 +462,15 @@ function emitText(
   if (node.stroke) {
     if (Array.isArray(node.stroke.width)) no('stroke.width', '文字描边只做统一线宽（四边不同对文字没有意义）');
     if (node.stroke.paint && /url\(/i.test(node.stroke.paint)) no('stroke.paint', '图片描边要 border-image，文字上做不了');
+    if (node.stroke.paint && /gradient\(/i.test(node.stroke.paint)) {
+      no('stroke.paint', '普通文字的渐变描边做不了（-webkit-text-stroke 只吃纯色）；弧线文字/形状支持');
+    }
     if (node.stroke.inset) note('stroke.inset', '文字描边是**居中**描（一半在外一半在内），没有"向内描"这个选项');
     if (node.stroke.over) note('stroke.over', '文字描边永远画在字面之上，没有"画在下面"这个选项');
     if (node.stroke.cap || node.stroke.join) note('stroke.cap', '端点 / 拐角只对**开放路径**有意义，字形轮廓上不适用');
+  }
+  if (node.runs.some((r) => /gradient\(/i.test(r.decoration?.color ?? node.decoration?.color ?? ''))) {
+    no('decoration.color', '普通文字的装饰线渐变做不了（text-decoration-color 只吃纯色）；弧线文字支持');
   }
   if (node.dropCap && node.wrap !== 'normal') {
     note('dropCap', '首字下沉要有意义，这段文字**必须多行** —— 建议同时把 `wrap` 设成 `normal`');
@@ -488,7 +494,7 @@ function emitText(
   let strokeInline = '';
   if (node.stroke) {
     const w = Array.isArray(node.stroke.width) ? node.stroke.width[0] : (node.stroke.width ?? 1);
-    const paint = node.stroke.paint && !/url\(/i.test(node.stroke.paint) ? node.stroke.paint : 'currentColor';
+    const paint = node.stroke.paint && !/url\(/i.test(node.stroke.paint) && !/gradient\(/i.test(node.stroke.paint) ? node.stroke.paint : 'currentColor';
     strokeInline = joinCss([`-webkit-text-stroke:${w}px ${paint}`]);
   }
 
@@ -733,13 +739,13 @@ function emitPathText(
         ? '沿路径的装饰线按弧线近似绘制（文字长度按字符宽度估算）'
         : '任意 path 的装饰线暂不支持沿路径（目前是直线）',
     );
-  }
-  // ⚠️ 描边**支持**（SVG `stroke`），但只支持纯色；渐变/图案退回 `currentColor`。
-  //    普通文字用 `-webkit-text-stroke`，沿路径用 SVG 的 `stroke` —— 两者效果对齐。
-  if (node.stroke) {
-    if (!node.stroke.paint || !isPlainColor(node.stroke.paint)) {
-      note('stroke.paint', '沿路径的文字描边只支持纯色（渐变/图案会退回 currentColor）');
+    if (!customCurveDeco && node.runs.some((r) => /gradient\(/i.test(r.decoration?.color ?? node.decoration?.color ?? ''))) {
+      note('decoration.color', '任意 path 的装饰线渐变暂不支持（text-decoration-color 只吃纯色）');
     }
+  }
+  // ⚠️ 描边支持 SVG `stroke`：纯色 / 线性渐变 / 径向渐变；解析不了的图案退回 `currentColor`。
+  //    普通文字用 `-webkit-text-stroke`（只支持纯色），沿路径用 SVG 的 `stroke`。
+  if (node.stroke) {
     if (Array.isArray(node.stroke.width)) {
       note('stroke.width', '沿路径的文字描边只用了 width[0]（多档描边不支持）');
     }
@@ -772,9 +778,9 @@ function emitPathText(
   const gid = `${pid}-fill`;
   const gradDef = gradientCss ? cssGradientToSvgDef(gradientCss, gid) : null;
   if (gradientCss && !gradDef) {
-    note('fill', '沿路径的文字只支持线性渐变（这个渐变解析不了，退回纯色）');
+    note('fill', '沿路径的文字只支持线性/径向渐变（这个渐变解析不了，退回纯色）');
   } else if (!gradDef && node.fill !== undefined && (typeof node.fill !== 'string' || !isPlainColor(node.fill))) {
-    note('fill', '沿路径的文字只支持纯色/线性渐变（多层 fill 只取纯色兜底）');
+    note('fill', '沿路径的文字只支持纯色/线性/径向渐变（多层 fill 只取纯色兜底）');
   }
   const fill = gradDef ? `url(#${gid})` : (fallbackFill ?? 'currentColor');
 
@@ -792,10 +798,23 @@ function emitPathText(
   // ── 描边：SVG 的 `stroke`（普通文字是 `-webkit-text-stroke`，语义对齐）──
   //    `node.stroke.width` 可能是多档数组；路径文字只取第一档（已在上面 note）。
   let strokeAttrs = '';
+  let strokeGradDef = '';
   if (node.stroke) {
     const raw = node.stroke.width;
     const w = Array.isArray(raw) ? raw[0] : (raw ?? 1);
-    const paint = node.stroke.paint && isPlainColor(node.stroke.paint) ? node.stroke.paint : 'currentColor';
+    let paint = node.stroke.paint ?? 'currentColor';
+    if (node.stroke.paint && !isPlainColor(node.stroke.paint)) {
+      // 渐变描边：和 fill 共用解析器；普通文字那条 `-webkit-text-stroke` 做不到
+      const sgid = `${pid}-stroke`;
+      const sg = cssGradientToSvgDef(node.stroke.paint, sgid);
+      if (sg) {
+        strokeGradDef = sg;
+        paint = `url(#${sgid})`;
+      } else {
+        note('stroke.paint', '描边渐变只支持线性/径向；解析不了会退回 currentColor');
+        paint = 'currentColor';
+      }
+    }
     // ⚠️ 描边宽度是**像素**：路径只被 `transform` 缩放，`<text>` 本身不缩放，所以这里不用乘 W/H。
     strokeAttrs = ` stroke="${escAttr(paint)}" stroke-width="${w}"`;
   }
@@ -820,6 +839,7 @@ function emitPathText(
 
   // ── 沿弧线的装饰线（curve 专用；任意 path 走 tspan 的 text-decoration 直线）──
   let deco = '';
+  const decoDefs: string[] = [];
   if (customCurveDeco) {
     const curve = node.curve ?? 0;
     const samples = curveSamples(curve, W, H);
@@ -830,6 +850,7 @@ function emitPathText(
     const start =
       totalPath * alignFrac - (node.align === 'center' ? totalText / 2 : node.align === 'right' ? totalText : 0);
     const lines: string[] = [];
+    const decoGradDefs: string[] = [];
     let cursor = start;
     node.runs.forEach((r, i) => {
       const w = widths[i] ?? 0;
@@ -840,7 +861,25 @@ function emitPathText(
         const t1 = tAtLength(samples, cursor + w);
         if (t1 > t0) {
           const fs = textFontSize(r.fontSizePx ?? node.fontSizePx, fit);
-          const color = decoColorSvg(r, node) ?? 'currentColor';
+          const explicit = r.decoration?.color ?? node.decoration?.color;
+          let color: string;
+          if (explicit) {
+            if (/gradient\(/i.test(explicit)) {
+              const dgid = `${pid}-deco-${i}`;
+              const dg = cssGradientToSvgDef(explicit, dgid);
+              if (dg) {
+                decoGradDefs.push(dg);
+                color = `url(#${dgid})`;
+              } else {
+                note('decoration.color', '装饰线渐变只支持线性/径向；解析不了退回 currentColor');
+                color = 'currentColor';
+              }
+            } else {
+              color = explicit;
+            }
+          } else {
+            color = decoColorSvg(r, node) ?? 'currentColor';
+          }
           const thick =
             r.decoration?.thickness ?? node.decoration?.thickness ?? Math.max(1, Math.round(fs / 30));
           const style = r.decoration?.style ?? node.decoration?.style;
@@ -859,9 +898,11 @@ function emitPathText(
       cursor += w;
     });
     if (lines.length) deco = lines.join('');
+    decoDefs.push(...decoGradDefs);
   }
 
-  const defs = gradDef ? `<defs>${gradDef}</defs>` : '';
+  const defParts = [gradDef, strokeGradDef, ...decoDefs].filter((x): x is string => !!x).join('');
+  const defs = defParts ? `<defs>${defParts}</defs>` : '';
   return (
     `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="position:absolute;left:0;top:0;overflow:visible">` +
     defs +
@@ -879,63 +920,250 @@ function emitPathText(
 // 渐变 / 图标
 // ══════════════════════════════════════════════════════════════════════
 
-/** `linear-gradient(115deg, #A, #B)` → `<linearGradient>` 定义；解析不了 ⇒ `null` */
-function cssGradientToSvgDef(css: string, id: string): string | null {
-  const repeating = /repeating-linear-gradient/i.test(css);
-  const m = /(?:repeating-)?linear-gradient\(([^)]+)\)/i.exec(css);
+/** 顶层逗号切分（颜色函数 `rgb(0 0 0 / .5)` 里的逗号不能切） */
+function splitTopLevel(s: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of s) {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    if (ch === ',' && depth === 0) {
+      if (cur.trim()) out.push(cur.trim());
+      cur = '';
+    } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
+/** `linear-gradient(45deg, ...)` / `radial-gradient(circle at ..., ...)` → 函数名 + 参数 */
+function parseGradientArgs(css: string): { kind: 'linear' | 'radial'; repeating: boolean; args: string } | null {
+  const m = /^\s*(repeating-)?(linear|radial)-gradient\s*\(/i.exec(css);
   if (!m) return null;
-  const parts = m[1].split(',').map((x) => x.trim());
-  let deg = 180; // CSS 缺省方向 = to bottom
-  let i = 0;
-  const head = parts[0] ?? '';
-  const degM = /^(-?[\d.]+)deg$/i.exec(head);
-  if (degM) {
-    deg = parseFloat(degM[1]);
-    i = 1;
-  } else if (/^to\s/i.test(head)) {
-    const d = head.toLowerCase();
-    deg = d.includes('right') && d.includes('top') ? 45
-      : d.includes('right') && d.includes('bottom') ? 135
-      : d.includes('left') && d.includes('bottom') ? 225
-      : d.includes('left') && d.includes('top') ? 315
-      : d.includes('right') ? 90
-      : d.includes('left') ? 270
-      : d.includes('top') ? 0
-      : 180;
-    i = 1;
+  const start = m[0].length;
+  let depth = 1;
+  let i = start;
+  for (; i < css.length; i++) {
+    if (css[i] === '(') depth++;
+    else if (css[i] === ')') {
+      depth--;
+      if (depth === 0) break;
+    }
   }
-  const stops = parts.slice(i).map((raw) => {
-    const pm = /^(.+?)\s+([\d.]+)%$/.exec(raw);
-    return pm ? { color: pm[1].trim(), offset: parseFloat(pm[2]) / 100 } : { color: raw, offset: -1 };
-  });
-  if (!stops.length) return null;
-  if (stops.every((s) => s.offset < 0) && stops.length > 1) {
-    stops.forEach((s, idx) => (s.offset = idx / (stops.length - 1)));
+  if (depth !== 0) return null;
+  return {
+    kind: (m[2] ?? 'linear').toLowerCase() as 'linear' | 'radial',
+    repeating: !!m[1],
+    args: css.slice(start, i),
+  };
+}
+
+const COLOR_TOKEN =
+  /^(#[0-9a-f]{3,8}|(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^)]*\)|transparent|currentColor|[a-zA-Z]+)/i;
+
+interface ParsedStop {
+  color: string;
+  /** 0–1；一个颜色可以带两个位置（CSS 的 `red 0 10%` 色带） */
+  positions: number[];
+}
+
+function parseStops(parts: string[]): ParsedStop[] {
+  const out: ParsedStop[] = [];
+  for (const raw of parts) {
+    const p = raw.trim();
+    if (!p) continue;
+    // 纯位置 = 颜色提示（color hint），SVG 不做插值提示；跳过
+    if (/^[\d.]+(?:%|px|em|rem|vw|vh|vmin|vmax)$/i.test(p)) continue;
+    const m = COLOR_TOKEN.exec(p);
+    if (!m) continue;
+    const color = m[1]!;
+    const rest = p.slice(color.length).trim();
+    const positions: number[] = [];
+    const re = /([\d.]+)(%)?/g;
+    let mm: RegExpExecArray | null;
+    while ((mm = re.exec(rest))) {
+      const num = parseFloat(mm[1]!);
+      if (!Number.isFinite(num)) continue;
+      // `red 0 10%`：0 是无单位的零长度，算 0%；`30px` 这种长度不换算
+      if (mm[2] === '%' || num === 0) positions.push(Math.max(0, Math.min(1, num / 100)));
+    }
+    out.push({ color, positions });
+  }
+  return out;
+}
+
+function normalizeStops(parsed: ParsedStop[]): Array<{ color: string; offset: number }> {
+  const stops: Array<{ color: string; offset: number }> = [];
+  for (const p of parsed) {
+    if (p.positions.length) {
+      for (const pos of p.positions) stops.push({ color: p.color, offset: pos });
+    } else {
+      stops.push({ color: p.color, offset: -1 });
+    }
+  }
+  if (!stops.length) return [];
+  if (stops.every((s) => s.offset < 0)) {
+    stops.forEach((s, i) => (s.offset = stops.length === 1 ? 0 : i / (stops.length - 1)));
   } else {
-    let last = 0;
-    for (const st of stops) {
-      if (st.offset < 0) st.offset = last;
-      last = st.offset;
+    let prev = 0;
+    for (let i = 0; i < stops.length; i++) {
+      const s = stops[i]!;
+      if (s.offset < 0) s.offset = i === stops.length - 1 ? 1 : prev;
+      s.offset = Math.max(prev, Math.min(1, s.offset));
+      prev = s.offset;
     }
   }
-  if (repeating) {
-    const period = stops.length ? Math.max(...stops.map((s2) => s2.offset)) : 0;
-    if (period <= 0 || period >= 1) return null;
-    const base = stops.map((s2) => ({ ...s2 }));
-    const copies = Math.ceil(1 / period);
-    for (let c = 1; c < copies; c++) {
-      for (const s2 of base) stops.push({ color: s2.color, offset: Math.min(1, s2.offset + c * period) });
+  return stops;
+}
+
+function angleToDeg(raw: string): number | null {
+  const m = /^(-?[\d.]+)(deg|grad|rad|turn)?$/i.exec(raw.trim());
+  if (!m) return null;
+  const v = parseFloat(m[1]!);
+  const unit = (m[2] ?? 'deg').toLowerCase();
+  if (unit === 'deg') return v;
+  if (unit === 'grad') return v * 0.9;
+  if (unit === 'rad') return (v * 180) / Math.PI;
+  return v * 360;
+}
+
+function isLinearPrelude(s: string): boolean {
+  return /^(?:-?[\d.]+(?:deg|grad|rad|turn)|to\s)/i.test(s.trim());
+}
+
+function isRadialPrelude(s: string): boolean {
+  const t = s.trim().toLowerCase();
+  if (/\bat\b/.test(t)) return true;
+  if (/^(circle|ellipse)\b/.test(t)) return true;
+  if (/^(closest|farthest)-(side|corner)\b/.test(t)) return true;
+  if (/^-?[\d.]+(?:%|px|em|rem|vw|vh|vmin|vmax)(?:\s+-?[\d.]+(?:%|px|em|rem|vw|vh|vmin|vmax))?$/.test(t)) {
+    return true;
+  }
+  return false;
+}
+
+function parsePosition(tokens: string[]): { x: number; y: number } {
+  const val = (t: string): number | undefined => {
+    const k = t.toLowerCase();
+    if (k === 'left' || k === 'top') return 0;
+    if (k === 'right' || k === 'bottom') return 1;
+    if (k === 'center') return 0.5;
+    return k.endsWith('%') ? parseFloat(k) / 100 : undefined;
+  };
+  const vals = tokens.map(val).filter((v): v is number => v !== undefined);
+  if (vals.length >= 2) return { x: vals[0]!, y: vals[1]! };
+  if (!vals.length) return { x: 0.5, y: 0.5 };
+  const t0 = tokens[0]?.toLowerCase() ?? '';
+  if (t0 === 'top' || t0 === 'bottom') return { x: 0.5, y: vals[0]! };
+  return { x: vals[0]!, y: 0.5 };
+}
+
+/** `radial-gradient([circle|ellipse] [size] at <pos>, ...)` 的前导部分 */
+function parseRadialPrelude(head: string): { cx: number; cy: number; rx: number; ry: number } {
+  const t = head.trim().toLowerCase();
+  const at = t.indexOf('at');
+  const before = (at >= 0 ? t.slice(0, at) : t).trim();
+  const after = at >= 0 ? t.slice(at + 2).trim() : '';
+  const bt = before.split(/\s+/).filter(Boolean);
+  let shape: 'circle' | 'ellipse' = 'ellipse';
+  let sizeTokens = bt;
+  if (bt[0] === 'circle' || bt[0] === 'ellipse') {
+    shape = bt[0] === 'circle' ? 'circle' : 'ellipse';
+    sizeTokens = bt.slice(1);
+  }
+  const pos = parsePosition(after.split(/\s+/).filter(Boolean));
+  const pct = sizeTokens.filter((x) => x.endsWith('%')).map((x) => parseFloat(x) / 100);
+  const kw = sizeTokens.find((x) => /^(closest|farthest)-(side|corner)$/.test(x)) ?? '';
+  // 归一化 bbox 里到四条边/四个角的距离
+  const nx = Math.min(pos.x, 1 - pos.x);
+  const fx = Math.max(pos.x, 1 - pos.x);
+  const ny = Math.min(pos.y, 1 - pos.y);
+  const fy = Math.max(pos.y, 1 - pos.y);
+  const sideCornerR =
+    kw === 'closest-side' ? Math.min(nx, ny)
+      : kw === 'farthest-side' ? Math.max(fx, fy)
+      : kw === 'closest-corner' ? Math.hypot(nx, ny)
+      : Math.hypot(fx, fy); // 默认 = ellipse farthest-corner
+  let rx = sideCornerR;
+  let ry = sideCornerR;
+  if (shape === 'circle') {
+    if (Number.isFinite(pct[0])) rx = ry = pct[0]!;
+  } else if (pct.length >= 2) {
+    rx = pct[0]!;
+    ry = pct[1]!;
+  } else if (pct.length === 1) {
+    rx = ry = pct[0]!;
+  }
+  return { cx: pos.x, cy: pos.y, rx, ry };
+}
+
+/**
+ * `linear-gradient(...)` / `radial-gradient(...)` / repeating 变体 → SVG 渐变定义。
+ *
+ * - 支持多停靠点、`red 0 10%` 两位置、alpha/`currentColor`、顶层逗号切分；
+ * - radial 支持 `circle|ellipse`、`at x y`、百分比尺寸；**尺寸关键字/px 近似为 50%**；
+ * - radial 的 `circle` 在非方形 bbox 上会被 SVG 拉成椭圆（objectBoundingBox 的固有行为）；
+ * - conic 没有 SVG 原生对应，返回 null（调用方报 note）。
+ */
+function cssGradientToSvgDef(css: string, id: string): string | null {
+  const g = parseGradientArgs(css);
+  if (!g) return null;
+  const parts = splitTopLevel(g.args);
+  if (!parts.length) return null;
+  const head = parts[0] ?? '';
+  const hasPrelude = g.kind === 'linear' ? isLinearPrelude(head) : isRadialPrelude(head);
+  const stops = normalizeStops(parseStops(parts.slice(hasPrelude ? 1 : 0)));
+  if (!stops.length) return null;
+
+  if (g.kind === 'linear') {
+    let deg = 180; // CSS 缺省方向 = to bottom
+    if (hasPrelude) {
+      if (/^to\s/i.test(head)) {
+        const d = head.toLowerCase();
+        deg = d.includes('right') && d.includes('top') ? 45
+          : d.includes('right') && d.includes('bottom') ? 135
+          : d.includes('left') && d.includes('bottom') ? 225
+          : d.includes('left') && d.includes('top') ? 315
+          : d.includes('right') ? 90
+          : d.includes('left') ? 270
+          : d.includes('top') ? 0
+          : 180;
+      } else {
+        const a = angleToDeg(head);
+        if (a !== null) deg = a;
+      }
     }
+    if (g.repeating) {
+      const period = Math.max(...stops.map((s) => s.offset));
+      // ⚠️ 周期 ≥ 1 的 repeating 只是"盒子内不足一个周期"——不能直接丢；
+      //    stops 已被归一化到 0–1，照常输出首段即可。
+      if (period <= 0) return null;
+      const base = stops.map((s) => ({ ...s }));
+      for (let c = 1; c < Math.ceil(1 / period); c++) {
+        for (const s of base) stops.push({ color: s.color, offset: Math.min(1, s.offset + c * period) });
+      }
+    }
+    const rad = (deg * Math.PI) / 180;
+    const x = Math.sin(rad);
+    const y = -Math.cos(rad);
+    const f = (v: number) => (0.5 + v / 2).toFixed(4);
+    const stopXml = stops
+      .map((s) => `<stop offset="${s.offset.toFixed(4)}" stop-color="${escAttr(s.color)}"/>`)
+      .join('');
+    return `<linearGradient id="${id}" x1="${f(-x)}" y1="${f(-y)}" x2="${f(x)}" y2="${f(y)}">${stopXml}</linearGradient>`;
   }
 
-  const rad = (deg * Math.PI) / 180;
-  const x = Math.sin(rad);
-  const y = -Math.cos(rad);
-  const f = (v: number) => (0.5 + v / 2).toFixed(4);
+  const p = parseRadialPrelude(head);
+  const spread = g.repeating ? ' spreadMethod="repeat"' : '';
+  const transform =
+    Math.abs(p.rx - 0.5) > 1e-6 || Math.abs(p.ry - 0.5) > 1e-6
+      ? ` gradientTransform="translate(${p.cx.toFixed(4)} ${p.cy.toFixed(4)}) scale(${(p.rx * 2).toFixed(4)} ${(p.ry * 2).toFixed(4)}) translate(${(-p.cx).toFixed(4)} ${(-p.cy).toFixed(4)})"`
+      : '';
   const stopXml = stops
-    .map((s2) => `<stop offset="${s2.offset.toFixed(4)}" stop-color="${escAttr(s2.color)}"/>`)
+    .map((s) => `<stop offset="${s.offset.toFixed(4)}" stop-color="${escAttr(s.color)}"/>`)
     .join('');
-  return `<linearGradient id="${id}" x1="${f(-x)}" y1="${f(-y)}" x2="${f(x)}" y2="${f(y)}">${stopXml}</linearGradient>`;
+  return `<radialGradient id="${id}" cx="${p.cx.toFixed(4)}" cy="${p.cy.toFixed(4)}" r="0.5"${transform}${spread}>${stopXml}</radialGradient>`;
 }
 
 /**
@@ -1190,7 +1418,7 @@ function emitShape(
   /** 一个 fill 值 → SVG 能吃的 `fill`（纯色直传；渐变/图案落 `<defs>` 再引用） */
   const takeFill = (f: string): string => {
     if (isPlainColor(f)) return f;
-    if (/linear-gradient/i.test(f)) {
+    if (/gradient\(/i.test(f)) {
       const id = `grad-${node.id.replace(/[^A-Za-z0-9_-]/g, '_')}`;
       const def = cssGradientToSvgDef(f, id);
       if (def) {
@@ -1273,15 +1501,29 @@ function emitShape(
       ? ` filter="${escAttr(`${node.filter ?? ''} ${shadows.join(' ')}`.trim())}"`
       : '';
 
-  // ── 描边：统一走 SVG 的 `stroke` 属性 ──
+  // ── 描边：统一走 SVG 的 `stroke` 属性（支持纯色 / 线性 / 径向渐变）──
   const strokeAttrs: string[] = [];
   const st = node.stroke;
   if (st) {
     if (Array.isArray(st.width)) no('stroke.width', '统一线宽（"四边不同"只有盒子的 border 才有，SVG 图元是统一描边）');
-    if (st.paint && /url\(/i.test(st.paint)) no('stroke.paint', '图片描边这一版没做');
     if (st.inset) note('stroke.inset', 'SVG 的描边骑在轮廓上，没有"向内描"');
+    let strokePaint = st.paint ?? '';
+    if (st.paint && /gradient\(/i.test(st.paint)) {
+      const gid = `grad-stroke-${node.id.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+      const def = cssGradientToSvgDef(st.paint, gid);
+      if (def) {
+        defs.push(def);
+        strokePaint = `url(#${gid})`;
+      } else {
+        no('stroke.paint', `这一版解析不了这个描边渐变：${st.paint}`);
+        strokePaint = '';
+      }
+    } else if (st.paint && /url\(/i.test(st.paint)) {
+      no('stroke.paint', '图片描边这一版没做');
+      strokePaint = '';
+    }
     strokeAttrs.push(
-      st.paint && !/url\(/i.test(st.paint) ? `stroke="${escAttr(st.paint)}"` : '',
+      strokePaint ? `stroke="${escAttr(strokePaint)}"` : '',
       `stroke-width="${st.width ?? 1}"`,
       st.dash ? `stroke-dasharray="${st.dash[0]} ${st.dash[1]}"` : '',
       st.cap ? `stroke-linecap="${st.cap}"` : '',
