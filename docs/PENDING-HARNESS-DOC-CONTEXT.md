@@ -325,6 +325,14 @@ AI 的上下文和未来工具都建立在"当前 doc"上，但现在：
   （不 reset）；`PreviewPanel` 外部 doc 改走它，DOM 仍整层重发。AI 修改可 Ctrl+Z；
 - tests 85。
 
+### 10. 工具可选 layout（2026-10-19）
+
+- `patch_doc` / `generate_assets` 增加可选 `layout`（默认 active）；`get_design` 已有；
+- active 仍是用户当前预览，系列图不抢 active；`sketch_plan` 新建返回 `layout`，
+  同一轮后续工具用它，不假设 active 已切；
+- 错误分两种：没有 active 且没传 layout；传了但版式不存在；
+- tests 85。
+
 
 
 

@@ -103,18 +103,23 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
           type: 'string',
           description: '可选：商品实物照路径（订单引用 @product 时需要）',
         },
+        layout: {
+          type: 'string',
+          description: '可选：生成到系列里的哪一张；不传用当前 active',
+        },
       },
     },
     async execute(args, ctx) {
-      const layout = ctx.activeLayout?.trim() ?? '';
+      const requested = typeof args.layout === 'string' ? args.layout.trim() : '';
+      const layout = requested || ctx.activeLayout?.trim() || '';
       if (!layout) {
-        return { content: 'ERROR: 当前没有打开的版式。', isError: true };
+        return { content: 'ERROR: 当前没有打开的版式，也没有传 layout。', isError: true };
       }
       const workDir = await getWorkDir(config.sessionId);
       const outDir = join(workDir, 'designs', layout);
       const docPath = join(outDir, 'doc.json');
       if (!existsSync(docPath)) {
-        return { content: `ERROR: 版式 ${layout} 还没有 doc.json。`, isError: true };
+        return { content: `ERROR: 版式 '${layout}' 不存在（没有 doc.json）。`, isError: true };
       }
 
       const images = Array.isArray(args.images) ? (args.images as AssetOrders) : [];

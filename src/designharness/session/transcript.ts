@@ -259,17 +259,30 @@ export function newSessionId(): string {
 // ── 写 ──────────────────────────────────────────────────────────────────
 
 /**
- * 新建会话（**惰性**）：只分配 id 并登记落点，不写盘、不写索引——
- * 第一个事件落盘时才真正建文件，「空会话」因此在磁盘上不存在。
- * workDir 必填：一个会话的家就是它的工作目录（会话跟着目录走）。
+ * 新建会话：**POST 即落盘**——建 `<workDir>/.vinart/sessions/<id>.jsonl`，
+ * 写第一行 meta（workDir），并同步索引。
  *
- * ⚠️ 这里**不 mkdir**：落点目录由 `appendEventInner` 在真正要写时才建。
- * 「选目录/建会话」都不得在用户目录里留下空文件夹（惰性会话的底线）。
+ * 惰性只剩「**浏览不创建**」：App 只在用户发第一条消息时 POST；
+ * 一旦 POST，会话就已经开始，文件/meta 立刻存在 ⇒
+ * `getWorkDir` / `setActiveLayout` / `/api/layout/<name>/data?session=` 不再有
+ * “id 有了但文件还没建”的窗口。
+ *
+ * 「空会话」（POST 后放弃/首轮失败）保留在磁盘上，由用户手动删。
  */
 export async function createSession(workDir: string): Promise<string> {
   const id = newSessionId();
   const abs = await registerRoot(workDir);
-  pending.set(id, { root: abs });
+  const loc: SessionLocation = {
+    file: sessionFileOf(abs, id),
+    root: abs,
+    index: indexFileOf(abs),
+  };
+  const meta: SessionEvent = { ts: new Date().toISOString(), kind: 'meta', workDir: abs };
+  await mkdir(dirname(loc.file), { recursive: true });
+  await writeFile(loc.file, JSON.stringify(meta) + '\n', 'utf8');
+  pending.delete(id);
+  locCache.set(id, loc);
+  await touchIndex(loc, id, meta);
   return id;
 }
 

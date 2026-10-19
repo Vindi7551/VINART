@@ -49,12 +49,17 @@ export function createPatchDocTool(config: { sessionId: string }): AgentTool {
             },
           },
         },
+        layout: {
+          type: 'string',
+          description: '可选：改系列里的哪一张；不传用当前 active',
+        },
       },
     },
     async execute(args, ctx) {
-      const layout = ctx.activeLayout?.trim() ?? '';
+      const requested = typeof args.layout === 'string' ? args.layout.trim() : '';
+      const layout = requested || ctx.activeLayout?.trim() || '';
       if (!layout) {
-        return { content: 'ERROR: 当前没有打开的版式。', isError: true };
+        return { content: 'ERROR: 当前没有打开的版式，也没有传 layout。', isError: true };
       }
       const patches = args.patches;
       if (!Array.isArray(patches)) {
@@ -64,7 +69,7 @@ export function createPatchDocTool(config: { sessionId: string }): AgentTool {
       const workDir = await getWorkDir(config.sessionId);
       const p = join(workDir, 'designs', layout, 'doc.json');
       if (!existsSync(p)) {
-        return { content: `ERROR: 版式 ${layout} 还没有 doc.json。`, isError: true };
+        return { content: `ERROR: 版式 '${layout}' 不存在（没有 doc.json）。`, isError: true };
       }
 
       const doc = JSON.parse(readFileSync(p, 'utf8')) as DesignDocument;

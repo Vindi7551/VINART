@@ -73,7 +73,7 @@ export function createGetDesignTool(config: { sessionId: string }): AgentTool {
       const workDir = await getWorkDir(config.sessionId);
       const p = join(workDir, 'designs', layout, 'doc.json');
       if (!existsSync(p)) {
-        return { content: `ERROR: 版式 ${layout} 还没有 doc.json。`, isError: true };
+        return { content: `ERROR: 版式 '${layout}' 不存在（没有 doc.json）。`, isError: true };
       }
       const doc = JSON.parse(readFileSync(p, 'utf8')) as DesignDocument;
       return { content: JSON.stringify({ layout, ...(semanticView(doc) as object) }) };

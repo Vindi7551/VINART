@@ -335,6 +335,7 @@ export function App() {
   /** 切换会话：环境跟会话走（清掉待用缓存——它只属于「还没建」的下一个会话） */
   const handleSwitchSession = useCallback(async (id: string) => {
     localStorage.setItem('vinart.sessionId', id);
+    sessionIdRef.current = id;
     setSessionId(id);
     setSelectedLayer(null);
     savePendingEnv({});
@@ -353,6 +354,7 @@ export function App() {
   const handleNewSession = useCallback(
     (envOverride?: { workDir?: string }) => {
       localStorage.removeItem('vinart.sessionId');
+      sessionIdRef.current = null;
       setSessionId(null);
       setSelectedLayer(null);
       setMessages([]);
@@ -385,6 +387,7 @@ export function App() {
     if (!r.ok) throw new Error(`创建会话失败：HTTP ${r.status}`);
     const { id } = (await r.json()) as { id: string };
     localStorage.setItem('vinart.sessionId', id);
+    sessionIdRef.current = id;
     setSessionId(id);
     savePendingEnv({});
     await refreshSessions();
@@ -487,6 +490,16 @@ export function App() {
   /** 权威数据引用 + 防抖自动保存(1.5s 无操作静默写盘,刷新页面不丢) */
   const layoutRef = useRef<PreviewData | null>(null);
   const saveTimer = useRef<number | undefined>(undefined);
+  /**
+   * 当前 sessionId 的**同步镜像**。
+   * `setSessionId` 是异步的：新建会话时这一轮 SSE 回调的闭包里还是旧的 null，
+   * 用它去拉 /data / 写 set-active / 自动保存都会落到 null 或旧会话。
+   * 所有"这一轮就要用"的地方读 ref，state 只负责渲染。
+   */
+  const sessionIdRef = useRef<string | null>(sessionId);
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
 
   function commitLayout(next: PreviewData) {
     layoutRef.current = next;
@@ -502,9 +515,10 @@ export function App() {
 
   async function autoSaveNow() {
     const cur = layoutRef.current;
-    if (!cur) return;
+    const sid = sessionIdRef.current;
+    if (!cur || !sid) return;
     try {
-      await fetch(layoutApiUrl(cur, 'save', sessionId), {
+      await fetch(layoutApiUrl(cur, 'save', sid), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ doc: cur.doc }),
@@ -685,7 +699,8 @@ export function App() {
   /** 打开产物:fetch data(会话工作目录模式带 session query) */
   const handleOpenArtifact = useCallback(
     async (url: string, name: string, _dir: string, sidOverride?: string) => {
-      const sid = sidOverride ?? sessionId;
+      const sid = sidOverride ?? sessionIdRef.current;
+      if (!sid) return;
       setPreviewUrl(url); // 兜底:数据没到之前先给 PNG
       try {
         const dataUrl = artifactDataUrl(sid, name);
@@ -750,7 +765,7 @@ export function App() {
         ]);
       }
     },
-    [sessionId, logSessionAction],
+    [logSessionAction],
   );
 
   /** 打开/刷新当前会话的版式（来自 AI 工具事件；没有 PNG URL，直接拉 data） */
@@ -1134,6 +1149,8 @@ export function App() {
       let sid: string;
       try {
         sid = await ensureSession();
+        // ensureSession 里 setSessionId 是异步的；这一轮 SSE 回调要用同步 ref。
+        sessionIdRef.current = sid;
       } catch (e) {
         setMessages((prev) => [
           ...prev,
@@ -1282,7 +1299,7 @@ export function App() {
               setGalleryKey((k) => k + 1);
               const a = data as { layout?: unknown; open?: unknown };
               if (a.open !== false && typeof a.layout === 'string' && a.layout) {
-                void openLayoutByName(a.layout);
+                void openLayoutByName(a.layout, sid);
               }
             }
             // 工具就地改当前版式 → 不重挂编辑器
