@@ -20,8 +20,9 @@
  * | 浏览器 | 光标、方向键、拖选、输入法 —— 全部交给它（自绘光标要重写一遍文字布局量算，不值） |
  * | 本模块 | 拦 `beforeinput` → 翻译成"文档里第几个字符处插一段"；就地补 DOM；记光标/选区 |
  *
- * ⚠️ **唯一一处"从 DOM 读回文字"**是输入法组合结束（组合期的 `beforeinput`
- * 不可取消，浏览器已经真改了 DOM）。而且**只读文字、不读样式**。
+ * ⚠️ 组合期的 `beforeinput` 不可取消（浏览器已经真改了 DOM）⇒ 组合的落盘在
+ * `compositionend`：按 `compositionstart` 记下的**文档选区** + `event.data` 写回；
+ * **从 DOM 读回文字只作为兜底**，而且只读文字、不读样式。
  *
  * ## 本模块不认识"当前页面"
  *
@@ -141,6 +142,15 @@ export function createTextSession(host: TextHost): TextSession {
   let selRange: RunRange | null = null;
   /** 上一次见到的片段数 —— 判"结构变没变"（变了必须重渲，不能只补 DOM） */
   let lastRunCount = 0;
+  /**
+   * **输入法组合开始时的文档选区**（组合文本要落在这里）。
+   *
+   * 组合期间浏览器直接改 DOM，文档不能跟着改（否则每按一个拼音就进一次撤销栈）；
+   * 但**必须记住起点**：`compositionend` 要按这个范围"删选区 + 插上屏文本"。
+   * 只读 DOM 里的 span 是不够的 —— 组合跨两个片段、或替换一段跨段选区时，
+   * 另一段被删掉的字就永远同步不回来（实测：`He中文world`，应为 `He中文rld`）。
+   */
+  let composing: AbsRange | null = null;
   let bound = false;
 
   const sub = () => host.root();
@@ -344,6 +354,13 @@ export function createTextSession(host: TextHost): TextSession {
     if (keepAbs) selAbs = { ...keepAbs };
 
     /**
+     * ⚠️ 文字的高度是**排版结果**：打字 / 删字 / 输入法上屏都可能让 DOM 变高变矮。
+     * 这里必须主动让宿主重量一次框 —— `selectionchange` 正被 `suppressSel` 压着，
+     * 等它自己来就永远慢一拍（实测：打完两行，选中框还停在 28px，文字已经 56px）。
+     */
+    host.onSelectionChange();
+
+    /**
      * ⚠️ **改完 DOM 要补一次焦点**。
      *
      * Chromium 在 `beforeinput` 里被我们改了光标所在文本节点之后，会在事件收尾时
@@ -388,13 +405,18 @@ export function createTextSession(host: TextHost): TextSession {
    * ⭐ **敲键的入口**。用 `beforeinput` 而不是 `keydown`：它直接说清"要做什么"
    * （`inputType` + `data`），而且**带输入法的组合态**。
    *
-   * ⚠️ 唯一拦不掉的是 `insertCompositionText`（规范里 `cancelable = false`）——
-   * 那种放行，组合结束后再对齐（`compositionend`）。
+   * ⚠️ 组合态（`isComposing`）的 `beforeinput` **一律放行**（`insertCompositionText`
+   * 本身也 `cancelable = false`）：选词回车、删候选都归输入法，组合结束后再落盘。
    */
   const onBeforeInput: EventListener = (e) => {
     const layerId = id;
     if (!layerId || !selAbs) return;
     const ev = e as InputEvent;
+    // ⭐ **组合态里一律放行**：拼音/假名/候选词阶段的 `beforeinput` 归输入法。
+    //    尤其是"回车选词"（insertLineBreak）和"删除候选"（deleteContent*）——
+    //    不挡的话，选词会往文档里插一个换行、删候选会删掉正文（实测）。
+    //    组合结束后由 `compositionend` 一次性落盘。
+    if (ev.isComposing) return;
     const t = ev.inputType;
 
     if (t === 'insertText' && typeof ev.data === 'string' && ev.data) {
@@ -435,31 +457,94 @@ export function createTextSession(host: TextHost): TextSession {
   };
 
   /**
-   * ⚠️ **输入法组合结束** —— 唯一一处"从 DOM 读回文字"的地方。
-   *
-   * 组合期间的 `beforeinput` 不可取消 ⇒ 浏览器**已经真的改了 DOM**。
-   * 能做的只有：把那一整段读回来换进文档（**只读文字、不读样式**），
-   * 再重渲一次把 DOM 结构（`span` / `data-run`）恢复干净。
+   * **输入法组合开始** —— 把当时的文档选区记下来，`compositionend` 用它落盘。
    */
-  const onCompositionEnd: EventListener = () => {
-    const layerId = id;
-    const n = node();
-    if (!layerId || !n) return;
+  const onCompositionStart: EventListener = () => {
+    composing = selAbs ? { ...selAbs } : null;
+  };
+
+  /** 兜底：没有起点快照 / 没有 data 时，读回光标所在那一段（只读文字，不读样式） */
+  function readBackFocusedRun(layerId: string, n: TextNode): boolean {
     const sel = win();
-    if (!sel) return;
+    if (!sel) return false;
     const p = resolvePoint(sub(), sel.anchorNode, sel.anchorOffset);
-    if (!p || p.layerId !== layerId) return;
+    if (!p || p.layerId !== layerId) return false;
     const spanEl = sub().querySelector(`[data-layer="${attrEsc(layerId)}"] [data-run="${p.run}"]`);
     const domText = spanEl?.textContent ?? '';
-    if (!spanEl || domText === n.runs[p.run]?.text) return; // 没真改（组合被取消）
-
+    if (!spanEl || domText === n.runs[p.run]?.text) return false;
     n.runs = replaceRunText(n.runs, p.run, domText).runs;
-    const after = node();
-    const idx = after ? Math.min(p.run, after.runs.length - 1) : 0;
-    const caret = after ? (pointToAbs(after.runs, { run: idx, offset: after.runs[idx].text.length }) ?? 0) : 0;
+    const caret = pointToAbs(n.runs, { run: p.run, offset: p.offset }) ?? 0;
     selAbs = { start: caret, end: caret };
     selRange = null;
-    // 结构可能被输入法动过 ⇒ **强制重渲**
+    afterEdit(layerId, '输入法上屏', true);
+    return true;
+  }
+
+  /** `.vt` 里现在真正显示的文字（`<br>` 不贡献字符；换行在文档里是 `\n`，比较时去掉） */
+  function domPlainText(layerId: string): string {
+    const el = sub().querySelector(`[data-layer="${attrEsc(layerId)}"] [data-fit]`);
+    return (el?.textContent ?? '').replace(/\r\n?/g, '\n');
+  }
+
+  const flattenText = (runs: readonly TextRun[]): string => runs.map((r) => r.text).join('').replace(/\n/g, '');
+
+  /**
+   * **输入法组合结束** —— 把上屏文本写进**文档**，再按文档重渲 DOM。
+   *
+   * 组合期间的 `beforeinput` 不可取消 ⇒ 浏览器已经真改了 DOM；但 DOM 不能当真源：
+   * 浏览器可能把组合文本塞进别的 span、也可能只删掉跨段选区的一半（实测）。
+   * 所以：
+   * - 起点用 `compositionstart` 记下的 `composing`（文档下标，跨段也对）；
+   * - 文本用 `event.data`（输入法的最终上屏结果）；
+   * - 落盘 = 删掉 `[start, end)` 再在 `start` 处插入；
+   * - 光标 = `start + data.length`（段中组合不会跳到段尾）。
+   *
+   * ⚠️ 有的浏览器"取消组合"时 `compositionend.data` 仍带着组合串 ⇒ 再用 DOM 对照一次：
+   * DOM 还停在原文（没上屏）就当取消，别把取消掉的字插进文档。
+   */
+  const onCompositionEnd: EventListener = (e) => {
+    const layerId = id;
+    const n = node();
+    const start = composing;
+    composing = null;
+    if (!layerId || !n) return;
+
+    const data = (e as CompositionEvent).data ?? '';
+
+    // 没有起点快照（极少见，事件顺序异常）⇒ 只能读回光标所在那一段
+    if (!start) {
+      readBackFocusedRun(layerId, n);
+      return;
+    }
+
+    // 有些输入法不带 data ⇒ 先看 DOM 有没有真的变；变了就按老办法读回
+    if (!data) {
+      if (readBackFocusedRun(layerId, n)) return;
+      selAbs = { ...start };
+      selRange = start.end > start.start ? rangeFromAbs(n.runs, start.start, start.end) : null;
+      afterEdit(layerId, '取消输入法', true);
+      return;
+    }
+
+    const before = flattenText(n.runs);
+    let next = n.runs;
+    if (start.end > start.start) next = deleteRunRange(next, start.start, start.end).runs;
+    next = insertRunText(next, start.start, data).runs;
+    const after = flattenText(next);
+    const dom = domPlainText(layerId).replace(/\n/g, '');
+
+    // DOM 还是原文 ⇒ 这次其实是取消（别把取消掉的字插进文档）
+    if (dom === before && before !== after) {
+      selAbs = { ...start };
+      selRange = start.end > start.start ? rangeFromAbs(n.runs, start.start, start.end) : null;
+      afterEdit(layerId, '取消输入法', true);
+      return;
+    }
+
+    n.runs = next;
+    const caret = start.start + data.length;
+    selAbs = { start: caret, end: caret };
+    selRange = null;
     afterEdit(layerId, '输入法上屏', true);
   };
 
@@ -500,6 +585,9 @@ export function createTextSession(host: TextHost): TextSession {
   const onSubKeyDown: EventListener = (e) => {
     suppressSel = false; // 用户真的在敲键 ⇒ 放开 selectionchange 记账
     const ke = e as KeyboardEvent;
+    // ⭐ 组合态里的按键归输入法：Esc 是取消候选（不是退出文字态）、
+    //    Enter 是选词（不是插换行）、方向键是选候选（不是移光标）。
+    if (ke.isComposing) return;
     if (ke.key === 'Escape') {
       host.onEscape();
       return;
@@ -522,6 +610,7 @@ export function createTextSession(host: TextHost): TextSession {
 
   const SUB_EVENTS: Array<[string, EventListener]> = [
     ['beforeinput', onBeforeInput],
+    ['compositionstart', onCompositionStart],
     ['compositionend', onCompositionEnd],
     ['paste', onPaste],
     ['cut', onCut],
@@ -594,6 +683,7 @@ export function createTextSession(host: TextHost): TextSession {
       id = null;
       selAbs = null;
       selRange = null;
+      composing = null;
       notifySelection();
     },
 

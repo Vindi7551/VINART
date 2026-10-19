@@ -233,9 +233,12 @@ vocab-editor.ts applyRange()  →  opts.onChange  →  重渲 → rangeFromAbs()
 ⚠️ **代价**：摊平时的宽度 ≠ 弧线上的可用长度（弧长与直线距离不是一回事）⇒
 状态条要讲明白"这是摊平显示、最终是沿路径的"，否则用户会照平铺的宽度调字号、退出后被截断。
 
-⚠️ **输入法是唯一的例外通道**：组合期间的 `beforeinput` **不可取消**（`cancelable = false`），
-浏览器会真的去改 DOM ⇒ 组合结束后把那一整段**读回来**对齐（`setRunText` + 重渲一次）。
-**只读文字、不读样式** —— 样式真源始终在文档。
+⚠️ **输入法走单独一条落盘路**：组合期间 `beforeinput` 不可取消（`cancelable = false`），
+且 `isComposing` 的 Esc / Enter 归输入法（取消候选 / 选词，不是退出文字态 / 插换行）⇒
+组合期间**一律不拦**，只在 `compositionstart` 记下当时的**文档选区**；
+`compositionend` 用 `event.data` 在文档上"删选区 + 插上屏文本"，再按文档重渲 DOM。
+DOM 回读只作为兜底（没有起点快照 / 没有 data 时），而且只读文字、不读样式。
+`compositionend.data` 带串但 DOM 还停在原文 ⇒ 按"取消"处理，不落盘。
 
 ## ⭐ 属性面板 `inspector.ts`
 
