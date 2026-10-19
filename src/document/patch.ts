@@ -24,7 +24,7 @@ export interface PatchResult {
   errors: string[];
 }
 
-/** 白名单：颜色/字体 + 素材引用（image/svg 的 asset 文件名） */
+/** 白名单：颜色/字体 + 文本 + 素材引用（image/svg 的 asset 文件名） */
 const ALLOWED = new Map<string, (v: unknown) => boolean>([
   ['fill', (v) => typeof v === 'string' || (Array.isArray(v) && v.every((x) => typeof x === 'string'))],
   ['stroke.paint', (v) => typeof v === 'string' || (Array.isArray(v) && v.every((x) => typeof x === 'string'))],
@@ -35,6 +35,7 @@ const ALLOWED = new Map<string, (v: unknown) => boolean>([
   ['letterSpacing', (v) => typeof v === 'number' && Number.isFinite(v)],
   ['lineHeight', (v) => typeof v === 'number' && Number.isFinite(v) && v > 0],
   ['asset', (v) => typeof v === 'string' && v.trim().length > 0],
+  ['text', (v) => typeof v === 'string'],
 ]);
 
 export function allowedPatchPaths(): string[] {
@@ -90,6 +91,17 @@ export function applyPatches(doc: DesignDocument, patches: DocPatch[]): PatchRes
     }
     if (path === 'asset' && node.type !== 'image' && node.type !== 'svg') {
       errors.push(`节点 '${id}' 是 ${node.type}，只有 image/svg 能改 asset`);
+      continue;
+    }
+    if (path === 'text') {
+      if (node.type !== 'text') {
+        errors.push(`节点 '${id}' 是 ${node.type}，只有 text 能改 text`);
+        continue;
+      }
+      // 纯文本：收成单个 run，保留第一个 run 的样式；允许 ""（清空文字，节点保留）。
+      const base = node.runs[0] ?? { text: '' };
+      node.runs = [{ ...base, text: value as string }];
+      applied++;
       continue;
     }
     if (path === 'stroke.paint') {

@@ -28,7 +28,9 @@
   做颜色/字体 patch 前先用它确认节点 id，不要凭记忆猜。可选 `layout` 读系列里另一张。
 - `patch_doc(patches, layout?)`：按节点 id **批量**改颜色/字体/素材引用。白名单：
   `fill` / `stroke.paint` / `fontFamily` / `fontSizePx` / `weight` / `italic` /
-  `letterSpacing` / `lineHeight` / `asset`（仅 image/svg）。全部合法才应用；任何一条错就整批不应用，返回 errors。
+  `letterSpacing` / `lineHeight` / `asset`（仅 image/svg）/ `text`（仅 text 节点）。
+  全部合法才应用；任何一条错就整批不应用，返回 errors。
+  `text` 是纯文本，收成单个 run，保留第一个 run 的样式；允许空串（清空文字，节点保留）。
   可选 `layout` 改系列里的另一张；不传用当前 active。
   合法后会**立刻写盘**（同一轮 `get_design` 能读到新值），并给 App 发 `doc-patch { patches }`；
   App 把 patches 应用到当前 doc（保留用户未保存的编辑），编辑器不重挂。

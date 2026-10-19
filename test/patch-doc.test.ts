@@ -85,6 +85,23 @@ describe('applyPatches', () => {
     const bad = applyPatches(doc, [{ id: 't1', path: 'asset', value: 'x.png' }]);
     expect(bad.errors[0]).toContain('只有 image/svg');
   });
+
+  it('text 改文字（保留节点/首 run 样式，允许空串）', () => {
+    const r = applyPatches(doc, [{ id: 't1', path: 'text', value: '新的标题' }]);
+    expect(r.errors).toEqual([]);
+    expect(r.applied).toBe(1);
+    const t = r.doc.layers[0].elements[0] as TextNode;
+    expect(t.runs[0].text).toBe('新的标题');
+    expect(t.fill).toBe('#000000');
+    expect(t.fontSizePx).toBe(12);
+
+    const empty = applyPatches(doc, [{ id: 't1', path: 'text', value: '' }]);
+    expect(empty.errors).toEqual([]);
+    expect((empty.doc.layers[0].elements[0] as TextNode).runs[0].text).toBe('');
+
+    const bad = applyPatches(doc, [{ id: 's1', path: 'text', value: 'x' }]);
+    expect(bad.errors[0]).toContain('只有 text');
+  });
 });
 
 describe('semanticView', () => {
