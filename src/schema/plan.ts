@@ -77,6 +77,13 @@ export interface SketchText extends SketchElementBase {
   type: 'text';
   rect: SketchTextRect;
   align?: TextNode['align'];
+  /**
+   * 换行。**默认 `normal`**（在 `rect.w` 里断行）；标题/标签要单行才写 `nowrap`。
+   *
+   * ⚠️ 单行装不下时靠 `fit.ts` 缩字号，而它**目前零生产调用** ⇒ `nowrap` 的长标题
+   *    会直接冲出框。计划里只有"确实要单行"的短标题才该写它。
+   */
+  wrap?: 'nowrap' | 'normal';
   /** 字号比例（0–1，相对画布宽）；不写默认 0.022。由模型自由给，不做枚举 */
   fontScale?: number;
   /** 可读占位文案；缺省用内置示例 */
@@ -162,6 +169,7 @@ export function planToIntent(plan: SketchPlan): DesignIntent {
             name: el.name,
             frame: { x, y, w },
             align: el.align ?? 'left',
+            ...(el.wrap ? { wrap: el.wrap } : {}),
             fill: DEFAULT_TEXT_FILL,
             fontFamily: DEFAULT_FONT_FAMILY,
             fontScale: el.fontScale ?? DEFAULT_TEXT_FONT_SCALE,
@@ -293,6 +301,11 @@ export const sketchPlanJsonSchema = {
                     align: {
                       type: 'string',
                       enum: ['left', 'center', 'right', 'justify'],
+                    },
+                    wrap: {
+                      type: 'string',
+                      enum: ['normal', 'nowrap'],
+                      description: '可选：换行。默认 normal（在 rect.w 内换行）；标题/标签要单行写 nowrap',
                     },
                     fontScale: {
                       type: 'number',

@@ -246,13 +246,29 @@ export type CoverageState = '落地' | '已报' | '静默丢弃';
 
 export type CoverageRow = { field: string; state: CoverageState; detail: string };
 
+/**
+ * 把 HTML 属性里的实体还原成 CSS 原文。
+ *
+ * ⚠️ 断言比的是 **CSS 语义**，不是 HTML 编码：`style` 里的 `"` 现在统一走
+ *    `escAttr` 转成 `&quot;`（否则 `url("…")` 会把整个 `style` 属性提前闭合）。
+ *    ⇒ 匹配前先还原，否则 `mask-image:url("…")` 这类断言会得到一堆假「静默丢弃」。
+ */
+function plainCss(html: string): string {
+  return html
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&');
+}
+
 export function runCoverage(): CoverageRow[] {
   const rows: CoverageRow[] = [];
   for (const c of CASES) {
     const doc: DesignDocument = { canvas: { ...CANVAS }, layers: [wrapInLayer(c.node)] };
     const res = emitDocument(doc, { assets: ASSETS });
-    const missing = c.want.filter((w) => !res.html.includes(w));
-    const excluded = (c.not ?? []).filter((w) => res.html.includes(w));
+    const css = plainCss(res.html);
+    const missing = c.want.filter((w) => !css.includes(w));
+    const excluded = (c.not ?? []).filter((w) => css.includes(w));
     const reported = res.unsupported.length > 0;
 
     if (!missing.length && !excluded.length) {
@@ -330,7 +346,7 @@ export function runStrokeMatrix(): StrokeRow[] {
 
       const doc: DesignDocument = { canvas: { ...CANVAS }, layers: [wrapInLayer(strokeNodeFor(kind, stroke))] };
       const res = emitDocument(doc, { assets: ASSETS });
-      const has = res.html.includes(p.marker);
+      const has = plainCss(res.html).includes(p.marker);
       // ⚠️ `unsupported` 和 `notes` **都算"报了"** —— 前者是"翻不出"，后者是"这么算的"。
       //    两者都让用户看得见，所以都不算静默丢弃。
       const said = [...res.unsupported, ...res.notes].filter((u) => u.field.startsWith('stroke'));
@@ -391,7 +407,7 @@ export function runVisualMatrix(): { effects: VisualRow[]; fills: VisualRow[] } 
       const res = emitDocument({ canvas: { ...CANVAS }, layers: [wrapInLayer(nodeFor(kind, e.value))] }, { assets: ASSETS });
       const said = [...res.unsupported, ...res.notes];
       effects.push(
-        e.marker.test(res.html)
+        e.marker.test(plainCss(res.html))
           ? { field: e.field, kind, state: '落地', detail: '' }
           : said.length
             ? { field: e.field, kind, state: '已报', detail: said.map((u) => `${u.field}: ${u.reason}`).join(' | ') }
@@ -402,9 +418,9 @@ export function runVisualMatrix(): { effects: VisualRow[]; fills: VisualRow[] } 
       const res = emitDocument({ canvas: { ...CANVAS }, layers: [wrapInLayer(nodeFor(kind, f.value))] }, { assets: ASSETS });
       const said = [...res.unsupported, ...res.notes];
       // ⚠️ 判据顺序要紧：**先看它有没有报**。
-      //    不能只看"HTML 里有没有这个 token" —— `svg.fill` 会把原值写进
+      //    不能只看"HTML 里有没有这个 token" —— `svg.fill` 曾经把原值写进
       //    `style="background:#a1b2c3"` 而同时报 unsupported，光看 token 会**假绿**。
-      if (f.marker.test(res.html) && !res.unsupported.length) {
+      if (f.marker.test(plainCss(res.html)) && !res.unsupported.length) {
         fills.push({ field: f.field, kind, state: '落地', detail: '' });
       } else if (said.length) {
         fills.push({ field: f.field, kind, state: '已报', detail: said.map((u) => `${u.field}: ${u.reason}`).join(' | ') });

@@ -29,7 +29,8 @@ export function createPatchDocTool(config: { sessionId: string }): AgentTool {
     name: 'patch_doc',
     description:
       '按节点 id 批量 patch 当前版式 doc：颜色/字体 fill / stroke.paint / fontFamily / fontSizePx / ' +
-      'weight / italic / letterSpacing / lineHeight；素材引用 asset（仅 image/svg，填 generate_assets 产出的文件名）；' +
+      'weight / italic / letterSpacing / lineHeight / wrap（仅 text；normal=在框内换行、nowrap=单行，' +
+      '省略 wrap 即 normal）；素材引用 asset（仅 image/svg，填 generate_assets 产出的文件名）；' +
       '文本 text（仅 text 节点，纯文本收成单 run，保留第一个 run 的样式，允许空串清空）。' +
       '全部合法才写；有任何一条错就整批不写。先用 get_design 确认节点 id。',
     parameters: {

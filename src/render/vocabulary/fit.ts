@@ -13,8 +13,10 @@
  * 1. **测量视口必须等于画布尺寸** —— 不然量出来的"可用宽"是错的。
  * 2. **必须等 `document.fonts.ready`** —— woff2 是异步加载的，不等就量到**兜底字体**的宽度，
  *    算出来的系数全是错的（而且错得很隐蔽：看着差不多，其实差一截）。
- * 3. **量 `scrollWidth / clientWidth`** —— 内层是 `nowrap` 的文字本体，
- *    宽度被拉成容器宽，于是"需要多宽"就藏在 `scrollWidth` 里。
+ * 3. **量 `scrollWidth / clientWidth`** —— 只对显式 `wrap:'nowrap'` 的文字有意义：
+ *    它被拉成框宽，"需要多宽"才藏在 `scrollWidth` 里。
+ *    ⚠️ 默认 `wrap:'normal'` 的文字会自己换行 ⇒ `scrollWidth == clientWidth`，
+ *    这里**不会**触发缩字号 —— 那是设计如此：换行就是它的解法。
  *
  * ## 为什么新链要**多轮**而不是一轮
  *
@@ -84,8 +86,8 @@ export interface FitResult {
  * 于是怎么缩都还差几像素，永远收敛不了。
  *
  * ⇒ 高度量**文字块自身**的 `offsetHeight`（布局高度，不含 `transform`），
- *   拿它和框高比。宽度照旧量 `scrollWidth / clientWidth`（内层被拉成框宽，
- *   "需要多宽"就藏在 `scrollWidth` 里）。
+ *   拿它和框高比。宽度照旧量 `scrollWidth / clientWidth`（**`nowrap`** 的内层被拉成框宽，
+ *   "需要多宽"就藏在 `scrollWidth` 里；默认换行的文字不参与这项）。
  */
 const MEASURE_JS = `(function (keys) {
   var out = {};

@@ -24,7 +24,7 @@ export interface PatchResult {
   errors: string[];
 }
 
-/** 白名单：颜色/字体 + 文本 + 素材引用（image/svg 的 asset 文件名） */
+/** 白名单：颜色/字体 + 文本 + 换行 + 素材引用（image/svg 的 asset 文件名） */
 const ALLOWED = new Map<string, (v: unknown) => boolean>([
   ['fill', (v) => typeof v === 'string' || (Array.isArray(v) && v.every((x) => typeof x === 'string'))],
   ['stroke.paint', (v) => typeof v === 'string' || (Array.isArray(v) && v.every((x) => typeof x === 'string'))],
@@ -34,6 +34,7 @@ const ALLOWED = new Map<string, (v: unknown) => boolean>([
   ['italic', (v) => typeof v === 'boolean'],
   ['letterSpacing', (v) => typeof v === 'number' && Number.isFinite(v)],
   ['lineHeight', (v) => typeof v === 'number' && Number.isFinite(v) && v > 0],
+  ['wrap', (v) => v === 'normal' || v === 'nowrap'],
   ['asset', (v) => typeof v === 'string' && v.trim().length > 0],
   ['text', (v) => typeof v === 'string'],
 ]);
@@ -101,6 +102,17 @@ export function applyPatches(doc: DesignDocument, patches: DocPatch[]): PatchRes
       // 纯文本：收成单个 run，保留第一个 run 的样式；允许 ""（清空文字，节点保留）。
       const base = node.runs[0] ?? { text: '' };
       node.runs = [{ ...base, text: value as string }];
+      applied++;
+      continue;
+    }
+    if (path === 'wrap') {
+      if (node.type !== 'text') {
+        errors.push(`节点 '${id}' 是 ${node.type}，只有 text 能改 wrap`);
+        continue;
+      }
+      // 省略 = 默认 normal ⇒ 设成 normal 时删掉字段，别在 doc 里留冗余
+      if (value === 'normal') delete node.wrap;
+      else node.wrap = 'nowrap';
       applied++;
       continue;
     }

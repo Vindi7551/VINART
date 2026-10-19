@@ -227,8 +227,8 @@ r.rounds // 实际量了几轮
 三条照抄旧链的经验（`src/workflow/compose/assemble.ts` —— ⚠️ **该文件已删除**，这里指它当年踩出来的做法）：
 1. **测量视口 = 画布尺寸**（不然"可用宽"是错的）；
 2. **必须等 `document.fonts.ready`**（woff2 异步，不等就量到兜底字体的宽度，系数全错）；
-3. 量 `scrollWidth / clientWidth` —— 内层是 `nowrap` 文字本体，宽度被拉成框宽，
-   "需要多宽"藏在 `scrollWidth` 里。
+3. 量 `scrollWidth / clientWidth` —— 只对显式 `wrap:'nowrap'` 的文字有意义（它被拉成框宽，
+   "需要多宽"藏在 `scrollWidth` 里）；默认换行的文字 `scrollWidth == clientWidth`，不缩字号。
 
 ⚠️ **高度不能量外层的 `scrollHeight`**（实测踩到）：内层是 `top:50%` 绝对定位，
 那 50% 的偏移会被算进外层的滚动区域 ⇒ 怎么缩都差几像素，永远收敛不了。
@@ -412,8 +412,8 @@ r.rounds // 实际量了几轮
 三条照抄旧链的经验（`src/workflow/compose/assemble.ts` —— ⚠️ **该文件已删除**，这里指它当年踩出来的做法）：
 1. **测量视口 = 画布尺寸**（不然"可用宽"是错的）；
 2. **必须等 `document.fonts.ready`**（woff2 异步，不等就量到兜底字体的宽度，系数全错）；
-3. 量 `scrollWidth / clientWidth` —— 内层是 `nowrap` 文字本体，宽度被拉成框宽，
-   "需要多宽"藏在 `scrollWidth` 里。
+3. 量 `scrollWidth / clientWidth` —— 只对显式 `wrap:'nowrap'` 的文字有意义（它被拉成框宽，
+   "需要多宽"藏在 `scrollWidth` 里）；默认换行的文字 `scrollWidth == clientWidth`，不缩字号。
 
 ⚠️ **高度不能量外层的 `scrollHeight`**（实测踩到）：内层是 `top:50%` 绝对定位，
 那 50% 的偏移会被算进外层的滚动区域 ⇒ 怎么缩都差几像素，永远收敛不了。

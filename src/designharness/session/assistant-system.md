@@ -58,9 +58,10 @@ layers: [{ name, elements: [...] }]   // 数组顺序 = 叠放顺序
 每个 element：
 
 ```
-text:  { type:'text', name, rect:{x,y,w}, align?, fontScale?, placeholder? }
+text:  { type:'text', name, rect:{x,y,w}, align?, fontScale?, wrap?, placeholder? }
        rect 是 0–1；文字没有 h（高度由排版决定）；fontScale 是可选的字号比例
        （0–1，相对画布宽；不写默认 0.022）；不要写 px 字号/字体/颜色。
+       wrap 不写 = normal（在 w 内换行）；标题/标签要单行才写 'nowrap'。
 image: { type:'image', name, rect:{x,y,w,h}, asset?, fit? }
        asset 缺省 @placeholder；generate_assets 产出后用 patch_doc 指向文件名。
 svg:   { type:'svg', name, rect:{x,y,w,h}, asset? }

@@ -381,9 +381,12 @@ function textFields(node: TextNode, _canvas: { width: number }): Field[] {
       const t = T(l);
       if (t) t.wordSpacing = v;
     }, { step: 0.01, suffix: 'em' }),
-    pick('wrap', '换行', '排版', ['nowrap', 'normal'], (l) => T(l)?.wrap, (l, v) => {
+    // ⭐ 默认换行 ⇒ 面板显示 `normal`；选 normal 时把字段删掉（省略即默认），别留冗余。
+    pick('wrap', '换行', '排版', ['normal', 'nowrap'], (l) => T(l)?.wrap ?? 'normal', (l, v) => {
       const t = T(l);
-      if (t) t.wrap = v as TextNode['wrap'];
+      if (!t) return;
+      if (v === 'nowrap') t.wrap = 'nowrap';
+      else delete t.wrap;
     }),
     pick('writingMode', '书写方向', '排版', ['horizontal', 'vertical'], (l) => T(l)?.writingMode, (l, v) => {
       const t = T(l);
@@ -822,6 +825,16 @@ export function fieldsFor(node: ElementNode, canvas: { width: number; height: nu
           if (l.type === 'image') l.fit = v as 'cover' | 'contain' | 'fill';
         },
       },
+    );
+  }
+  if (node.type === 'svg') {
+    out.push(
+      text('asset', '素材', 'SVG', (l) => (l.type === 'svg' ? l.asset : undefined), (l, v) => {
+        if (l.type === 'svg') l.asset = v;
+      }),
+      paint('fill', '颜色', 'SVG', (l) => (l.type === 'svg' ? l.fill : undefined), (l, v) => {
+        if (l.type === 'svg') l.fill = v;
+      }),
     );
   }
   return out;

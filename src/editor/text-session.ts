@@ -192,11 +192,20 @@ export function createTextSession(host: TextHost): TextSession {
    * 不认时属性值看着是设上了，`isContentEditable` 却是 `false`
    * （表现：点了没光标、打字毫无反应）⇒ 设完**真的检查一次**再退化到 `'true'`。
    * 探针要断言可编辑性就得读 **`isContentEditable`**，别读属性值（那个会骗人）。
+   *
+   * ⚠⚠️ **退出时必须 `removeAttribute`，不能设成 `"false"`**（2026-10-19 修）。
+   *    原来设 `contentEditable = 'false'`，属性会**一直留在 DOM 上**；下一次退出时
+   *    旧的 `querySelector('[data-fit][contenteditable]')` 会**先命中那个已经退出的节点**
+   *    ⇒ 真正在编辑的这个反而没被清掉 ⇒ 它继续可编辑，而 `beforeinput` 已经摘了
+   *    ⇒ 用户再敲字就是**浏览器单写 DOM、doc 不跟**（双写漏一半）。
+   *    实测：编辑 A → 退出 → 编辑 B → 退出，B 的 `isContentEditable` 仍是 true。
+   *    ⇒ 这里把所有旧痕迹（含历史上的 `"false"`）一起移除，再设当前这个。
    */
   function setEditable(layerId: string | null): void {
     const root = sub();
-    const prev = root.querySelector('[data-fit][contenteditable]') as HTMLElement | null;
-    if (prev) prev.contentEditable = 'false';
+    for (const el of Array.from(root.querySelectorAll('[data-fit][contenteditable]'))) {
+      el.removeAttribute('contenteditable');
+    }
     if (!layerId) return;
     const el = textBody(layerId);
     if (!el) return;

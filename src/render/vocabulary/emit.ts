@@ -469,7 +469,7 @@ export function emitRunsHtml(node: TextNode, fit = 1): string {
   return node.runs
     .map(
       (r, i) =>
-        `<span data-run="${i}" style="${runCss(r, node, fit)}">${escText(r.text).split('\n').join('<br>')}</span>`,
+        `<span data-run="${i}" style="${escAttr(runCss(r, node, fit))}">${escText(r.text).split('\n').join('<br>')}</span>`,
     )
     .join('');
 }
@@ -505,8 +505,8 @@ function emitText(
   if (node.runs.some((r) => /gradient\(/i.test(r.decoration?.color ?? node.decoration?.color ?? ''))) {
     note('decoration.color', '普通文字的装饰线渐变用首色近似（弧线文字支持完整渐变）');
   }
-  if (node.dropCap && node.wrap !== 'normal') {
-    note('dropCap', '首字下沉要有意义，这段文字**必须多行** —— 建议同时把 `wrap` 设成 `normal`');
+  if (node.dropCap && node.wrap === 'nowrap') {
+    note('dropCap', '首字下沉要有意义，这段文字**必须多行** —— 把 `wrap` 的 `nowrap` 去掉（默认就是换行）');
   }
   if (node.baselineShift) note('baselineShift', '基线的基准词汇里没写，这里按"字号倍数（em）"算');
 
@@ -578,7 +578,9 @@ function emitText(
     `min-height:${node.lineHeight ?? 1.15}em`,
     node.letterSpacing !== undefined && `letter-spacing:${node.letterSpacing}em`,
     node.wordSpacing !== undefined && `word-spacing:${node.wordSpacing}em`,
-    node.wrap === 'normal' ? 'white-space:normal' : 'white-space:nowrap',
+    // ⭐ **默认换行**（在 `frame.w` 内断行）；要单行必须显式写 `nowrap`。
+    //    单行装不下时靠 `fit.ts` 缩字号（该模块目前零生产调用，见文件头）。
+    node.wrap === 'nowrap' ? 'white-space:nowrap' : 'white-space:normal',
     node.textTransform && `text-transform:${node.textTransform}`,
     node.smallCaps && 'font-variant-caps:small-caps',
     node.features?.length ? `font-feature-settings:${node.features.map((f) => `"${f}" 1`).join(',')}` : '',
@@ -589,7 +591,7 @@ function emitText(
     strokeInline,
   ]);
 
-  return `<div class="${cls}" data-fit="${escAttr(node.id)}" style="${inner}">${runs}</div>`;
+  return `<div class="${cls}" data-fit="${escAttr(node.id)}" style="${escAttr(inner)}">${runs}</div>`;
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -871,14 +873,14 @@ function emitPathText(
         }
       }
       // ⚠️ `data-run` 照打：选区（改样式）仍要按它把画面上的字对回 `runs[i]`
-      return `<tspan data-run="${i}" style="${runCssSvg(r, node, fit, customCurveDeco, override)}">${escText(r.text).split('\n').join(' ')}</tspan>`;
+      return `<tspan data-run="${i}" style="${escAttr(runCssSvg(r, node, fit, customCurveDeco, override))}">${escText(r.text).split('\n').join(' ')}</tspan>`;
     })
     .join('');
   // 下层副本：不带 run fill / data-run，只继承图层自己的 fill
   const lowerRuns = node.runs
     .map(
       (r) =>
-        `<tspan style="${runCssSvg(r, node, fit, true, null)}">${escText(r.text).split('\n').join(' ')}</tspan>`,
+        `<tspan style="${escAttr(runCssSvg(r, node, fit, true, null))}">${escText(r.text).split('\n').join(' ')}</tspan>`,
     )
     .join('');
 
@@ -1001,7 +1003,7 @@ function emitPathText(
   const lowerTexts = lowerFillLayers
     .map(
       (l) =>
-        `<text text-anchor="${textAnchor}" fill="${escAttr(l.fill)}" style="${textCss}" aria-hidden="true">` +
+        `<text text-anchor="${textAnchor}" fill="${escAttr(l.fill)}" style="${escAttr(textCss)}" aria-hidden="true">` +
         `<textPath href="#${pid}" startOffset="${anchor}">${lowerRuns}</textPath></text>`,
     )
     .join('');
@@ -1011,7 +1013,7 @@ function emitPathText(
     // `scale(W,H)`：路径在 0–1 空间里写，铺到像素空间由 SVG 负责；`<text>` 不受它影响
     `<path id="${pid}" d="${escAttr(d)}" transform="scale(${W},${H})" fill="none"/>` +
     lowerTexts +
-    `<text text-anchor="${textAnchor}" fill="${escAttr(topFill)}"${strokeAttrs} style="${textCss}">` +
+    `<text text-anchor="${textAnchor}" fill="${escAttr(topFill)}"${strokeAttrs} style="${escAttr(textCss)}">` +
     `<textPath href="#${pid}" startOffset="${anchor}">${topRuns}</textPath>` +
     `</text>` +
     deco +
@@ -1270,20 +1272,54 @@ function cssGradientToSvgDef(css: string, id: string): string | null {
 }
 
 /**
- * **图标**（外部 SVG 素材）→ 一个 `<img>`。
+ * **图标**（外部 SVG 素材）→ 默认 `<img>`；有 `fill` 时改用 **mask + 背景色/渐变**。
  *
  * ⚠️ 固定 `object-fit:contain`：照片可以裁，**图标裁一条边就废了**。
  *
- * ⚠️ 染色（`fill`）没做 —— `<img>` 引的是另一份文档，CSS 进不去（要 `mask-image`）。
+ * ⚠️ 染色（`fill`）：`<img>` 引的是另一份文档，CSS 进不去；有 fill 时走
+ *    `-webkit-mask`/`mask`，形状取自 SVG 的 alpha：
+ *    - 纯色 → `background-color`
+ *    - 渐变 / 图案 → `background-image`（与文字填色同一个值空间）
+ *    - 数组 → 倒序铺（词汇里"后面的压在前面的上面"），纯色层当底色
+ *    mask 的 URL 用 **assets 里的 http 路由或 data URL 都行**（预览 iframe 与素材同源；
+ *    `/render` 那条路本来就把所有素材解析成 data URL）。
+ *    ⚠️ 真正会坏的是 `url("…")` 里的双引号：它会把外层 `style="…"` 提前闭合，
+ *    **data URL 也一样坏**（实测 mask 根本进不去 DOM）。⇒ 下面统一 `escAttr`。
  */
-function emitSvg(node: SvgNode, ctx: EmitCtx, no: (f: string, r: string) => void): string {
-  if (node.fill !== undefined) {
-    no('fill', '外部 SVG 的换色要 mask-image，这一版没做（<img> 引的是另一份文档，CSS 进不去）');
-  }
+function emitSvg(
+  node: SvgNode,
+  ctx: EmitCtx,
+  no: (f: string, r: string) => void,
+  note: (f: string, r: string) => void,
+): string {
   const src = ctx.opts.assets?.[node.asset];
   if (!src) no('asset', `素材 '${node.asset}' 没在 assets 里 —— 渲染出来会是断图`);
+  const layers = (node.fill === undefined ? [] : Array.isArray(node.fill) ? node.fill : [node.fill]).filter(
+    (f): f is string => typeof f === 'string' && f.trim().length > 0,
+  );
+  if (layers.length) {
+    const images = [...layers]
+      .reverse()
+      .filter((f) => !isPlainColor(f))
+      .map((f) => mapAssetUrls(f, 'fill', ctx.opts.assets, no));
+    const base = [...layers].reverse().find((f) => isPlainColor(f));
+    // ⚠️ CSS 的背景色永远在最底下 —— 多层里"纯色压在最上面"这件事表达不了
+    if (layers.length > 1) {
+      note('fill', '多层填充：渐变/图案按数组倒序铺；纯色只能当最底下的 background-color（它上面的渐变/图案仍会盖住它）');
+    }
+    const style = css([
+      'display:block',
+      'width:100%',
+      'height:100%',
+      base && `background-color:${base}`,
+      images.length ? `background-image:${images.join(',')}` : '',
+      `-webkit-mask:url("${src ?? ''}") center/contain no-repeat`,
+      `mask:url("${src ?? ''}") center/contain no-repeat`,
+    ]);
+    return `<div style="${escAttr(style)}"></div>`;
+  }
   const style = css(['display:block', 'width:100%', 'height:100%', 'object-fit:contain']);
-  return `<img src="${escAttr(src ?? '')}" style="${style}">`;
+  return `<img src="${escAttr(src ?? '')}" style="${escAttr(style)}">`;
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1401,7 +1437,7 @@ function emitGroup(node: GroupNode, ctx: EmitCtx): string {
     ...(visualCss(node, ctx.opts.assets, (f, r) => ctx.no(node.id, f, r)).filter(Boolean) as string[]),
   ]);
   const kids = node.elements.map((c) => emitElement(c, ctx)).join('\n');
-  return `<div class="vg" data-layer="${escAttr(node.id)}" data-layer-type="group" style="${style}">${kids}</div>`;
+  return `<div class="vg" data-layer="${escAttr(node.id)}" data-layer-type="group" style="${escAttr(style)}">${kids}</div>`;
 }
 
 /** 组里（含嵌套）有没有文字节点 —— `emitGroup` 判"组上的 scale 会不会压到字"用 */
@@ -1444,7 +1480,7 @@ function emitImage(
     `image-rendering:${node.render === 'pixelated' ? 'pixelated' : 'auto'}`,
   ]);
 
-  return `<img src="${escAttr(src ?? '')}" style="${img}">`;
+  return `<img src="${escAttr(src ?? '')}" style="${escAttr(img)}">`;
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1734,7 +1770,7 @@ function emitLayer(layer: Layer, ctx: EmitCtx): string {
     ...(visualCss(layer, ctx.opts.assets, no).filter(Boolean) as string[]),
   ]);
   const kids = layer.elements.map((c) => emitElement(c, ctx)).join('\n');
-  return `<div class="vg" data-layer="${escAttr(id)}" data-layer-type="layer" style="${style}">${kids}</div>`;
+  return `<div class="vg" data-layer="${escAttr(id)}" data-layer-type="layer" style="${escAttr(style)}">${kids}</div>`;
 }
 
 /**
@@ -1785,14 +1821,9 @@ function emitElement(node: ElementNode, ctx: EmitCtx): string {
   let visual = visualCss(node, ctx.opts.assets, no).filter(Boolean) as string[];
   if (isShape) visual = visual.filter((x) => !x.startsWith('filter:')); // shape 的 filter 在 svg 属性里
 
-  const fill = !isText && !isShape && typeof node.fill === 'string' ? `background:${node.fill}` : '';
-  const fillArr =
-    !isText && !isShape && Array.isArray(node.fill)
-      ? joinCss([`background-image:${[...node.fill].reverse().join(',')}`, 'background-color:transparent'])
-      : '';
-  if (!isText && !isShape && Array.isArray(node.fill) && node.fill.some((v) => !isPlainColor(v))) {
-    note('fill', '多层填充按数组倒序铺（词汇里"后面的压在前面的上面"）；图案的平铺 / 尺寸 / 位置仍用 CSS 默认值');
-  }
+  // ⚠️ 这里**不再**给容器铺 `background:<fill>`：`fill` 是元素自己的外观，
+  //    文字/形状/图标都在各自的**内层**落（图标是 mask + background-color）。
+  //    画在容器上会把整个 `rect` 涂满 —— 图标 fill 变成一个大色块（实测）。
 
   const fit = ctx.opts.fits?.[id] ?? 1; // 装填系数（外部实测后传进来，见 EmitOptions.fits）
   const t = node as TextNode;
@@ -1804,7 +1835,7 @@ function emitElement(node: ElementNode, ctx: EmitCtx): string {
     : isShape
       ? emitShape(node, no, note, ctx.defs, ctx.opts.assets)
       : node.type === 'svg'
-        ? emitSvg(node, ctx, no)
+        ? emitSvg(node, ctx, no, note)
         : emitImage(node as ImageNode, ctx.opts, no);
 
   // ⚠️ shape 的阴影在 svg 里做（见 `emitShape`），这里不重复给
@@ -1817,15 +1848,13 @@ function emitElement(node: ElementNode, ctx: EmitCtx): string {
       ? `left:${b.left}px;top:${b.top}px;width:${b.width}px`
       : boxCss(b),
     radiusCss(isShape ? undefined : node.radius, b),
-    fill,
-    fillArr,
     transformCss(nodeTransform),
     ...visual,
     shadowDecl,
     node.type === 'image' ? strokeCss(node.stroke, ctx.opts.assets, no) : '',
   ]);
 
-  return `<div class="vl" data-layer="${escAttr(id)}" data-layer-type="${escAttr(node.type)}" style="${style}">${inner}</div>`;
+  return `<div class="vl" data-layer="${escAttr(id)}" data-layer-type="${escAttr(node.type)}" style="${escAttr(style)}">${inner}</div>`;
 }
 
 /**
@@ -1979,7 +2008,7 @@ ${opts.faceCss ?? ''}
 </style>
 </head>
 <body>
-<div class="vc" style="width:${C.width}px;height:${C.height}px;${canvasBg}">
+<div class="vc" style="${escAttr(`width:${C.width}px;height:${C.height}px;${canvasBg}`)}">
 ${defs.length ? `<svg width="0" height="0" style="position:absolute"><defs>${defs.join('')}</defs></svg>` : ''}
 ${layers.join('\n')}
 </div>

@@ -40,6 +40,7 @@ export function semanticView(doc: DesignDocument): unknown {
                 italic: e.italic ?? null,
                 letterSpacing: e.letterSpacing ?? null,
                 align: e.align ?? null,
+                wrap: e.wrap ?? 'normal',
               }
             : {}),
         };
@@ -52,7 +53,7 @@ export function createGetDesignTool(config: { sessionId: string }): AgentTool {
   return {
     name: 'get_design',
     description:
-      '读取版式的语义视图：图层/元素 id、name、type、text、frame/rect、当前 fill/stroke/font。' +
+      '读取版式的语义视图：图层/元素 id、name、type、text、frame/rect、当前 fill/stroke/font/wrap。' +
       '默认读当前 active；也可以传 layout 读本会话系列里的另一张。做颜色/字体 patch 前先用它确认节点。',
     parameters: {
       type: 'object',
