@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Header } from './Header';
 import { PreviewPanel } from './PreviewPanel';
 import { ConversationPanel } from './ConversationPanel';
@@ -9,8 +9,9 @@ import { DirectoryBrowser } from './DirectoryBrowser';
 import { EditPanel } from './EditPanel';
 import { ToolBar } from './ToolBar';
 import { shouldFollowSelection, toolForLayer, type ToolId } from './tools';
-import type { Message, DelegationRecord } from './types';
+import type { Message, DelegationRecord, ChatReference, MentionItem } from './types';
 import type { PreviewData, HostSignal, SessionItem } from './types';
+import { iterElements } from '../document/vocabulary';
 import { fieldsFor, type SelectionSnapshot } from '../editor/inspector';
 import { findElement, findLayer, type DesignDocument } from '../document/vocabulary';
 import { createEditorStack, historyEntries, type EditorStack } from '../editor/editor-stack';
@@ -571,6 +572,23 @@ export function App() {
     });
     scheduleAutoSave();
   }
+
+  /** 当前版式的元素 → 输入框 `@` 候选 */
+  const mentionItems = useMemo<MentionItem[]>(() => {
+    const doc = layout?.doc;
+    const layoutName = layout?.name;
+    if (!doc || !layoutName) return [];
+    return doc.layers.flatMap((l) =>
+      [...iterElements(l)]
+        .filter((e) => e.type !== 'group')
+        .map((e) => ({
+          layout: layoutName,
+          id: e.id,
+          name: e.name ?? e.id,
+          type: e.type,
+        })),
+    );
+  }, [layout]);
 
   /**
    * ⭐ **编辑动作只更新 doc + 自动保存；DOM 由编辑器 / PreviewPanel 就地同步。**
@@ -1143,7 +1161,7 @@ export function App() {
   }, []);
 
   const handleSend = useCallback(
-    async (text: string, files?: File[]) => {
+    async (text: string, files?: File[], references?: ChatReference[]) => {
       if (!text.trim() && !files?.length) return;
       // 惰性会话的创建点：无会话时此刻建一个（打开/浏览页面从不产生会话）
       let sid: string;
@@ -1158,13 +1176,16 @@ export function App() {
         ]);
         return;
       }
+      const attachments = (files ?? []).map((f) => URL.createObjectURL(f));
       setMessages((prev) => [
         ...prev,
         {
           id: crypto.randomUUID(),
           role: 'user',
-          // 纯贴图（无文字）时气泡也要有内容可显示；图片本体暂不在气泡里预览
+          // 纯贴图（无文字）时气泡也要有内容可显示；图片本体用附件缩略图展示
           text: text || `📎 图片×${files?.length ?? 0}`,
+          ...(attachments.length ? { attachments } : {}),
+          ...(references?.length ? { references } : {}),
         },
       ]);
       const replyId = crypto.randomUUID();
@@ -1229,6 +1250,7 @@ export function App() {
             text,
             ...(images.length ? { images } : {}),
             activeLayout: layout?.name ?? null,
+            ...(references?.length ? { references } : {}),
           }),
         });
         if (!resp.ok || !resp.body) {
@@ -1498,6 +1520,7 @@ export function App() {
             messages={messages}
             isGenerating={isGenerating}
             onSend={handleSend}
+            mentions={mentionItems}
             workDir={workDir}
             dirLocked={sessionId !== null}
             modelName={chatModels[0] ?? null}

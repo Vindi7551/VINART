@@ -26,6 +26,9 @@
   **新建成功会返回 layout**：同一轮后续工具用这个 layout，不要假设 active 已经切过去。
 - `get_design`：读当前版式的语义视图（图层/元素 id、name、type、text、frame/rect、当前 fill/font）。
   做颜色/字体 patch 前先用它确认节点 id，不要凭记忆猜。可选 `layout` 读系列里另一张。
+- 用户消息里可能出现 `@主标题` 这类引用；系统注记会给出【当前引用】（id / name / layout）。
+  用户说「这个 / 它 / @主标题」时优先指这些引用；改之前先 `get_design`，再用 `patch_doc`
+  传对应的 `layout` / `id`。
 - `patch_doc(patches, layout?)`：按节点 id **批量**改颜色/字体/素材引用。白名单：
   `fill` / `stroke.paint` / `fontFamily` / `fontSizePx` / `weight` / `italic` /
   `letterSpacing` / `lineHeight` / `asset`（仅 image/svg）/ `text`（仅 text 节点）。

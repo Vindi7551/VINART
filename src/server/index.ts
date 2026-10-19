@@ -500,7 +500,12 @@ async function handleSessions(
   }
   // LLM 对话(SSE 流式;完成后 user/assistant 消息落盘)
   if (sub === 'chat' && method === 'POST') {
-    let body: { text?: string; activeLayout?: string; images?: string[] };
+    let body: {
+      text?: string;
+      activeLayout?: string;
+      images?: string[];
+      references?: ChatReference[];
+    };
     try {
       // 96MB：覆盖单张 64MiB 图（Files API 上限）的 base64 ~86MB + JSON 余量。
       // chat 请求体本身已改走 file_id 引用，不受 DeepSeek 48MB 请求体限制约束，
@@ -509,6 +514,7 @@ async function handleSessions(
         text?: string;
         activeLayout?: string;
         images?: string[];
+        references?: ChatReference[];
       };
     } catch (e) {
       res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -619,7 +625,11 @@ async function handleSessions(
         send('error', { message: '该会话正在生成中' });
         return res.end();
       }
-      const systemNote = await buildSystemNote(sessionId, body.activeLayout as string | undefined);
+      const systemNote = await buildSystemNote(
+        sessionId,
+        body.activeLayout as string | undefined,
+        body.references,
+      );
       await transcript.appendEvent(sessionId, {
         ts: new Date().toISOString(),
         kind: 'message',
@@ -717,15 +727,37 @@ async function handleSessions(
   res.end('method not allowed');
 }
 
+/** 用户 `@` 引用的元素（前端 contentEditable chip 序列化后传上来） */
+interface ChatReference {
+  kind?: string;
+  layout?: string;
+  id?: string;
+  name?: string;
+}
+
 /**
- * systemNote 组装：skill 目录（稳定，放前面保 cache 前缀）+ 版式摘要（易变，放后面）。
+ * systemNote 组装：skill 目录（稳定，放前面保 cache 前缀）+ 版式摘要 + 当前引用（易变，放后面）。
  * 两段都可能为空；拼接顺序固定——skill 集合不变则目录字节不变，前缀照常命中。
  */
-async function buildSystemNote(sessionId: string, layoutName?: string | null): Promise<string> {
+async function buildSystemNote(
+  sessionId: string,
+  layoutName?: string | null,
+  references?: ChatReference[],
+): Promise<string> {
   const workDir = await transcript.getWorkDir(sessionId);
   const catalog = renderSkillCatalog(workDir);
   const layoutNote = await buildLayoutNote(sessionId, layoutName);
-  return [catalog, layoutNote].filter(Boolean).join('\n\n');
+  const refs = (Array.isArray(references) ? references : [])
+    .filter((r) => r && typeof r.id === 'string' && r.id.trim())
+    .map((r) => {
+      const kind = typeof r.kind === 'string' && r.kind ? r.kind : 'element';
+      const layout = typeof r.layout === 'string' && r.layout ? r.layout : layoutName ?? '';
+      const name = typeof r.name === 'string' && r.name ? `「${r.name}」` : '';
+      return `- ${r.id}${name} (${kind}${layout ? `, layout: ${layout}` : ''})`;
+    })
+    .join('\n');
+  const refNote = refs ? `【当前引用】\n${refs}` : '';
+  return [catalog, layoutNote, refNote].filter(Boolean).join('\n\n');
 }
 
 /**

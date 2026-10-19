@@ -1,10 +1,28 @@
 import type { DesignDocument } from '../document/vocabulary';
 
+/** 与 server 的 ChatReference 对齐（目前只有元素引用） */
+export interface ChatReference {
+  kind: 'element';
+  layout: string;
+  id: string;
+  name: string;
+}
+
+/** 输入框 `@` 候选：当前版式的元素 */
+export interface MentionItem {
+  layout: string;
+  id: string;
+  name: string;
+  type: string;
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant';
   text: string;
   attachments?: string[];
+  /** 用户消息里的 @ 元素引用（输入框序列化后带上来） */
+  references?: ChatReference[];
   /** 'log' = 管线日志流(等宽字体、终端式渲染),缺省 = 普通对话 */
   kind?: 'chat' | 'log';
   /** 委派记录：哪个子 agent 被调用、结果如何（spawn_design_agents 进度卡片） */
