@@ -130,11 +130,13 @@ src/
 
 ### 工具集（`src/designharness/tools/`）
 
-当前主 AI 工具：`skill` + `sketch_plan`（草图 → 当前版式 `doc.json` 草稿）
-+ `get_design`（当前 doc 语义视图）+ `patch_doc`（颜色/字体/asset patch，元素级、批量）
+当前主 AI 工具：`skill` + `sketch_plan`（**只新建**版式，`layout` 必填且不能已存在）
++ `get_design`（当前 doc 语义视图，含 `frame01`/`rect01`）
++ `patch_doc`（增量改：move / size（0–1）、rotate（仅 image/svg/shape）、opacity、
+  颜色/字体/asset/text；元素级、批量、all-or-nothing）
 + `generate_assets`（`images` 生图 / `icons` 主 AI 线框 SVG；只落盘、不改 doc）。
-`sketch_plan` 的 `layout` 不传，由 `ctx.activeLayout`（来自 `/chat`）决定；
-没有 activeLayout 时可用可选 `layout` 新建。
+`patch_doc` 不新增/删除节点；结构变 → 新 layout 或编辑器。
+`sketch_plan` 不再读 `ctx.activeLayout`；新建时有 active 只刷画廊，没有 active 才自动打开。
 其余设计工具（读改文档）待重写；`workflow/assetsgen/` 已吃 `DesignDocument`，可直接复用。
 
 ---

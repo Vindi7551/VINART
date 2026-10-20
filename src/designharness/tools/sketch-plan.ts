@@ -1,21 +1,21 @@
 /**
- * `sketch_plan` 工具 —— 把 AI 的草图 plan 写成**当前版式的草稿 doc.json**。
+ * `sketch_plan` 工具 —— 把 AI 的草图 plan 写成**一个新版式**的草稿 doc.json。
  *
  * 分层：
  *   AI 只出 plan JSON（`sketchPlanJsonSchema`）；
- *   写到哪个版式由**宿主**决定（`ctx.activeLayout`，来自 /chat 的 activeLayout），
- *   AI **不传 layout**。
+ *   版式名由 **AI 必填**（`layout`）——本工具**只新建**，不写 current active。
  *
  * 产物：
- *   `<workDir>/designs/<activeLayout>/doc.json` —— 合法但带默认样式/占位图的**草稿**。
- *   颜色阶段 / 素材阶段后续 patch 这份 doc；plan 不落盘。
+ *   `<workDir>/designs/<layout>/doc.json` —— 合法但带默认样式/占位图的**草稿**。
+ *   颜色 / 素材 / 位置后续用 `patch_doc` 改；plan 不落盘。
  *
  * 失败：
- *   - 没有 activeLayout、版式名非法、plan 结构不完整、translate 有 error → 返回错误，**不写盘**；
+ *   - 没传 layout、版式名非法、版式已存在、plan 结构不完整、translate 有 error
+ *     → 返回错误，**不写盘**；
  *   - translate 的 note 级 issue 正常返回给 AI，让它知道哪里可能有问题。
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DesignDocument } from '../../document/vocabulary';
 import {
@@ -50,21 +50,16 @@ function safeLayout(layout: string): boolean {
 }
 
 /**
- * 决定写哪个版式：
- * - 当前有 activeLayout → **永远用当前版式**（AI 传的 layout 忽略，防写错）；
- * - 当前没有 → 用 AI 传的可选 layout **新建**；
- * - 两者都没有/名字非法 → null（工具报错）。
+ * 解析要新建的版式名：
+ * - AI **必须**传一个合法名字；本工具不再从 activeLayout 兜底（那是"改现有"的语义）；
+ * - 名字非法 / 为空 → null（工具报错）。
  */
 export function resolveSketchLayout(
-  activeLayout: string | undefined,
   requested: string | undefined,
-): { layout: string; created: boolean } | null {
-  const active = activeLayout?.trim() ?? '';
-  if (active) return safeLayout(active) ? { layout: active, created: false } : null;
-
-  const requestedName = requested?.trim() ?? '';
-  if (!requestedName || !safeLayout(requestedName)) return null;
-  return { layout: requestedName, created: true };
+): { layout: string; created: true } | null {
+  const name = requested?.trim() ?? '';
+  if (!name || !safeLayout(name)) return null;
+  return { layout: name, created: true };
 }
 
 /**
@@ -79,6 +74,16 @@ export function writeSketchPlan(workDir: string, layout: string, plan: SketchPla
   }
   if (!plan || typeof plan !== 'object' || !plan.canvas || !Array.isArray(plan.layers)) {
     return { ok: false, layout, issues, error: 'plan 结构不完整：需要 canvas 和 layers' };
+  }
+
+  const docPath = join(workDir, 'designs', layout, 'doc.json');
+  if (existsSync(docPath)) {
+    return {
+      ok: false,
+      layout,
+      issues,
+      error: `版式已存在：${layout}。换一个新名字新建，或用 patch_doc 改现有版式。`,
+    };
   }
 
   let doc: DesignDocument;
@@ -108,7 +113,7 @@ export function writeSketchPlan(workDir: string, layout: string, plan: SketchPla
   const dir = join(workDir, 'designs', layout);
   try {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'doc.json'), JSON.stringify(doc, null, 2), 'utf8');
+    writeFileSync(docPath, JSON.stringify(doc, null, 2), 'utf8');
   } catch (e) {
     return {
       ok: false,
@@ -123,44 +128,45 @@ export function writeSketchPlan(workDir: string, layout: string, plan: SketchPla
 }
 
 /**
- * 主 AI 的草图工具。
+ * 主 AI 的草图工具 —— **只新建版式**。
  *
- * `activeLayout` 由 `chat-session` 从 `/chat` 的 `activeLayout` 注入
- * （见 `AgentToolContext.activeLayout`），模型只给 `plan`。
+ * `layout` 必填（新名字）；已存在 → 报错，不写盘。
+ * 改现有版式（位置 / 尺寸 / 颜色 / 素材）走 `patch_doc`，不再用 sketch_plan 整份重写。
  */
 export function createSketchTool(config: { sessionId: string }): AgentTool {
   return {
     name: 'sketch_plan',
     description:
-      '把草图 plan 写成当前版式的 doc.json（草稿）。只决定结构/位置/占位图；' +
-      '颜色与素材由后续阶段 patch，不要在这里写 px 样式。' +
-      '当前已打开版式时不需要传 layout；当前没有打开版式时，传 layout（如 product-site）新建一个。',
+      '**只新建**版式的 doc.json（草稿），不修改已有版式、不写当前 active。' +
+      '必须传 layout（新名字，如 coffee-brand-poster）；名字已存在会报错——' +
+      '改现有版式的位置/尺寸/颜色/素材请用 patch_doc，不要重跑本工具。' +
+      'plan 只决定结构/位置/占位图，不要写 px 样式。',
     parameters: {
       type: 'object',
       additionalProperties: false,
-      required: ['plan'],
+      required: ['plan', 'layout'],
       properties: {
         plan: sketchPlanJsonSchema,
         layout: {
           type: 'string',
-          description: '可选：当前没有打开版式时用它新建（如 product-site）；已打开版式时忽略',
+          description: '必填：新建的版式名（如 coffee-brand-poster-02）；已存在会报错',
         },
       },
     },
     async execute(args, ctx) {
       const hadActive = Boolean(ctx.activeLayout?.trim());
       const resolved = resolveSketchLayout(
-        ctx.activeLayout,
         typeof args.layout === 'string' ? args.layout : undefined,
       );
       if (!resolved) {
         return {
           content:
-            'ERROR: 当前没有打开的版式；请传 layout（如 product-site）新建，或先在左侧打开一个版式。',
+            'ERROR: 必须传 layout（一个新的版式名，如 coffee-brand-poster-02）。' +
+            '本工具只新建；改现有版式请用 patch_doc。',
           isError: true,
         };
       }
-      const { layout, created } = resolved;
+      const { layout } = resolved;
       const rawPlan = args.plan ?? (args.canvas && Array.isArray(args.layers) ? args : undefined);
       const plan = rawPlan as SketchPlan | undefined;
       if (!plan) {
@@ -177,18 +183,13 @@ export function createSketchTool(config: { sessionId: string }): AgentTool {
       }
 
       const doc = r.doc!;
-      if (created) {
-        // 新建布局才需要“打开”：从无 active 新建 → 打开；已有 active 新建系列里的另一张 → 只刷画廊。
-        ctx.onEvent?.({ kind: 'artifacts', layout, created, open: !hadActive });
-      } else {
-        // 已有版式更新 → 就地 doc-patch（不重挂编辑器、不刷新预览）。
-        ctx.onEvent?.({ kind: 'doc-patch', layout, doc });
-      }
+      // 只新建：没有 active 时打开；已有 active 时只刷画廊，不抢当前预览。
+      ctx.onEvent?.({ kind: 'artifacts', layout, created: true, open: !hadActive });
       return {
         content: JSON.stringify({
           ok: true,
           layout,
-          created,
+          created: true,
           canvas: doc.canvas,
           layers: doc.layers.map((l) => ({
             id: l.id,

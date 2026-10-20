@@ -122,14 +122,17 @@ skill({ name: 'design-direction', file: 'references/04-杠杆点.md' })
 
 1. 内容分层 → **先发槽位表**（给用户看；未发出不调 `sketch_plan`）。
 2. 选 recipe → 照抄骨架坐标 → **读 04 写「主角是 X」→ 读 03 查间距档差**。
-3. `sketch_plan(plan)`；有 error 级 issue 就按它改，不要忽略。
+3. `sketch_plan(plan, layout)`：`layout` 必须是**新名字**；有 error 级 issue 就按它改，不要忽略。
 4. 素材：**每个槽位一张图**，一次 `generate_assets` 可放多张，提示词逐槽位写清「主体 + 视角 + 背景 + 光线」；文件名与槽位同名。
 5. `patch_doc`：先把每个 image 节点的 `asset` 指到文件名，再按 `06` 批量改颜色/字体。
-   ⚠️ `patch_doc` **不能移动 / 缩放 / 加节点**；要改这些只能让用户在编辑器里改，或重跑 `sketch_plan`（整份重写）。
+   位置 / 尺寸 / 旋转 / 透明度也用 `patch_doc`：`move {dx,dy}`、`size {w,h}`（0–1）、
+   `rotate`（仅 image/svg/shape）、`opacity`。
+   ⚠️ `patch_doc` **不能新增 / 删除 / 复制节点**；要改结构只能新开一个 layout 或在编辑器里做。
 6. 请用户看草图；告诉他用了哪个 recipe、几个槽位、主角是谁、下一步可调什么。
 
-> ⚠️ `sketch_plan` 会**整份重写** doc。用户已在编辑器里手调过时，先问「覆盖还是新建」，不要默认覆盖。
-> 已打开版式时只能写当前这一张；新建只在当前没有 active 版式时可用。
+> ⚠️ `sketch_plan` **只新建**：必须传一个**新**版式名，已存在会报错，不再覆盖当前 active。
+> 改现有版式的位置/尺寸/颜色/素材用 `patch_doc`；只有结构真的变了（加/删/复制元素）
+> 才用新名字再开一版。已有 active 时新建只进画廊，不抢预览。
 
 ---
 

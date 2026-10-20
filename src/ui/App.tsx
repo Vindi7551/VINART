@@ -532,7 +532,7 @@ export function App() {
   /**
    * 工具**就地**改当前版式（doc-patch）：
    * - `patches`：应用到当前内存 doc → 保留用户尚未自动保存的改动；
-   * - `doc`：整体替换（sketch_plan 已有版式重写）；
+   * - `doc`：整体替换（宿主 / 其他工具；`sketch_plan` 现在只新建，不再走这里）；
    * - 不重挂编辑器；DOM 由 PreviewPanel 的同步 effect 更新；
    * - 这里只换内存 doc + 触发自动保存。
    */

@@ -81,30 +81,27 @@ describe('writeSketchPlan', () => {
     expect(r.error).toContain('plan 结构不完整');
     expect(existsSync(join(workDir, 'designs'))).toBe(false);
   });
+
+  it('版式已存在时不覆盖（只新建）', () => {
+    const workDir = tmp();
+    expect(writeSketchPlan(workDir, 'vocab-full', PLAN).ok).toBe(true);
+    const second = writeSketchPlan(workDir, 'vocab-full', PLAN);
+    expect(second.ok).toBe(false);
+    expect(second.error).toContain('版式已存在');
+  });
 });
 
 describe('resolveSketchLayout', () => {
-  it('有 activeLayout 时永远用当前版式，忽略 AI 传的 layout', () => {
-    expect(resolveSketchLayout('vocab-full', 'product-site')).toEqual({
-      layout: 'vocab-full',
-      created: false,
-    });
-  });
-
-  it('没有 activeLayout 时用 AI 传的 layout 新建', () => {
-    expect(resolveSketchLayout('', 'product-site')).toEqual({
-      layout: 'product-site',
-      created: true,
-    });
-    expect(resolveSketchLayout(undefined, 'product-site')).toEqual({
+  it('AI 传的合法名字 → 新建（恒为 created: true）', () => {
+    expect(resolveSketchLayout('product-site')).toEqual({
       layout: 'product-site',
       created: true,
     });
   });
 
-  it('没有 activeLayout 也没有合法 layout 时返回 null', () => {
-    expect(resolveSketchLayout(undefined, undefined)).toBeNull();
-    expect(resolveSketchLayout('', '')).toBeNull();
-    expect(resolveSketchLayout(undefined, '../evil')).toBeNull();
+  it('没传 / 非法名字 → null（不再从 activeLayout 兜底）', () => {
+    expect(resolveSketchLayout(undefined)).toBeNull();
+    expect(resolveSketchLayout('')).toBeNull();
+    expect(resolveSketchLayout('../evil')).toBeNull();
   });
 });

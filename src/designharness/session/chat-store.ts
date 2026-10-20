@@ -58,8 +58,9 @@ export function getChatSession(sessionId: string): ChatSession {
      * 它们建立在已删除的 `document/design-sketch.ts` 契约上（`design-sketch.json` +
      * `design-appearance.json`），而落盘协议早已换成单份 `doc.json`（词汇表）。
      * ⇒ 这一层要**重新对着词汇表长**，是独立的一步（见 CLAUDE.md 的核心链路）。
-     * 现在留：`skill`（技能加载）+ `sketch_plan`（草图 → 当前版式 doc.json）
-     * + `get_design`（当前 doc 语义视图）+ `patch_doc`（颜色/字体/asset patch）
+     * 现在留：`skill`（技能加载）+ `sketch_plan`（**只新建**版式）
+     * + `get_design`（当前 doc 语义视图，含 frame01/rect01）
+     * + `patch_doc`（move/size/rotate/opacity + 颜色/字体/asset/text）
      * + `generate_assets`（生图/线框 SVG 落盘，不改 doc）。
      */
     tools: [

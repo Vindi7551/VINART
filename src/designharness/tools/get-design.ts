@@ -15,6 +15,10 @@ import type { AgentTool } from '../subagent/types';
 
 /** 当前 doc 的语义视图：够 AI 决定改哪个节点、改成什么，但远小于完整 doc */
 export function semanticView(doc: DesignDocument): unknown {
+  const W = doc.canvas.width;
+  const H = doc.canvas.height;
+  const r4 = (v: number): number => Math.round(v * 10000) / 10000;
+
   return {
     canvas: doc.canvas,
     layers: doc.layers.map((l) => ({
@@ -29,7 +33,25 @@ export function semanticView(doc: DesignDocument): unknown {
           name: e.name ?? null,
           type: e.type,
           ...(e.type === 'text' ? { text: e.runs.map((r) => r.text).join('') } : {}),
-          ...('frame' in e ? { frame: e.frame } : { rect: e.rect }),
+          // px 与 0–1 都给：patch 的 move/size 用 0–1，AI 不用自己除画布
+          ...('frame' in e
+            ? {
+                frame: e.frame,
+                frame01: {
+                  x: r4(e.frame.x / W),
+                  y: r4(e.frame.y / H),
+                  w: r4(e.frame.w / W),
+                },
+              }
+            : {
+                rect: e.rect,
+                rect01: {
+                  x: r4(e.rect.x / W),
+                  y: r4(e.rect.y / H),
+                  w: r4(e.rect.w / W),
+                  h: r4(e.rect.h / H),
+                },
+              }),
           fill: e.fill ?? null,
           stroke: e.stroke ?? null,
           ...(e.type === 'text'
@@ -53,8 +75,9 @@ export function createGetDesignTool(config: { sessionId: string }): AgentTool {
   return {
     name: 'get_design',
     description:
-      '读取版式的语义视图：图层/元素 id、name、type、text、frame/rect、当前 fill/stroke/font/wrap。' +
-      '默认读当前 active；也可以传 layout 读本会话系列里的另一张。做颜色/字体 patch 前先用它确认节点。',
+      '读取版式的语义视图：图层/元素 id、name、type、text、frame/rect（px）、frame01/rect01（0–1）、' +
+      '当前 fill/stroke/font/wrap。默认读当前 active；也可以传 layout 读本会话系列里的另一张。' +
+      '做颜色/字体/几何 patch 前先用它确认节点 id 与当前 0–1 尺寸。',
     parameters: {
       type: 'object',
       additionalProperties: false,

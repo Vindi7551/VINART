@@ -65,7 +65,7 @@ describe('applyPatches', () => {
   it('白名单外的字段报错；整批由调用方决定不写', () => {
     const r = applyPatches(doc, [
       { id: 't1', path: 'fill', value: '#111111' },
-      { id: 't1', path: 'opacity', value: 0.5 },
+      { id: 't1', path: 'shadow', value: [] },
     ]);
     expect(r.errors).toHaveLength(1);
     expect(r.errors[0]).toContain('不在白名单');
@@ -104,12 +104,95 @@ describe('applyPatches', () => {
   });
 });
 
+const geoDoc: DesignDocument = {
+  canvas: { width: 1000, height: 500 },
+  layers: [
+    {
+      id: 'G1',
+      name: '几何层',
+      elements: [
+        {
+          id: 't1',
+          type: 'text',
+          name: '标题',
+          frame: { x: 100, y: 50, w: 400 },
+          runs: [{ text: 'hi' }],
+        },
+        {
+          id: 'i1',
+          type: 'image',
+          name: '主图',
+          rect: { x: 200, y: 100, w: 100, h: 100 },
+          asset: '@placeholder',
+        },
+        { id: 'g1', type: 'group', name: '组', elements: [] },
+      ],
+    },
+  ],
+};
+
+describe('applyPatches · 几何', () => {
+  it('move 用 0–1 比例换算：text 改 frame，image 改 rect', () => {
+    const r = applyPatches(geoDoc, [
+      { id: 't1', path: 'move', value: { dx: 0.1, dy: 0.2 } },
+      { id: 'i1', path: 'move', value: { dx: -0.05, dy: 0.1 } },
+    ]);
+    expect(r.errors).toEqual([]);
+    expect(r.applied).toBe(2);
+
+    const t = r.doc.layers[0].elements[0] as TextNode;
+    const i = r.doc.layers[0].elements[1] as ImageNode;
+    // 非正方形画布：x 用宽、y 用高
+    expect(t.frame).toEqual({ x: 200, y: 150, w: 400 });
+    expect(i.rect).toEqual({ x: 150, y: 150, w: 100, h: 100 });
+  });
+
+  it('size：text 只接受 w；image 需要 w+h', () => {
+    const ok = applyPatches(geoDoc, [
+      { id: 't1', path: 'size', value: { w: 0.5 } },
+      { id: 'i1', path: 'size', value: { w: 0.2, h: 0.4 } },
+    ]);
+    expect(ok.errors).toEqual([]);
+    expect((ok.doc.layers[0].elements[0] as TextNode).frame.w).toBe(500);
+    const i = ok.doc.layers[0].elements[1] as ImageNode;
+    expect(i.rect.w).toBe(200);
+    expect(i.rect.h).toBe(200);
+
+    const bad = applyPatches(geoDoc, [{ id: 't1', path: 'size', value: { w: 0.5, h: 0.2 } }]);
+    expect(bad.errors[0]).toContain('只接受 w');
+  });
+
+  it('rotate 仅 image/svg/shape；opacity 所有元素', () => {
+    const r = applyPatches(geoDoc, [
+      { id: 'i1', path: 'rotate', value: -6 },
+      { id: 't1', path: 'opacity', value: 0.5 },
+    ]);
+    expect(r.errors).toEqual([]);
+    expect((r.doc.layers[0].elements[1] as ImageNode).transform).toEqual({ rotate: -6 });
+    expect((r.doc.layers[0].elements[0] as TextNode).opacity).toBe(0.5);
+
+    const bad = applyPatches(geoDoc, [{ id: 't1', path: 'rotate', value: 5 }]);
+    expect(bad.errors[0]).toContain('只对 image/svg/shape');
+  });
+
+  it('group 不支持 move', () => {
+    const r = applyPatches(geoDoc, [{ id: 'g1', path: 'move', value: { dx: 0.1, dy: 0.1 } }]);
+    expect(r.errors[0]).toContain('是 group');
+  });
+});
+
 describe('semanticView', () => {
-  it('包含图层名和当前 fill/font', () => {
+  it('包含图层名和当前 fill/font，以及 0–1 的 frame01', () => {
     const v = semanticView(doc) as {
       layers: Array<{
         name: string;
-        elements: Array<{ id: string; fill: unknown; fontFamily?: unknown; frame?: unknown }>;
+        elements: Array<{
+          id: string;
+          fill: unknown;
+          fontFamily?: unknown;
+          frame?: unknown;
+          frame01?: unknown;
+        }>;
       }>;
     };
     expect(v.layers[0].name).toBe('内容层');
@@ -117,5 +200,6 @@ describe('semanticView', () => {
     expect(v.layers[0].elements[0].fill).toBe('#000000');
     expect(v.layers[0].elements[0].fontFamily).toBe('A');
     expect(v.layers[0].elements[0].frame).toEqual({ x: 0.1, y: 0.1, w: 0.5 });
+    expect(v.layers[0].elements[0].frame01).toEqual({ x: 0.001, y: 0.001, w: 0.005 });
   });
 });
