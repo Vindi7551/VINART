@@ -799,6 +799,14 @@ async function buildSystemNote(
     .filter(Boolean)
     .join('\n');
   const layoutNote = await buildLayoutNote(sessionId, layoutName);
+  // 【最近操作】——chat 历史只存最终文本，工具轮结果不进下一轮；这里补一段
+  // 紧凑进度，避免“继续”时看不到已生成的素材/已建的版式而重开一版。
+  let recentNote = '';
+  try {
+    recentNote = formatRecentActions(await transcript.loadTranscript(sessionId));
+  } catch {
+    recentNote = '';
+  }
   const refs = (Array.isArray(references) ? references : [])
     .filter((r) => r && typeof r.id === 'string' && r.id.trim())
     .map((r) => {
@@ -809,7 +817,7 @@ async function buildSystemNote(
     })
     .join('\n');
   const refNote = refs ? `【当前引用】\n${refs}` : '';
-  return [catalog, fontNote, layoutNote, refNote].filter(Boolean).join('\n\n');
+  return [catalog, fontNote, layoutNote, recentNote, refNote].filter(Boolean).join('\n\n');
 }
 
 /**
@@ -955,6 +963,7 @@ function readJsonBody(req: IncomingMessage, maxBytes = 40 * 1024 * 1024): Promis
 
 
 import * as transcript from '../designharness/session/transcript';
+import { formatRecentActions } from '../designharness/session/recent-actions';
 import { renderSkillCatalog } from '../designharness/skills/registry';
 import { getChatSession, dropChatSession, isSessionStreaming } from '../designharness/session/chat-store';
 import type { Attachment } from '../designharness/gateway/type/chat';

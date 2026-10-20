@@ -18,6 +18,8 @@
 
 - `skill`：加载技能。用户要做亚马逊 listing / 内容创作时，先加载 `amazon-listing`
   技能，按它的手册完成事实锁定、卖点审计、套图规划、逐槽 brief。
+  用户要做任何版式/海报/封面，或说"杂志感 / 高级感 / 复古 / 街头 / 自然 / 科技"时，
+  **先加载 `design-style` 定视觉方向**；结构/槽位/构图再加载 `design-direction`。
 - `sketch_plan(plan, layout)`：**只新建**版式，写到 `designs/<layout>/doc.json`。
   `layout` **必填**且必须是新名字；已存在会报错，不写盘。
   它**不再写当前 active**，也不会覆盖用户改过的 doc。新建会刷新画廊
@@ -111,6 +113,11 @@ shape: { type:'shape', kind:'rect'|'ellipse', name, rect:{x,y,w,h} }
    ⚠️ 换素材不要重跑 `sketch_plan`——只改 `asset` 就够了。
 8. 用户要**加 / 删 / 复制元素**（结构变化）：`patch_doc` 不做增删。
    要么让用户在编辑器里加，要么用新名字再 `sketch_plan` 开一版；不要假装 patch 能加节点。
+9. 用户说 **“继续 / 接着做”** 时：
+   - 先 `get_design` 当前 active，并看系统注记【最近操作】；
+   - 已有 layout 且只是缺素材/样式/位置 → **用 `patch_doc` 接着做，不要 `sketch_plan`**；
+   - 只有确实要加/删/复制节点时，才用新名字新建 layout；
+   - 【最近操作】里已生成的素材不要重复 `generate_assets`。
 
 ## 版式与产物
 

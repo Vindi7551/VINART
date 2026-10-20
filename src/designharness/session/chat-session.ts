@@ -36,7 +36,14 @@ interface SessionConfig {
 }
 
 /** 工具循环轮数上限：到达后最后一轮不再下发 tools，强制模型文本收尾 */
-const MAX_TOOL_ROUNDS = 6;
+/**
+ * 主 AI 单轮工具轮数上限。
+ *
+ * 设计任务一轮要读 skill（多个文件）+ sketch_plan + get_design + generate_assets
+ * + patch_doc，6 轮会在“素材刚生成、还没挂进 doc”时被强制收尾（2026-10-20 实测）。
+ * 给到 20：够走完一条完整设计链，又不至于无限循环。
+ */
+const MAX_TOOL_ROUNDS = 20;
 
 /**
  * 审计摘录：压平空白 + 超长截断。
