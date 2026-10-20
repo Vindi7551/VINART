@@ -31,7 +31,7 @@ export interface RenderConfig {
    *
    * ⚠️ 不要改回 `'networkidle'`。实测（同一份自包含 HTML，各 5 次取中位）：
    *   load 119ms / domcontentloaded 123ms / **networkidle 623ms**
-   * 我们的 HTML 图片全是 data URL、字体是系统字体，**没有任何网络请求可等**，
+   * 我们的图片是 data URL；字体是本地 `/api/fonts` URL，`document.fonts.ready` 会等它。
    * networkidle 只是在等一个不会发生的事件，白等约 500ms。
    * （另：Puppeteer 已明确不再支持 setContent 用 networkidle，默认也改成了 load。）
    * 渲染外部网页时才需要改这里。
@@ -63,6 +63,14 @@ export interface RenderConfig {
    * `format: 'jpeg'` 不支持 alpha，会被忽略并给出警告。
    */
   transparent?: boolean;
+  /**
+   * 出图前要断言的字体（family + weight）。
+   *
+   * `document.fonts.ready` 只说明"加载结束"，**不说明加载成功**：
+   * 字体 404 / CORS 失败会静默 fallback，图就变成系统字体。
+   * 传了就在截图前逐项 `document.fonts.check`，缺一个直接报错。
+   */
+  fontChecks?: Array<{ family: string; weight: number }>;
   /**
    * 注入额外的 CSS（在页面加载后、截图前）。
    *
@@ -269,6 +277,27 @@ export function createBlinkRenderer(opts: BlinkRendererOptions = {}): BlinkRende
         }
 
         await page.evaluate(() => document.fonts?.ready);
+
+        // ⚠️ fonts.ready 只代表"加载结束"，不代表"加载成功"——404 / CORS 失败会
+        //    静默 fallback。**不能只信 `document.fonts.check`**：未知 family 它也可能
+        //    返回 true（浏览器用 fallback 也算"能渲染"）。这里直接扫 FontFace 列表，
+        //    只认 `status === 'loaded'` 且 family/weight 精确匹配的条目。
+        if (config.fontChecks?.length) {
+          const missing = await page.evaluate((checks) => {
+            const loaded = new Set<string>();
+            document.fonts.forEach((f) => {
+              if (f.status !== 'loaded') return;
+              const family = f.family.replace(/^["']|["']$/g, '');
+              loaded.add(`${family}|${f.weight}`);
+            });
+            return checks
+              .filter((c) => !loaded.has(`${c.family}|${c.weight}`))
+              .map((c) => `${c.family} ${c.weight}`);
+          }, config.fontChecks);
+          if (missing.length) {
+            throw new Error(`字体未加载，拒绝出图（会 fallback 成系统字体）：${missing.join('、')}`);
+          }
+        }
 
         // ── 注入额外 CSS（图层隔离等）──
         if (injectCss) {

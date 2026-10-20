@@ -127,6 +127,7 @@ src/
 | 文字自适应 | `render/vocabulary/fit.ts` 的 `emitFitted(doc, page)` |
 | 编辑器 | `editor/vocab-editor.ts` + `editor/text-session.ts` |
 | 素材生成 | `workflow/assetsgen/{order,image}.ts` |
+| 字体库 | `src/fonts/registry.ts` + `designassets/fonts/families/`（`/api/fonts/...` 供 URL） |
 
 ### 工具集（`src/designharness/tools/`）
 
@@ -182,7 +183,8 @@ src/
 
 ### 产物渲染宿主：**必须是真 document（iframe）**
 
-- 产物 HTML 自带 **data-URL 内联 `@font-face`**、自带 `<base>` 语义 —— 只在真 document 里成立。
+- 产物 HTML **不导出**（只出 PNG）；字体由服务端生成的 `@font-face` URL 注入，
+  预览/编辑器与出图共用同一套字体文件。
 - ⚠️ **实测（2026-10-11）：`@font-face` 放进 shadow root 不注册、不生效。**
 - ⚠️ 需求方（Amazon）的 `<base>` **禁用 `?rel=` 查询串**（RFC 3986 §5.2.2 会丢 base path 末段）。
 

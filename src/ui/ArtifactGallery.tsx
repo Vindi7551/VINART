@@ -25,6 +25,8 @@ interface ArtifactItem {
   doc: DesignDocument | null;
   /** 素材名 → URL（服务端 resolveAssets） */
   assets: Record<string, string>;
+  /** @font-face CSS（服务端字体库；相对地址），缩略图与主画布共用同一套字体 */
+  faceCss?: string;
 }
 
 interface ArtifactGalleryProps {
@@ -134,7 +136,7 @@ export function ArtifactGallery({
                   title={it.name}
                 >
                   {it.doc ? (
-                    <DesignThumb doc={it.doc} assets={it.assets} />
+                    <DesignThumb doc={it.doc} assets={it.assets} faceCss={it.faceCss} />
                   ) : (
                     <span className="design-thumb" />
                   )}

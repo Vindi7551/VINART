@@ -80,7 +80,7 @@ import {
   removePoint,
   type Point01,
 } from './points';
-import { fieldsFor, findField, findLayerField, selectionSnapshotOf, type Field, type SelectionSnapshot } from './inspector';
+import { fieldsFor, findField, findLayerField, selectionSnapshotOf, setFontFamilyOptions, type Field, type SelectionSnapshot } from './inspector';
 import {
   canRedo as stackCanRedo,
   canUndo as stackCanUndo,
@@ -154,6 +154,13 @@ export interface VocabEditorOptions {
    * ⇒ 宿主必须把它手里那份传进来（不传 = 走旧的"最上层"兜底）。
    */
   currentLayerId?: string;
+  /**
+   * 字体库清单（CSS family 名）。传了 ⇒ 检查器的「字体」从自由文本变成下拉；
+   * 不传 ⇒ 退回自由文本（demo / 一次性用例）。
+   */
+  fontFamilies?: string[];
+  /** family → 下拉显示标签（如「Bitter（仅英文）」）；不传 = 直接显示 family */
+  fontLabels?: Record<string, string>;
   /**
    * ⭐ **外部注入的撤销栈**（宿主按产物名持有，2026-10-17）。
    *
@@ -413,6 +420,9 @@ export function createVocabEditor(
   rootArg: LayerDom,
   opts: VocabEditorOptions,
 ): VocabEditorHandle {
+
+  // 字体下拉的候选（模块级，inspector.fieldsFor 读它）；不传 = 保持自由文本。
+  setFontFamilyOptions(opts.fontFamilies ?? [], opts.fontLabels ?? {});
 
   /**
    * ⭐ **统一编辑栈**（M2）—— 跨工具混用不乱；见 `editor-stack.ts`

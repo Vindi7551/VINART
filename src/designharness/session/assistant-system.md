@@ -36,6 +36,9 @@
   - 变换：`rotate`（度，**仅 image/svg/shape**）、`opacity`（0–1）；
   - 外观：`fill`（颜色 / rgba / linear-gradient / radial-gradient）、`stroke.paint`、
     `fontFamily` / `fontSizePx` / `weight` / `italic` / `letterSpacing` / `lineHeight`；
+    ⚠️ `fontFamily` **只写字体库里的 family**（见系统注记【字体库·中文】/【字体库·仅英文】），
+    不要写 `Georgia` / `PingFang SC` 这类系统栈——库里没有的字体会 fallback，出图会拒。
+    **【字体库·仅英文】里的字体没有中文字形，中文文字不要用。**
   - 内容：`wrap`（仅 text）、`text`（仅 text，纯文本收成单 run，允许空串）、
     `asset`（仅 image/svg）。
   **group 不支持 patch**；`move` 不会搬组，请改子元素。

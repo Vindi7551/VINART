@@ -135,14 +135,21 @@ designassets/
 
 ## 字体（fonts）
 
-**字体是参数，不是常量。** 多个家族并存，由命名方案挑选组合，版式规格引用方案名——
-与配色同一套做法。
+> **2026-10-20 现状**：新链由 `src/fonts/registry.ts` + `/api/fonts/...` 消费
+> `families/`；`schemes/` **暂未接线**（旧链的 `design-appearance.json` / `fontScheme`
+> 已随旧契约删除）。字体是**完整 SC 文件、不做子集**：预览/编辑器/出图共用同一个
+> URL；出图只出 PNG，不需要自包含 HTML。
+>
+> ⚠️ **woff2 二进制不入库**（`.gitignore`）；`family.json` / `OFL.txt` 入库。
+> 新环境要按 `family.json` 的 `files` 把 woff2 放到对应目录，否则该字体被跳过。
+
+**字体是参数，不是常量。** 多个家族并存——与配色同一套做法。
 
 ```
 fonts/
   families/<Family>/
     family.json      元数据：可用字重、授权、来源、气质备注
-    <字重>.woff2      latin 子集（覆盖德语 ä/ö/ü/ß）
+    <字重>.woff2     字体文件（完整 / 子集）；⚠️ 不入库
   schemes/<方案名>.json
 ```
 
@@ -150,6 +157,8 @@ fonts/
 
 | 家族 | 字重 | 授权 | 气质 |
 |---|---|---|---|
+| **Noto Serif SC** | 400/700 | OFL | 中文宋体，横细竖粗；标题/编辑气质 |
+| **Noto Sans SC** | 400/700 | OFL | 中文黑体，中性可读；正文/标签 |
 | Bitter | 400/700/900 | OFL | 低对比、大 x-height、有墨陷细节；编辑气质 |
 | Roboto Slab | 400/700/900 | Apache-2.0 | 几何骨架、偏机械；Material Design 血统 |
 | Rokkitt | 400/700/900 | OFL | 几何板衬线，干净，**品牌包袱最轻** |
@@ -160,16 +169,14 @@ fonts/
 
 ### 方案与用法
 
-`slab-bitter` · `slab-rokkitt` · `slab-arvo` · `slab-zilla` · `slab-roboto` ·
-`display-alfaslab` · `legacy-system`（对照，系统字体）
+`schemes/` 是**旧链**的命名方案（`slab-*`），当前新链**未接线**；先直接按 family 选：
 
-```bash
-# 用哪套方案由版式的 design-appearance.json 的 fontScheme 字段声明
-# 换方案 = 改这个字段 → 重渲（对话里的 render_design，零 API 成本）
+```jsonc
+{ "fontFamily": "Noto Serif SC" }
 ```
 
-**字体以内联 woff2（data URL）方式嵌入 HTML**——每个约 33KB，
-换来成品 HTML 完全自包含、**换机器不变样**。这是「不再依赖系统字体栈」的落点。
+新链的字库由 `src/fonts/registry.ts` 扫 `families/`，经 `/api/fonts/...` 提供 URL；
+预览 / 编辑器 / 出图共用同一套文件。**不做 data URL 内联**——成品只出 PNG，不导出 HTML。
 
 ## 待补
 

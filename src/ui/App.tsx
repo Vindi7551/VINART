@@ -1408,6 +1408,8 @@ export function App() {
           previewUrl={previewUrl}
           layoutData={layout}
           sessionId={sessionId}
+          fontFamilies={layout?.fontFamilies}
+          fontLabels={layout?.fontLabels}
           onLayerChange={handleLayerChanged}
           onTypingChange={handleTypingChanged}
           onLayerSelect={handleLayerSelect}

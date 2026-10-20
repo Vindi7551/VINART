@@ -18,8 +18,16 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
+// 字体库（服务端读盘 → @font-face CSS；浏览器只拿到 URL）
+import {
+  buildFontCss,
+  fontFileByDir,
+  listFontFamilies,
+  usedFontChecks,
+  usedFontFamilies,
+} from '../fonts/registry';
 // 文档模型（`buildLayoutNote` 要把"当前打开的版式"讲给 LLM 听 —— 结构见 `vocabulary.ts` 文件头）
 import { iterElements, type DesignDocument } from '../document/vocabulary';
 // 草图里的内置占位图 id（`planToIntent` 用同一个常量）
@@ -233,11 +241,29 @@ async function handleLayout(
         ? `/api/sessions/${sessionId}/file/${relative(workDir, p).split(sep).join('/')}`
         : `/files/${relative(dir, p).split(sep).join('/')}`,
     );
-    const { html } = emitDocument(doc, { assets });
+    // 预览/编辑：库里所有字体的 @font-face（相对地址）；浏览器用到才下载。
+    // 这样编辑器里换字体不需要重建 HTML。
+    const faceCss = buildFontCss({ baseUrl: '/api/fonts' });
+    const { html } = emitDocument(doc, { assets, faceCss });
     // ⭐ assets 映射随 data 下发——前端结构性变化（undo/增删）时**在浏览器里自己
     //    emitDocument**（编辑即渲染，无网络往返），素材映射从这里拿。
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    return res.end(JSON.stringify({ name, doc, html, assets }));
+    return res.end(
+      JSON.stringify({
+        name,
+        doc,
+        html,
+        assets,
+        // 编辑器字体下拉用；不含文件本身。
+        // 旧拉丁字体也放出来，但给一个「（仅英文）」显示标签（中文会 fallback）。
+        fontFamilies: listFontFamilies().map((f) => f.family),
+        fontLabels: Object.fromEntries(
+          listFontFamilies()
+            .filter((f) => !f.scripts?.includes('hans'))
+            .map((f) => [f.family, `${f.family}（仅英文）`]),
+        ),
+      }),
+    );
   }
 
   if (req.method === 'POST' && action === 'save') {
@@ -281,18 +307,32 @@ async function handleLayout(
       //    "渲染器本地读盘最稳"，实际**最不稳**）：渲染器用 `page.setContent()`，
       //    文档是 `about:blank` ⇒ Chromium 禁止加载 `file://` 子资源 ⇒ 出图里素材全裂。
       //    完整理由见 `resolveAssets` 上面那段。
-      const doc = JSON.parse(readFileSync(docPath, 'utf8'));
+      const doc = JSON.parse(readFileSync(docPath, 'utf8')) as DesignDocument;
       const { emitDocument } = await import('../render/vocabulary/emit');
       const assetRoots = [dir, ...(workDir ? [workDir] : [])];
       const assets = resolveAssets(doc, assetRoots, dataUrlOf);
-      const { html } = emitDocument(doc, { assets });
+      // 出图：只带这份 doc 用到的字体；绝对地址供 about:blank 页面跨源加载。
+      const fontFamilies = usedFontFamilies(doc);
+      const faceCss = buildFontCss({
+        baseUrl: `http://127.0.0.1:${PORT}/api/fonts`,
+        families: fontFamilies,
+      });
+      const fontChecks = usedFontChecks(doc);
+      const { html } = emitDocument(doc, { assets, faceCss });
       const { createBlinkRenderer } = await import('../render/rasterize/blink-renderer');
       const renderer = await createBlinkRenderer();
       try {
         const out = await renderer.render(
           { html },
           dir,
-          { width: doc.canvas.width, height: doc.canvas.height, deviceScaleFactor: 2, format: 'png', filename: 'final' },
+          {
+            width: doc.canvas.width,
+            height: doc.canvas.height,
+            deviceScaleFactor: 2,
+            format: 'png',
+            filename: 'final',
+            fontChecks,
+          },
         );
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ ok: true, png: out.imagePath }));
@@ -746,6 +786,18 @@ async function buildSystemNote(
 ): Promise<string> {
   const workDir = await transcript.getWorkDir(sessionId);
   const catalog = renderSkillCatalog(workDir);
+  // 字体库清单（稳定段）：中文与「仅英文」分开列，避免 AI 拿拉丁子集写中文。
+  const allFonts = listFontFamilies();
+  const cjkFonts = allFonts.filter((f) => f.scripts?.includes('hans'));
+  const latinFonts = allFonts.filter((f) => !f.scripts?.includes('hans'));
+  const fontNote = [
+    cjkFonts.length ? `【字体库·中文】${cjkFonts.map((f) => f.family).join('、')}` : '',
+    latinFonts.length
+      ? `【字体库·仅英文】${latinFonts.map((f) => f.family).join('、')}（没有中文字形，中文文字不要用）`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
   const layoutNote = await buildLayoutNote(sessionId, layoutName);
   const refs = (Array.isArray(references) ? references : [])
     .filter((r) => r && typeof r.id === 'string' && r.id.trim())
@@ -757,7 +809,7 @@ async function buildSystemNote(
     })
     .join('\n');
   const refNote = refs ? `【当前引用】\n${refs}` : '';
-  return [catalog, layoutNote, refNote].filter(Boolean).join('\n\n');
+  return [catalog, fontNote, layoutNote, refNote].filter(Boolean).join('\n\n');
 }
 
 /**
@@ -824,13 +876,15 @@ async function buildLayoutNote(sessionId: string, layoutName?: string | null): P
 function handleArtifacts(res: ServerResponse, sessionId: string) {
   void (async () => {
     const workDir = await transcript.getWorkDir(sessionId);
+    // 画廊缩略图也用同一套字体（相对地址）；否则缩略图与主画布字体不一致。
+    const faceCss = buildFontCss({ baseUrl: '/api/fonts' });
     const items = scanArtifactRoot(join(workDir, 'designs')).map((it) => {
-      if (!it.doc) return { ...it, assets: {} };
+      if (!it.doc) return { ...it, assets: {}, faceCss };
       const abs = join(workDir, 'designs', it.name);
       const assets = resolveAssets(it.doc, [abs, workDir], (p) =>
         `/api/sessions/${sessionId}/file/${relative(workDir, p).split(sep).join('/')}`,
       );
-      return { ...it, assets };
+      return { ...it, assets, faceCss };
     });
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(items));
@@ -1000,6 +1054,52 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
       res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end(`认领工作目录失败：${(e as Error).message}`);
     }
+  }
+
+  // ── 字体库：清单 + woff2 静态文件 ──
+  // 预览用相对地址 `/api/fonts/...`；出图用绝对 `http://127.0.0.1:8787/api/fonts/...`。
+  // ⚠️ 必须带 CORS：出图页面是 about:blank，字体请求跨源。
+  if (path === '/api/fonts' && req.method === 'GET') {
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      'Access-Control-Allow-Origin': '*',
+    });
+    return res.end(
+      JSON.stringify({
+        families: listFontFamilies().map((f) => ({
+          family: f.family,
+          dir: f.dir,
+          weights: f.weights,
+          scripts: f.scripts ?? ['latin'],
+          license: f.license ?? null,
+          character: f.character ?? null,
+          bestFor: f.bestFor ?? null,
+        })),
+      }),
+    );
+  }
+  if (path.startsWith('/api/fonts/') && req.method === 'GET') {
+    const rest = path.slice('/api/fonts/'.length).split('/');
+    if (rest.length !== 2) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('bad font path');
+    }
+    const file = fontFileByDir(decodeURIComponent(rest[0]!), decodeURIComponent(rest[1]!));
+    if (!file || !existsSync(file)) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('font not found');
+    }
+    const st = statSync(file);
+    res.writeHead(200, {
+      'Content-Type': 'font/woff2',
+      'Content-Length': st.size,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'Access-Control-Allow-Origin': '*',
+    });
+    const stream = createReadStream(file);
+    stream.on('error', () => res.destroy());
+    return stream.pipe(res);
   }
 
   if (path.startsWith('/api/layout/')) {

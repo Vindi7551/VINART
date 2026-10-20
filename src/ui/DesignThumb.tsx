@@ -27,16 +27,18 @@ const PLACEHOLDER = `data:image/svg+xml;utf8,${encodeURIComponent(
 export function DesignThumb({
   doc,
   assets,
+  faceCss,
 }: {
   doc: DesignDocument;
   assets: Record<string, string>;
+  faceCss?: string;
 }) {
   const [loaded, setLoaded] = useState(false);
 
   const cw = Math.max(1, doc.canvas.width);
   const ch = Math.max(1, doc.canvas.height);
   const scale = Math.min(THUMB_W / cw, THUMB_H / ch);
-  const html = useMemo(() => emitDocument(doc, { assets }).html, [doc, assets]);
+  const html = useMemo(() => emitDocument(doc, { assets, faceCss }).html, [doc, assets, faceCss]);
 
   return (
     <span className="design-thumb" style={{ width: THUMB_W, height: THUMB_H }}>

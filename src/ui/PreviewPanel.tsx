@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { createVocabEditor, type VocabEditorHandle } from '../editor/vocab-editor';
-import type { SelectionSnapshot } from '../editor/inspector';
+import { setFontFamilyOptions, type SelectionSnapshot } from '../editor/inspector';
 import { emitElementHtml, emitLayerHtml } from '../render/vocabulary/emit';
 import { findElement, findLayer, type ElementNode, type Rect } from '../document/vocabulary';
 import { createEditorStack, type EditorStack } from '../editor/editor-stack';
@@ -13,6 +13,10 @@ interface PreviewPanelProps {
   layoutData?: PreviewData | null;
   /** 会话 id：有值 = 素材 base 走 file API（工作目录模式）；无 = 旧约定 /files/ */
   sessionId?: string | null;
+  /** 字体库清单（服务端 `/data` 下发；编辑器字体下拉用） */
+  fontFamilies?: string[];
+  /** family → 下拉显示标签（旧拉丁字体标「仅英文」） */
+  fontLabels?: Record<string, string>;
   /** 图上操作 → App 接住整份文档（就地编辑存 state；结构性变化按 label 重取 html） */
   onLayerChange?: (id: string, doc: PreviewData['doc'], label?: string) => void;
   /** 打字（就地补 DOM，不重渲） */
@@ -118,6 +122,8 @@ export function PreviewPanel({
   previewUrl,
   layoutData,
   sessionId,
+  fontFamilies,
+  fontLabels,
   onLayerChange,
   onTypingChange,
   onLayerSelect,
@@ -144,6 +150,16 @@ export function PreviewPanel({
   /** 宿主的当前图层 —— `bind()` 是稳定回调，只能从 ref 现取 */
   const currentLayerRef = useRef<string | null>(null);
   currentLayerRef.current = currentLayerId ?? null;
+  /** 字体库清单 —— 同上，`bind()` 稳定回调只能从 ref 现取 */
+  const fontFamiliesRef = useRef<string[] | undefined>(fontFamilies);
+  fontFamiliesRef.current = fontFamilies;
+  const fontLabelsRef = useRef<Record<string, string> | undefined>(fontLabels);
+  fontLabelsRef.current = fontLabels;
+
+  // 面板（EditPanel）可能在编辑器 bind 之前就渲染 ⇒ 这里也同步一次字体下拉候选。
+  useEffect(() => {
+    setFontFamilyOptions(fontFamilies ?? [], fontLabels ?? {});
+  }, [fontFamilies, fontLabels]);
   const canvasRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<VocabEditorHandle | null>(null);
@@ -320,6 +336,32 @@ export function PreviewPanel({
    * 重挂编辑器。必须在 **iframe load 之后**调：`srcdoc` 变了要等新文档建好，
    * 早调拿到的是上一份 `contentDocument`（或空壳）。
    */
+  /**
+   * 字体是异步加载的：换字体 / 换节点 DOM 后，**等这份字体真的加载完再刷新覆盖层**，
+   * 否则选择框、拖动框、文字高度都按旧字体量，看起来"字变了框没动"。
+   */
+  const refreshAfterFonts = useCallback((doc: PreviewData['doc'], id: string) => {
+    const realm = iframeRef.current?.contentDocument;
+    const el = id ? findElement(doc, id) : null;
+    const family = el?.type === 'text' ? el.fontFamily : undefined;
+    const weight = el?.type === 'text' ? (el.weight ?? 400) : 400;
+    const fonts = realm?.fonts;
+    if (!realm || !fonts || !family) {
+      editorRef.current?.refreshDom();
+      return;
+    }
+    // fontFamily 可能是整个 CSS 栈；`fonts.load` 只认一个 family，取栈里第一个。
+    const first = family.split(',')[0]!.trim().replace(/^["']|["']$/g, '');
+    if (!first) {
+      editorRef.current?.refreshDom();
+      return;
+    }
+    void fonts
+      .load(`${weight} 16px "${first.replace(/"/g, '\\"')}"`)
+      .then(() => editorRef.current?.refreshDom())
+      .catch(() => editorRef.current?.refreshDom());
+  }, []);
+
   const bind = useCallback(() => {
     const wrap = wrapperRef.current;
     const iframe = iframeRef.current;
@@ -344,6 +386,8 @@ export function PreviewPanel({
     const ed = createVocabEditor(document, wrap, root, {
       doc,
       stack: st,
+      fontFamilies: fontFamiliesRef.current,
+      fontLabels: fontLabelsRef.current,
       // ⚠️ 重渲会新建实例 ⇒ 必须把**宿主**的当前图层带过去，否则新实例默认回最上层，
       //    而面板还高亮着旧那层 → 画布上那层的东西被门禁静默忽略。
       currentLayerId: currentLayerRef.current ?? undefined,
@@ -390,8 +434,8 @@ export function PreviewPanel({
               : emitLayerHtml(asLayer!, next.canvas, { assets: assetRef.current }).html;
             node.insertAdjacentHTML('beforebegin', html);
             node.remove();
-            // 节点是新的 DOM ⇒ 覆盖层按新的量一次（文字的高度是排版结果）
-            editorRef.current?.refreshDom();
+            // 节点是新的 DOM ⇒ 等字体加载完再按新排版量一次（文字高度是排版结果）
+            refreshAfterFonts(next, patchId);
           }
         }
         // ⚠️ **必须无条件外发**，不能 `if (id)`：（2026-10-17 修）
@@ -443,6 +487,10 @@ export function PreviewPanel({
       onSelectionChange: (snap) => cbRef.current.onSelectionChange?.(snap),
     });
     editorRef.current = ed;
+
+    // 首次绑定时字体可能还在下载；加载完再量一次，避免覆盖层按 fallback 字体定尺寸。
+    const initialFonts = (root as unknown as Document).fonts;
+    void initialFonts?.ready.then(() => ed.refreshDom());
 
     // ⭐ **重绑之后把文字态接回去**（只有"外部重渲"才会换 iframe；编辑动作不再换）。
     //    ⚠️ 没有 pending 就必须把 editingText 归 false：不然 iframe 一直吃指针，

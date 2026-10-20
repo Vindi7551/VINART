@@ -63,7 +63,7 @@ export type FieldKind =
   /** 纯色 / 线性渐变 / 径向渐变（以及可选的多层 fill）——见 `ui/paint-editor.tsx` */
   | { kind: 'paint'; layers?: boolean; hint?: string }
   | { kind: 'toggle' }
-  | { kind: 'enum'; options: string[] };
+  | { kind: 'enum'; options: string[]; labels?: Record<string, string> };
 
 export interface Field {
   /** 标识（UI 拿它当 key，探针拿它断言）。形如 `'rect.x'` / `'fill'` */
@@ -253,6 +253,46 @@ function shapeFields(n: ShapeNode): Field[] {
 const T = (l: ElementNode): TextNode | null => (l.type === 'text' ? l : null);
 
 /**
+ * 字体下拉候选。**模块级**，由 `createVocabEditor` 在创建时注入
+ * （字体库清单来自服务端 `/data`；不传 = 保持自由文本，demo/测试不受影响）。
+ *
+ * ⚠️ `fieldsFor` 是纯函数（无 DOM、无 IO），**不把清单当参数**是为了不改它的
+ *    所有调用方；这是唯一的模块级变量，且只在建编辑器时写一次。
+ */
+let fontFamilyOptions: string[] = [];
+let fontFamilyLabels: Record<string, string> = {};
+
+export function setFontFamilyOptions(
+  opts: readonly string[],
+  labels: Record<string, string> = {},
+): void {
+  fontFamilyOptions = [...new Set(opts.map((s) => s.trim()).filter(Boolean))];
+  fontFamilyLabels = labels;
+}
+
+/** 元素级「字体」：有库清单就下拉，没有就自由文本；当前值不在库里时也保留为一项 */
+function fontFamilyField(node: TextNode): Field {
+  const current = node.fontFamily?.trim() ?? '';
+  const options = fontFamilyOptions.length
+    ? [...new Set([...(current ? [current] : []), ...fontFamilyOptions])]
+    : [];
+  return {
+    path: 'fontFamily',
+    label: '字体',
+    group: '字体',
+    kind: options.length ? { kind: 'enum', options, labels: fontFamilyLabels } : { kind: 'text' },
+    get: (l) => T(l)?.fontFamily,
+    set: (l, v) => {
+      const t = T(l);
+      if (!t) return;
+      const s = String(v ?? '').trim();
+      if (s) t.fontFamily = s;
+      else delete t.fontFamily;
+    },
+  };
+}
+
+/**
  * 路径/弧形文字的**默认 viewBox 高**（`frame.h`）。
  *
  * ⚠️ 它**不是字高**：`curve` 的弧顶抬升 = `curve × frame.h`，所以它是"弧线盒子的高度"。
@@ -320,10 +360,7 @@ function textFields(node: TextNode, _canvas: { width: number }): Field[] {
     ),
 
     // ── 字体（元素级默认；片段可以各自覆盖）───────────────────────
-    text('fontFamily', '字体', '字体', (l) => T(l)?.fontFamily, (l, v) => {
-      const t = T(l);
-      if (t) t.fontFamily = v || undefined;
-    }),
+    fontFamilyField(node),
     num(
       'fontSizePx',
       '字号（整块）',
@@ -611,7 +648,9 @@ export function selectionFields(): SelField[] {
     {
       path: 'sel.fontFamily',
       label: '字体',
-      kind: { kind: 'text' },
+      kind: fontFamilyOptions.length
+        ? { kind: 'enum', options: fontFamilyOptions, labels: fontFamilyLabels }
+        : { kind: 'text' },
       get: (run, node) => run?.fontFamily ?? node.fontFamily ?? '',
     },
     {

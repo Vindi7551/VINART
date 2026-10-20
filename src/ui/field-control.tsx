@@ -39,7 +39,7 @@ export function FieldControl({
           <option value="">（未设置）</option>
           {kind.options.map((o) => (
             <option key={o} value={o}>
-              {o}
+              {kind.labels?.[o] ?? o}
             </option>
           ))}
         </Select>

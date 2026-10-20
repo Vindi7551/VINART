@@ -92,6 +92,10 @@ export interface PreviewData {
   html: string;
   /** 素材名 → URL 映射——⭐ 前端结构性变化时**自己 emitDocument** 用（编辑即渲染，无网络往返） */
   assets: Record<string, string>;
+  /** 字体库 manifest（编辑器字体下拉用）；服务端 `/data` 下发 */
+  fontFamilies?: string[];
+  /** family → 下拉显示标签（如 Bitter（仅英文））；没有就不加后缀 */
+  fontLabels?: Record<string, string>;
 }
 
 /** 宿主 → 编辑器的信号(面板/图层清单发起;seq 防重)。`patch` = 单字段（path + value）。 */

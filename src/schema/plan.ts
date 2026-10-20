@@ -134,7 +134,11 @@ const SKETCH_CANVASES: Record<SketchRatio, { width: number; height: number }> = 
 /** 草图的默认字号：画布宽的 2.2%（1200 画布 ≈ 26px）—— 后面由模板/模型覆盖 */
 const DEFAULT_TEXT_FONT_SCALE = 0.022;
 const DEFAULT_TEXT_FILL = '#111111';
-const DEFAULT_FONT_FAMILY = 'Georgia, "Times New Roman", serif';
+/**
+ * 默认字体 = **字体库里有的中性黑体**（不是系统 Georgia）。
+ * 这样没被 patch 的文字也能确定性渲染；标题/正文的搭配由 `patch_doc` 或设计 skill 决定。
+ */
+const DEFAULT_FONT_FAMILY = '"Noto Sans SC", sans-serif';
 const DEFAULT_SHAPE_FILL = '#E5E7EB';
 const DEFAULT_PLACEHOLDER_TEXT = '示例文字';
 
