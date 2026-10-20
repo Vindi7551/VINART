@@ -51,7 +51,7 @@
 - `generate_assets(images?, icons?, productPath?, layout?)`：生成素材文件，**不改 doc、不发 artifacts**。
   可选 `layout` 生成到系列里的另一张；不传用当前 active。
   - `images`：商品/场景图，走生图模型。每张 `{ file, size, prompt, references }`；
-    `references` 用 `@product`（商品实物照）/ `@sketch` / 文件名；
+    `references` 用 `@product`（商品实物照）/ 版式目录里的文件名；
   - `icons`：**你直接写的线框 SVG**，每张 `{ file, svg }`。约定
     `viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"`；
   - 生成后用 `patch_doc` 把对应节点的 `asset` 指过去（这一步才会刷新预览）。

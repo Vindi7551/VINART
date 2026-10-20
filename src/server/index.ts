@@ -35,7 +35,9 @@ import { PLACEHOLDER_ASSET } from '../schema/plan';
 
 const PORT = Number(process.env.PORT) || 8787;
 
-const PNG_PRIORITY = ['final.png', 'sketch.png'];
+// 点开产物卡片时默认显示的 PNG：final.png 优先，其余按字母序。
+// （sketch.png 已于 2026-10-20 移出——草图能力已删，没有生产者。）
+const PNG_PRIORITY = ['final.png'];
 
 /**
  * 版式编辑数据链路(前端逐元素编辑的持久层):
@@ -902,7 +904,7 @@ function handleArtifacts(res: ServerResponse, sessionId: string) {
   });
 }
 
-/** 扫一个 layouts 根目录 → 产物条目（PNG 排序：final > sketch > 其他） */
+/** 扫一个 layouts 根目录 → 产物条目（PNG 排序：final > 其他） */
 function scanArtifactRoot(layoutsRoot: string) {
   if (!existsSync(layoutsRoot)) return [];
   return readdirSync(layoutsRoot, { withFileTypes: true })

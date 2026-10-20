@@ -9,23 +9,18 @@
  *
  * ## 职责
  *
- *   输入  素材订单（`assets.json`）+ 版式（找每个素材所属的图位）
+ *   输入  素材订单（`assets.json`）
  *   输出  素材文件（`outDir/<file>`）
  *
  *   中间：商品抠图（仅当订单引用 `@product`）·
- *         草图按**图位 rect** 裁切（compose 参考）·
  *         提示词拼参考图角色说明 · 调生图模型（审核失败自动重试）
- *
- * ⚠️ 版式**草图**的渲染不在这里——它属于 `design-sketch` 阶段
- * （`runtime.ts` / `sketch.ts`），调用方保证 gen 之前草图已存在。
  */
 
 import { existsSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { iterElements, type DesignDocument, type ImageNode } from '../../document/vocabulary';
 import { BANNED_WORDS, type AssetOrders, type AssetReference, type AssetRequest } from './asset-order';
-import { cropToRef, dataUrlToBuffer, downscaleToRef, prepareProduct } from './cutout';
+import { dataUrlToBuffer, downscaleToRef, prepareProduct } from './cutout';
 
 /**
  * 提供临时浏览器页的宿主（用**最小结构类型**，避免依赖 playwright）。
@@ -145,9 +140,7 @@ function warnFidelity(prompt: string, file: string): void {
 
 export interface GenerateAssetsOptions {
   orders: AssetOrders;
-  /** 版式（用于找每个素材所属的 image 节点 → 裁草图参考） */
-  spec: DesignDocument;
-  /** 素材输出目录（同时也是 sketch.png 所在目录） */
+  /** 素材输出目录 */
   outDir: string;
   /**
    * 商品照路径。**仅当订单引用 `@product` 时必须提供**；
@@ -171,25 +164,9 @@ export interface AssetJobResult {
   error?: string;
 }
 
-function guessRole(ref: string): 'subject' | 'compose' | 'detail' {
+function guessRole(ref: string): 'subject' | 'detail' {
   if (ref === '@product') return 'subject';
-  if (ref === '@sketch') return 'compose';
   return 'detail';
-}
-
-/**
- * 按素材名找**引用它的那个 image 元素**。
- *
- * ⚠️ 画布的孩子是**图层**，图片是**图层里的元素**（还能待在组里，甚至几层组）
- * ⇒ 必须逐层往下走，不能只看 `doc.layers` 这一层。
- */
-function imageNodeOf(spec: DesignDocument, asset: string): ImageNode | null {
-  for (const layer of spec.layers) {
-    for (const e of iterElements(layer)) {
-      if (e.type === 'image' && e.asset === asset) return e;
-    }
-  }
-  return null;
 }
 
 /**
@@ -244,7 +221,7 @@ function normalizeOrders(orders: AssetOrders): AssetOrders {
 
 
 export async function generateAssets(opts: GenerateAssetsOptions): Promise<AssetJobResult[]> {
-  const { spec, outDir, force } = opts;
+  const { outDir, force } = opts;
   const orders = normalizeOrders(opts.orders);
 
   if (!orders.length) {
@@ -268,7 +245,6 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<Asset
   const promptLang = orders.find((o) => o.promptLang)?.promptLang ?? 'en';
 
   const needed = (p: string) => force || !existsSync(p);
-  const sketchPath = resolve(outDir, 'sketch.png');
 
   // ── 0. 商品抠图（仅当订单引用 @product）──
   //
@@ -314,43 +290,13 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<Asset
     // 现在由角色统一生成说明，且参考图顺序与说明顺序严格一致。
     const refs: string[] = [];
     const declared: AssetReference[] = [...(job.references ?? [])];
-    // ⚠️ **默认不带草图**（2026-10-11 改）。
-    //
-    // 旧行为是「没写 useSketchRef 就带草图」，本意是给模型构图参考；
-    // 但实测（gogokids-swim-vest 场景图）**草图上的辅助标记会被当设计画进素材**：
-    //   - 图位里的**中文图层名**（`label()` 画的，如「场景图：湖畔浅水（…）」）
-    //   - 虚线框（`sbox`）、12 等分网格（`sgrid`）
-    // 按 rect 裁切**救不了**——这些标记就画在图位**内部**，裁完照旧在。
-    //
-    // 场景图/环境图本来就该填满图位，构图由 brief 的文字意图描述即可，
-    // 不需要草图。要构图参考的订单**显式**写 `useSketchRef: true` 才带。
-    const hasSketch = declared.some((r) => r.ref === '@sketch');
-    if (!hasSketch && job.useSketchRef === true) {
-      declared.push({ ref: '@sketch', role: 'compose' });
-    }
 
-    for (const r of declared) {
+    // ⚠️ 迭代副本：下面会把「文件不存在」的参考图从 declared 里删掉，
+    //    直接 for..of 原数组会漏掉被删元素的下一个（splice 后索引前移）。
+    for (const r of [...declared]) {
       if (r.ref === '@product') {
         if (!productRef) throw new Error(`素材 ${job.file} 引用了 @product，但商品抠图没有产出`);
         refs.push(productRef);
-        continue;
-      }
-      if (r.ref === '@sketch') {
-        // 按**引用这份素材的 image 节点的 rect** 裁草图——
-        // 只让模型看到"这个图位"的构图，看不到版式的文字占位条。
-        // （实测：整张草图传进去，模型会把文字占位条当设计画进素材。）
-        const owner = imageNodeOf(spec, job.file);
-        const region = owner ? owner.rect : { x: 0, y: 0, w: 1, h: 1 };
-        const ep = await opts.host.newPage();
-        refs.push(
-          await cropToRef(
-            ep as unknown as { evaluate: <T>(fn: (a: unknown) => T, a: unknown) => Promise<T> },
-            sketchPath,
-            region,
-            1536,
-          ),
-        );
-        await ep.close();
         continue;
       }
       const p = resolve(outDir, r.ref);
@@ -370,7 +316,7 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<Asset
       await ep.close();
     }
 
-    // 实测：参考图**最多 2 张**同时传可用。超了要先在 spec 里砍掉。
+    // 实测：参考图**最多 2 张**同时传可用。超了要先在订单里删掉。
     if (refs.length > 2) {
       console.log(`    ✗ ${job.file} 需要 ${refs.length} 张参考图，实测最多 2 张可用`);
       console.log('      请减少 references，或分两步生成。');

@@ -42,10 +42,9 @@ export type ReferenceRole =
 
 export interface AssetReference {
   /**
-   * 参考图来源，三种写法：
-   * - `'@product'` —— 商品实物照（路径由 `DesignSketch.product` 指定）
-   * - `'@sketch'`  —— 本版式的草图（只取构图，不取内容）
-   * - 其它字符串   —— 输出目录里的文件名，如 `'detail.png'`
+   * 参考图来源，两种写法：
+   * - `'@product'` —— 商品实物照（路径由调用方的 `productPath` 指定）
+   * - 其它字符串   —— 版式目录里的文件名，如 `'detail.png'`
    */
   ref: string;
   role: ReferenceRole;
@@ -113,18 +112,6 @@ export interface AssetRequest {
   promptLang?: string;
   /** 参考图及角色 */
   references?: AssetReference[];
-  /**
-   * 是否自动把本版式的**草图**作为构图控制参考图传进去。**默认 false**。
-   *
-   * ⚠️ 2026-10-11 由「默认 true」改为「默认 false」：草图上除了区域框，
-   * 还画着**图层名文字 / 虚线框 / 12 等分网格**，这些辅助标记会被生图模型
-   * **当设计画进素材**（实测 gogokids-swim-vest 场景图，图位里的中文图层名
-   * 「场景图：湖畔浅水（…）」被整条画了进去）。按 rect 裁切救不了——
-   * 标记就画在图位内部。
-   *
-   * 确需草图构图参考的订单，**显式**写 `true`。
-   */
-  useSketchRef?: boolean;
 }
 
 /** 一个版式需要生成的全部素材 */

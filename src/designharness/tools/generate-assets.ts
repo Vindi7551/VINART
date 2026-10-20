@@ -9,10 +9,9 @@
  * `patch_doc` 把节点的 `asset` 指过去时才需要刷新预览（那一步由 patch_doc 发）。
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { DesignDocument } from '../../document/vocabulary';
 import type { AssetOrders } from '../../workflow/assetsgen/asset-order';
 import { generateAssets, type AssetJobResult } from '../../workflow/assetsgen/image';
 import { getWorkDir } from '../session/transcript';
@@ -79,10 +78,9 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
               prompt: { type: 'string' },
               references: {
                 type: 'array',
-                description: '参考图；@product 商品照 / @sketch 草图 / 文件名',
+                description: '参考图；@product 商品照 / 版式目录里的文件名',
                 items: { type: 'object', additionalProperties: true },
               },
-              useSketchRef: { type: 'boolean' },
             },
           },
         },
@@ -130,14 +128,12 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
 
       const imageResults: AssetJobResult[] = [];
       if (images.length) {
-        const spec = JSON.parse(readFileSync(docPath, 'utf8')) as DesignDocument;
         const { createBlinkRenderer } = await import('../../render/rasterize/blink-renderer');
         const renderer = await createBlinkRenderer();
         try {
           imageResults.push(
             ...(await generateAssets({
               orders: images,
-              spec,
               outDir,
               productPath:
                 (typeof args.productPath === 'string' && args.productPath.trim()) || null,

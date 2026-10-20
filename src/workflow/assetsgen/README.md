@@ -1,9 +1,9 @@
 # assetsgen —— 视觉素材生成
 
 这个阶段负责**产出素材文件**：位图（调生图模型）与 SVG（素材库 / 模型）。
-它消费的是**文档模型本身**：`DesignDocument`（落盘 `<工作目录>/designs/<版式名>/doc.json`）——
-`order.ts` / `image.ts` 都收 `spec: DesignDocument`，按其中 `image` 元素的 `asset` 找图位
-（`order.ts` 的 `imageNodes()`、`image.ts` 的 `imageNodeOf()`）。
+订单生成（`order.ts`）消费**文档模型**：`DesignDocument`（落盘
+`<工作目录>/designs/<版式名>/doc.json`），按其中 `image` 元素的 `asset` 找图位；
+生成（`image.ts`）**只认订单**，不看文档——图位信息只在写订单时用得到。
 ⚠️ **旧口径已作废**：`design-sketch` 阶段与 `design-sketch.json` 契约**整层已删**；
 产出素材也不再由 `compose/assemble.ts` 的 `assembleFinal()` 回填，而是交给
 `render/vocabulary/emit.ts` 的 `emitDocument(doc, { assets })` —— 渲染那一步现场消费。
@@ -17,7 +17,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `asset-order.ts` | **契约**：生图订单（`AssetRequest`：file / size / prompt / references / useSketchRef）|
+| `asset-order.ts` | **契约**：生图订单（`AssetRequest`：file / size / prompt / references）|
 | `image.ts` | **生成**：读订单 → 商品抠图（按需）→ 调 seedream（审核重试）|
 | `cutout.ts` | **商品照预处理**：实测主体边界 / 阈值抠白底 / 裁刻字区 / 压参考图 |
 | `README.md` | 本文件 |
@@ -40,21 +40,13 @@
 
 ---
 
-## 草图**默认不传**（`useSketchRef` 默认 false）
+## 草图参考已删除（2026-10-20）
 
-`useSketchRef` 曾经默认 `true`，把版式草图作为 **compose 参考**传给生图模型。
-**2026-10-11 改为默认 `false`**，原因：
+`@sketch` / `useSketchRef` 整条能力已移除：草图（`sketch.png`）**早就没有生产者**，
+带草图的订单会在读文件时直接 ENOENT；而且草图上画着**图层名文字**、**虚线框**、
+**12 等分网格**，实测会被生图模型**当设计画进素材**（按 rect 裁切也救不了）。
 
-> 草图不只是"区域框"——它还画着**图层名文字**（`label()`）、**虚线框**（`sbox`）、
-> **12 等分网格**（`sgrid`）。这些辅助标记会被生图模型**当设计画进素材**。
-> 实测（gogokids-swim-vest 场景图）：图位里的中文图层名
-> 「场景图：湖畔浅水（家长在旁扶着，明亮夏日）」被整条画进了场景照片里。
-
-**"按 rect 裁切"救不了**——那些标记就画在图位**内部**，裁完照旧在
-（这是旧版"裁切即可解决"假设的失效点）。
-
-场景图 / 环境图本来就该填满图位，构图由 **brief 的文字意图**描述即可。
-确需草图构图参考的订单，**显式**写 `useSketchRef: true`。
+构图交给 **brief 的文字意图**；要参考真实图片，就用 `references` 里的文件名。
 
 **商品抠图同样是按需的**：只有订单引用 `@product` 时才跑抠图流程；
 纯场景版式不需要商品照，整段跳过。
