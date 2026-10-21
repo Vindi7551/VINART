@@ -1759,35 +1759,200 @@ html, body, #root {
   to { transform: rotate(360deg); }
 }
 
-/* 思考档位：紧凑的下拉，放在模型名旁边 */
-.composer-thinking {
+/* 推理强度：折叠态 = 模型名 + 当前档位 + ▾ */
+.thinking-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.thinking-trigger {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.composer-thinking select {
-  font: inherit;
-  color: var(--text-muted);
+  max-width: 220px;
+  padding: 2px 4px;
+  border: none;
+  border-radius: var(--radius-sm);
   background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 1px 4px;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
   cursor: pointer;
 }
 
-/* 当前模型：只读展示，不做下拉（Vinart 只有一个 chat 模型） */
-.composer-model {
-  max-width: 150px;
+.thinking-trigger:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.thinking-model {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
-  color: var(--text-muted);
+}
+
+.thinking-current {
+  color: var(--text-secondary);
   flex-shrink: 0;
+}
+
+.thinking-chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.thinking-trigger[aria-expanded='true'] .thinking-chevron {
+  transform: rotate(180deg);
+}
+
+.thinking-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: 288px;
+  padding: 12px 12px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-lg);
+  z-index: 60;
+}
+
+.thinking-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.thinking-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.thinking-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.thinking-reset:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.thinking-slider {
+  position: relative;
+  height: 48px;
+  margin: 16px 0 2px;
+  cursor: grab;
+  touch-action: none;
+  outline: none;
+  user-select: none;
+}
+
+.thinking-slider.dragging {
+  cursor: grabbing;
+}
+
+.thinking-slider:focus-visible .thinking-knob {
+  box-shadow: 0 0 0 4px rgba(108, 92, 231, 0.16);
+}
+
+.thinking-track {
+  position: absolute;
+  left: 11px;
+  right: 11px;
+  top: 50%;
+  height: 18px;
+  transform: translateY(-50%);
+  background: #e4e4ec;
+  border-radius: 999px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.thinking-fill {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, #c9bffb 0%, #9a86f4 40%, #6c5ce7 68%, #4634c0 100%);
+  border-radius: 999px;
+  clip-path: inset(0 100% 0 0);
+  transition: clip-path 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.thinking-slider.dragging .thinking-fill {
+  transition: none;
+}
+
+.thinking-dot {
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  opacity: 0.5;
+  transform: translate(-50%, -50%);
+}
+
+.thinking-dot.active {
+  background: var(--accent);
+  opacity: 1;
+}
+
+.thinking-knob {
+  position: absolute;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+  transform: translate(-50%, -50%);
+  transition: left 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+  pointer-events: none;
+}
+
+.thinking-slider.dragging .thinking-knob {
+  transition: none;
+}
+
+.thinking-labels {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0 0;
+}
+
+.thinking-labels button {
+  padding: 2px 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.thinking-labels button:hover {
+  color: var(--text-primary);
+}
+
+.thinking-labels button.active {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* 发送：项目强调色（紫）圆形 ↑ */

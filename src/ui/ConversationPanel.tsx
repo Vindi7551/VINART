@@ -7,6 +7,7 @@ import {
   type ChatReference,
 } from './ComposerInput';
 import type { Message, ThinkingLevel } from './types';
+import { ThinkingControl } from './ThinkingControl';
 
 /**
  * 右栏对话面板 —— 消息流 + **单卡片式输入区**。
@@ -300,27 +301,11 @@ export function ConversationPanel({
             <div className="composer-spacer" />
 
             {isGenerating && <span className="composer-spinner" title="生成中…" role="status" aria-label="生成中" />}
-            <label
-              className="composer-thinking"
-              title="思考强度：关 = 更快更省；低/高/最高 = 更慢、更贵，复杂任务更稳"
-            >
-              <span>思考</span>
-              <select
-                value={thinking}
-                onChange={(e) => onThinkingChange?.(e.target.value as ThinkingLevel)}
-                aria-label="思考强度"
-              >
-                <option value="off">关</option>
-                <option value="low">低</option>
-                <option value="high">高</option>
-                <option value="max">最高</option>
-              </select>
-            </label>
-            {modelName && (
-              <span className="composer-model" title={`当前模型：${modelName}（配置在 keys.json）`}>
-                {modelName}
-              </span>
-            )}
+            <ThinkingControl
+              modelName={modelName}
+              value={thinking}
+              onChange={(v) => onThinkingChange?.(v)}
+            />
 
             <button
               className="composer-send"
