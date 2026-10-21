@@ -9,7 +9,7 @@
  * `patch_doc` 把节点的 `asset` 指过去时才需要刷新预览（那一步由 patch_doc 发）。
  */
 
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { AssetOrders } from '../../workflow/assetsgen/asset-order';
@@ -22,6 +22,110 @@ export interface IconResult {
   ok: boolean;
   bytes?: number;
   error?: string;
+}
+
+/** 版式名只允许一层目录名，禁止路径穿越（与 sketch_plan 同一规则） */
+function safeLayout(name: string): boolean {
+  return (
+    name.length > 0 && name !== '.' && name !== '..' && !name.includes('..') && !/[\\/]/.test(name)
+  );
+}
+
+/**
+ * 生图订单的入参校验 —— 有问题就**一张都不生成**，一次把所有问题列出来。
+ *
+ * 只校验「会不会白花钱 / 会不会写到目录外」：
+ * file 是纯 .png 名、prompt 非空、size 格式与像素下限、references 是数组。
+ */
+export function validateImageOrders(images: AssetOrders): string[] {
+  const problems: string[] = [];
+  const seen = new Set<string>();
+
+  images.forEach((o, i) => {
+    const tag = `images[${i}]`;
+    if (!o || typeof o !== 'object') {
+      problems.push(`${tag} 不是对象`);
+      return;
+    }
+
+    const file = typeof o.file === 'string' ? o.file.trim() : '';
+    if (!file) problems.push(`${tag}.file 必填`);
+    else if (!/^[^/\\]+\.png$/i.test(file) || file.startsWith('.') || file.includes('..')) {
+      problems.push(`${tag}.file 必须是 .png 纯文件名（不含路径）：${file}`);
+    } else if (seen.has(file.toLowerCase())) {
+      problems.push(`${tag}.file 重复：${file}`);
+    } else {
+      seen.add(file.toLowerCase());
+    }
+
+    const prompt = typeof o.prompt === 'string' ? o.prompt.trim() : '';
+    if (!prompt) problems.push(`${tag}.prompt 必填（不能为空）`);
+
+    if (o.size !== undefined) {
+      const size = String(o.size).trim();
+      const m = /^(\d+)x(\d+)$/i.exec(size);
+      if (!m) {
+        // 方舟也接受档位写法
+        if (!/^[234]K$/i.test(size)) {
+          problems.push(`${tag}.size 应为 宽x高（如 2048x2048）或 2K/3K/4K`);
+        }
+      } else if (Number(m[1]) * Number(m[2]) < 3_686_400) {
+        problems.push(`${tag}.size ${size} 低于 3,686,400 像素下限`);
+      }
+    }
+
+    const refs = (o as { references?: unknown }).references;
+    if (refs !== undefined) {
+      if (!Array.isArray(refs)) problems.push(`${tag}.references 必须是数组`);
+      else {
+        if (refs.length > 14) problems.push(`${tag}.references 最多 14 张（方舟上限）`);
+        refs.forEach((r, j) => {
+          const ref =
+            typeof r === 'string'
+              ? r
+              : r && typeof r === 'object'
+                ? ((r as Record<string, unknown>).ref ??
+                  (r as Record<string, unknown>).file ??
+                  (r as Record<string, unknown>).path ??
+                  (r as Record<string, unknown>).name)
+                : '';
+          if (typeof ref !== 'string' || !ref.trim()) {
+            problems.push(`${tag}.references[${j}] 缺少文件名`);
+          }
+        });
+      }
+    }
+  });
+
+  return problems;
+}
+
+/**
+ * 把订单合并进 `<layout>/assets.json`（按 file 去重，新覆盖旧）。
+ * 这个文件**没有任何代码读**——纯粹留底：这版素材当初是用什么提示词/参考图生成的。
+ */
+export function saveOrdersLedger(outDir: string, layout: string, images: AssetOrders): void {
+  const p = join(outDir, 'assets.json');
+  let prev: AssetOrders = [];
+  if (existsSync(p)) {
+    try {
+      const j = JSON.parse(readFileSync(p, 'utf8')) as { orders?: AssetOrders };
+      if (Array.isArray(j?.orders)) prev = j.orders;
+    } catch {
+      /* 坏文件就当没有 */
+    }
+  }
+  const byFile = new Map(prev.map((o) => [o.file, o]));
+  for (const o of images) byFile.set(o.file, o);
+  writeFileSync(
+    p,
+    JSON.stringify(
+      { layout, updatedAt: new Date().toISOString(), orders: [...byFile.values()] },
+      null,
+      2,
+    ),
+    'utf8',
+  );
 }
 
 /**
@@ -106,6 +210,10 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
           type: 'string',
           description: '可选：生成到系列里的哪一张；不传用当前 active',
         },
+        overwrite: {
+          type: 'boolean',
+          description: '可选：同名素材已存在时也重新生成（默认跳过）',
+        },
       },
     },
     async execute(args, ctx) {
@@ -113,6 +221,9 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
       const layout = requested || ctx.activeLayout?.trim() || '';
       if (!layout) {
         return { content: 'ERROR: 当前没有打开的版式，也没有传 layout。', isError: true };
+      }
+      if (!safeLayout(layout)) {
+        return { content: `ERROR: 非法版式名：${layout}`, isError: true };
       }
       const workDir = await getWorkDir(config.sessionId);
       const outDir = join(workDir, 'designs', layout);
@@ -127,18 +238,34 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
         return { content: 'ERROR: images 和 icons 至少给一个。', isError: true };
       }
 
+      // 入参校验：有问题一张都不生成（避免白花钱 / 写到目录外）
+      if (images.length) {
+        const problems = validateImageOrders(images);
+        if (problems.length) {
+          return {
+            content: JSON.stringify({ ok: false, layout, errors: problems }),
+            isError: true,
+          };
+        }
+        // 订单留底（失败也留着，方便重跑）
+        try {
+          saveOrdersLedger(outDir, layout, images);
+        } catch (e) {
+          console.warn(`    ⚠️ 写 assets.json 失败：${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+
       const imageResults: AssetJobResult[] = [];
       if (images.length) {
-        const { createBlinkRenderer } = await import('../../render/rasterize/blink-renderer');
-        const renderer = await createBlinkRenderer();
         try {
           imageResults.push(
             ...(await generateAssets({
               orders: images,
               outDir,
               workDir,
-              host: renderer,
-              force: false,
+              force: args.overwrite === true,
+              signal: ctx.signal,
+              onProgress: (p) => ctx.onEvent?.({ kind: 'asset-progress', layout, ...p }),
             })),
           );
         } catch (e) {
@@ -152,8 +279,6 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
             }),
             isError: true,
           };
-        } finally {
-          await renderer.dispose();
         }
       }
 

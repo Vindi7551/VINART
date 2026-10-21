@@ -1316,6 +1316,21 @@ export function App() {
                 },
               ]);
             }
+            // 素材生成逐张进度（generate_assets 的 ctx.onEvent）
+            if (ev === 'asset-progress') {
+              const p = data as Record<string, unknown>;
+              const status = p.skipped === true ? '跳过' : p.ok === true ? '完成' : '失败';
+              const err = typeof p.error === 'string' && p.error ? `（${p.error}）` : '';
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: `asset_${crypto.randomUUID()}`,
+                  role: 'assistant',
+                  kind: 'log',
+                  text: `素材 ${String(p.index ?? '?')}/${String(p.total ?? '?')} ${status}：${String(p.file ?? '')}${err}`,
+                },
+              ]);
+            }
             // 工具产出新图/草图 → 实时刷画廊；只有 open!==false 才打开/刷新预览
             if (ev === 'artifacts') {
               setGalleryKey((k) => k + 1);

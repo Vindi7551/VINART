@@ -19,13 +19,23 @@
 |---|---|
 | `asset-order.ts` | **契约**：生图订单（`AssetRequest`：file / size / prompt / references）|
 | `image.ts` | **生成**：读订单 → 调 seedream（审核重试）|
-| `ref-image.ts` | **参考图缩放**：本地图片 → JPEG data URL（不再抠图）|
 | `README.md` | 本文件 |
 
 **入口**：本目录的 `generateAssets()`。
 聊天链的 `generate_assets` 工具已在 `designharness/tools/generate-assets.ts` 重新长回来：
 `images` 走本目录，`icons` 是主 AI 写的线框 SVG（工具只做安全检查 + 落盘）。
 它不是旧契约的 `generate_assets`，产物仍是 `doc.json` 引用的素材文件。
+
+## 工具契约（2026-10-21 补齐）
+
+- **入参校验**：`file` 必须是 `.png` 纯文件名、`prompt` 非空、`size` 格式与像素下限、
+  `references` 是数组且 ≤14 张——**有问题一张都不生成**，一次列全部问题；
+- **同名默认跳过**；要重画同一张传 `overwrite: true`；
+- **下载后校验 PNG 魔数**：不是 PNG 就判失败，不写“假 .png”；
+- **逐张进度**：每张完成发 `asset-progress` 事件（聊天里显示一行 log）；
+- **订单留底**：合并写入 `<layout>/assets.json`（按 file 去重），失败也写；
+- **取消**：`generateAssets` / gateway 已接 `AbortSignal`（进行中的请求可中断），
+  但聊天界面**还没有停止按钮**——signal 目前没有入口。
 
 ---
 
@@ -52,9 +62,12 @@
 抠图预处理——用户贴的商品照落在 `<workDir>/uploads/`，直接写进 `references`
 （如 `"uploads/chat-xxxx.png"`）即可。参考图按 **版式目录 → 工作目录** 的顺序找文件。
 
-**参考图分辨率不能压**：曾经默认 768px，商品上的雕刻小字读不清，
-生成时模型只能**编造**（畸形 / 截断）。原尺寸传入后逐字全对——
-**我们把证据弄糊了再让它抄**。现在商品照按 2048、其它参考图按 1024 压。
+**参考图原图直传，不压缩**（2026-10-21）：曾经默认 768px，商品上的雕刻小字读不清，
+生成时模型只能**编造**（畸形 / 截断）；后来改成压到 2048/1024，仍会丢 alpha、糊小字。
+现在直接读原文件字节（mime 按文件头判断），PNG 的 alpha 也保留。
+
+⚠️ 代价是请求体变大：参考图是 base64 data URL。**实测请求体上限 128 MiB**
+（134MB 的 data URL 通过、135MB 返回 413 `EntryTooBig`）；代码在合计 >120MB 时提示。
 
 ---
 

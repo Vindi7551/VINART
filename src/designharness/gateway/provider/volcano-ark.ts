@@ -60,6 +60,7 @@ export function createVolcanoArk(config: VolcanoArkConfig): ImageProvider {
           },
           body: JSON.stringify(body),
           timeout: 120_000, // 生图超时设置更长
+          signal: params.signal,
         },
         { retries: 1 },
       );

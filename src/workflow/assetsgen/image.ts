@@ -15,23 +15,28 @@
  *   中间：提示词拼参考图说明 · 调生图模型（审核失败自动重试）
  */
 
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, isAbsolute, resolve, sep } from 'node:path';
 
 import { BANNED_WORDS, type AssetOrders, type AssetRequest } from './asset-order';
-import { downscaleToRef } from './ref-image';
 
 /**
- * 提供临时浏览器页的宿主（用**最小结构类型**，避免依赖 playwright）。
- * 参考图的缩放 / 裁切都在浏览器 canvas 里做。
+ * 本地文件 → data URL（**原图直传，不压缩**）。
+ *
+ * ⚠️ mime 必须和真实字节一致——按文件头判断，别按扩展名：
+ * 有些文件扩展名和内容对不上（接口会照 mime 解）。
  */
-export interface CanvasHost {
-  newPage(): Promise<{
-    evaluate: <T>(fn: (arg: unknown) => T, arg: unknown) => Promise<T>;
-    close(): Promise<void>;
-    /** 可选：设置视口（文字自适应测量需要与画布同尺寸） */
-    setViewportSize?: (size: { width: number; height: number }) => Promise<void>;
-  }>;
+export function fileDataUrl(file: string): string {
+  const buf = readFileSync(file);
+  const mime =
+    buf[0] === 0x89 && buf[1] === 0x50
+      ? 'image/png'
+      : buf[0] === 0xff && buf[1] === 0xd8
+        ? 'image/jpeg'
+        : buf[0] === 0x52 && buf[1] === 0x49
+          ? 'image/webp'
+          : 'application/octet-stream';
+  return `data:${mime};base64,${buf.toString('base64')}`;
 }
 
 /**
@@ -177,10 +182,23 @@ export interface GenerateAssetsOptions {
    * （用户贴的商品照落在 `<workDir>/uploads/`）。
    */
   workDir: string;
-  /** 提供浏览器页（canvas 处理参考图） */
-  host: CanvasHost;
   /** true = 已存在的素材也重新生成 */
   force: boolean;
+  /** 用户取消信号（点停止时中断正在进行的请求） */
+  signal?: AbortSignal;
+  /** 每张素材完成后的进度（聊天链经 ctx.onEvent 上抛） */
+  onProgress?: (p: AssetProgress) => void;
+}
+
+/** 单张素材完成时的进度 */
+export interface AssetProgress {
+  file: string;
+  /** 1 基序号（按订单顺序） */
+  index: number;
+  total: number;
+  ok: boolean;
+  skipped?: boolean;
+  error?: string;
 }
 
 /** 单张素材的生成结果（聊天工具链路要逐张向用户汇报） */
@@ -294,12 +312,13 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<Asset
   // ── 逐条生成（并发池）──
   // 聊天工具链路一次订单可能是十几张素材：串行 ≈ 15s/张 × N 太慢。
   // 并发池限 3——doubao API 扛得住；更高并发没实测过收益，不赌。
-  // host.newPage 并发开多页安全（共享 context，与多子 agent 并发渲染同机制）。
   const CONCURRENCY = 3;
   /** 方舟生图接口的参考图上限——我们不再自设更小的硬限制 */
   const MAX_REFS = 14;
 
   async function generateOne(job: AssetRequest): Promise<AssetJobResult> {
+    if (opts.signal?.aborted) return { file: job.file, ok: false, error: '已取消' };
+
     const target = resolve(outDir, job.file);
     if (!needed(target)) {
       console.log(`    ${job.file} 已存在，跳过`);
@@ -341,20 +360,21 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<Asset
       kept.push({ ref, path: p, origNo: i + 1 });
     }
 
-    // 分辨率按**张数**（role 已删）：1–2 张按 2048（保商品上的小字），
-    // 更多按 1024（纯粹控请求体大小）。
-    const refMax = kept.length <= 2 ? 2048 : 1024;
+    // 参考图**原图直传**（2026-10-21 起不压缩）：
+    //   · 以前压成 JPEG：白底 flatten 会丢 alpha，还会糊掉小字；
+    //   · 现在直接读原字节，mime 按文件头判断。
+    // 代价是请求体变大——下面按 base64 总长度提示，不硬拦。
     const refs: string[] = [];
+    let refChars = 0;
     for (const k of kept) {
-      const ep = await opts.host.newPage();
-      refs.push(
-        await downscaleToRef(
-          ep as unknown as { evaluate: <T>(fn: (a: unknown) => T, a: unknown) => Promise<T> },
-          k.path,
-          refMax,
-        ),
-      );
-      await ep.close();
+      const url = fileDataUrl(k.path);
+      refChars += url.length;
+      refs.push(url);
+    }
+    if (refChars > 120_000_000) {
+      const msg = `参考图 base64 合计 ${(refChars / 1_000_000).toFixed(1)}MB，接近 128MiB 请求体上限（实测 134MB 通过、135MB 返回 413），可能被 API 拒绝`;
+      console.log(`    ⚠️ ${job.file} ${msg}`);
+      warnings.push(msg);
     }
 
     // 参考图数量**不设硬上限**（方舟最多 14 张）。超过 2 张只提示、不让整张单失败——
@@ -404,6 +424,9 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<Asset
     // InputTextSensitiveContentDetected 拦截。这种抖动只能靠重试兜。
     const MAX_ATTEMPTS = 3;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      if (opts.signal?.aborted) {
+        return { file: job.file, ok: false, error: '已取消', ...(warnings.length ? { warnings } : {}) };
+      }
       const t0 = Date.now();
       try {
         const r = await gateway.generate({
@@ -412,14 +435,25 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<Asset
           size,
           count: 1,
           format: 'png',
+          signal: opts.signal,
         });
         const img = r.images[0];
         if (!img) throw new Error('未返回图片');
 
-        const res = await fetch(img.url);
+        const res = await fetch(img.url, { signal: opts.signal });
         if (!res.ok) throw new Error(`下载 HTTP ${res.status}`);
 
         const buf = Buffer.from(await res.arrayBuffer());
+        // ⚠️ 只认 PNG：output_format 有可能被忽略（返回 JPEG），
+        //    按 PNG 头读宽高会得到乱码，还会把 JPEG 存成 .png。
+        if (!(buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)) {
+          return {
+            file: job.file,
+            ok: false,
+            error: `接口返回的不是 PNG（前 4 字节 ${buf.subarray(0, 4).toString('hex')}）`,
+            ...(warnings.length ? { warnings } : {}),
+          };
+        }
         writeFileSync(target, buf);
         console.log(
           `       ✓ ${job.file}  ${buf.readUInt32BE(16)}×${buf.readUInt32BE(20)}  ` +
@@ -433,6 +467,10 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<Asset
           ...(warnings.length ? { warnings } : {}),
         };
       } catch (e) {
+        if (opts.signal?.aborted) {
+          console.log(`       ✗ ${job.file} 已取消`);
+          return { file: job.file, ok: false, error: '已取消', ...(warnings.length ? { warnings } : {}) };
+        }
         const msg = (e as Error).message;
         const short = msg.split('\n').filter(Boolean).slice(-1)[0] ?? msg;
         if (attempt < MAX_ATTEMPTS) {
@@ -458,16 +496,27 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<Asset
   let next = 0;
   async function worker(): Promise<void> {
     while (next < orders.length) {
+      if (opts.signal?.aborted) return;
       const i = next++;
       results[i] = await generateOne(orders[i]).catch((e) => ({
         file: orders[i]!.file,
         ok: false,
         error: String((e as Error).message ?? e),
       }));
+      const r = results[i]!;
+      opts.onProgress?.({
+        file: r.file,
+        index: i + 1,
+        total: orders.length,
+        ok: r.ok,
+        ...(r.skipped ? { skipped: true } : {}),
+        ...(r.error ? { error: r.error } : {}),
+      });
     }
   }
   await Promise.all(
     Array.from({ length: Math.min(CONCURRENCY, orders.length) }, () => worker()),
   );
-  return results;
+  // 取消时未开始的任务是空洞——过滤掉，别让 JSON 里出现 null
+  return results.filter((r): r is AssetJobResult => Boolean(r));
 }

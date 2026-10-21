@@ -114,7 +114,7 @@ src/
 │   └── composite/            ④ 合成（**今天空着**：由 Chromium 代劳）
 ├── bitmap/                ⚠️ 位图能力 —— 未实现，见 `docs/HYBRID-RENDERING.md`
 └── workflow/              一条工作流一个目录
-    └── assetsgen/         素材生成（asset-order · order · image · ref-image）
+    └── assetsgen/         素材生成（asset-order · order · image）
 ```
 
 **逻辑真源分布**（改之前先定位）：
