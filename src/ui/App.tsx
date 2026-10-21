@@ -108,7 +108,6 @@ export function App() {
   // 生成中标记：SSE 流的真实开合状态（handleSend 里置起、流结束/异常置回）。
   // ⚠️ 改造前这里是写死的 `useState(false)` —— 连 spinner 都不可能出现。
   const [isGenerating, setIsGenerating] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   /** 产物可能有新图时 +1,画廊据此重新拉清单 */
   const [galleryKey, setGalleryKey] = useState(0);
   /**
@@ -730,10 +729,9 @@ export function App() {
 
   /** 打开产物:fetch data(会话工作目录模式带 session query) */
   const handleOpenArtifact = useCallback(
-    async (url: string, name: string, _dir: string, sidOverride?: string) => {
+    async (_url: string, name: string, _dir: string, sidOverride?: string) => {
       const sid = sidOverride ?? sessionIdRef.current;
       if (!sid) return;
-      setPreviewUrl(url); // 兜底:数据没到之前先给 PNG
       try {
         const dataUrl = artifactDataUrl(sid, name);
         // 网络失败自动重试一次（覆盖「8787 刚重启」的窗口期——点开瞬间服务未就绪）
@@ -760,7 +758,7 @@ export function App() {
             {
               id: crypto.randomUUID(),
               role: 'assistant',
-              text: `⚠️ 「${name}」没有可编辑的版式数据（HTTP ${resp.status}），预览保持图片。常见原因：还没有生成 doc.json，或项目路径不匹配。`,
+              text: `⚠️ 「${name}」没有可编辑的版式数据（HTTP ${resp.status}）。常见原因：还没有生成 doc.json，或项目路径不匹配。`,
             },
           ]);
           return;
@@ -772,7 +770,7 @@ export function App() {
             {
               id: crypto.randomUUID(),
               role: 'assistant',
-              text: `⚠️ 「${name}」的版式数据里没有 html，预览保持图片。`,
+              text: `⚠️ 「${name}」的版式数据里没有 html。`,
             },
           ]);
           return;
@@ -874,7 +872,6 @@ export function App() {
         setWorkDir(abs);
         // 目录变了:当前打开的版式属于旧位置,清掉(回到缩略图重选)
         commitLayout(null as unknown as PreviewData);
-        setPreviewUrl(null);
         setGalleryKey((k) => k + 1);
         setMessages((prev) => [
           ...prev,
@@ -1105,12 +1102,6 @@ export function App() {
       const result = (await resp.json()) as { ok: boolean; log?: string };
       if (result.ok) {
         setGalleryKey((k) => k + 1);
-        // 成品落在版式目录里，走会话文件 API 取（一个工作目录就是一个项目）
-        setPreviewUrl(
-          sessionId
-            ? `/api/sessions/${sessionId}/file/designs/${cur.name}/final.png?t=${Date.now()}`
-            : `/files/test_product/layout/${cur.name}/final.png?t=${Date.now()}`,
-        );
         logSessionAction('render', { layout: cur.name });
         setMessages((prev) => [
           ...prev,
@@ -1435,7 +1426,6 @@ export function App() {
           onResizeStart={handleResizeStartLeft}
         />
         <PreviewPanel
-          previewUrl={previewUrl}
           layoutData={layout}
           sessionId={sessionId}
           fontFamilies={layout?.fontFamilies}
@@ -1460,24 +1450,22 @@ export function App() {
         {/* 检查器栏（版式编辑器）—— **独立一栏**，贴画布右侧；无版式时不占位。
             2026-10-10 从 .right-col 里搬出来：编辑器与对话不再同栏。
             开关贴在检查器左缘外（+36 是收起时躲开右栏开关的偏移）。 */}
+        {layout && inspectorColCollapsed && (
+          <button
+            type="button"
+            className="inspector-toggle collapsed"
+            style={{ right: (rightColCollapsed ? 10 : rightColWidth + 10) + 36 }}
+            onClick={toggleInspectorCol}
+            title="展开版式编辑"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <rect x="1.5" y="2.5" width="13" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
+              <line x1="10.5" y1="4" x2="10.5" y2="12" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+          </button>
+        )}
         {layout && (
           <>
-            <button
-              type="button"
-              className={`inspector-toggle${inspectorColCollapsed ? ' collapsed' : ''}`}
-              style={{
-                right:
-                  (rightColCollapsed ? 10 : rightColWidth + 10) +
-                  (inspectorColCollapsed ? 36 : inspectorColWidth + 10),
-              }}
-              onClick={toggleInspectorCol}
-              title={inspectorColCollapsed ? '展开版式编辑' : '收起版式编辑'}
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <rect x="1.5" y="2.5" width="13" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
-                <line x1="10.5" y1="4" x2="10.5" y2="12" stroke="currentColor" strokeWidth="1.5" />
-              </svg>
-            </button>
             <div
               className={`inspector-col${inspectorColCollapsed ? ' collapsed' : ''}`}
               style={{ width: inspectorColCollapsed ? 0 : inspectorColWidth }}
@@ -1510,6 +1498,7 @@ export function App() {
                 selection={selection}
                 busy={layoutBusy}
                 tool={tool}
+                onCollapse={toggleInspectorCol}
                 onSelectLayer={(id) => {
                   setSelectedLayer(id);
                   seqRef.current += 1;
@@ -1525,11 +1514,12 @@ export function App() {
             </div>
           </>
         )}
-        {/* 右栏开关:贴右栏左缘外悬浮,收起时滑到屏幕右缘;图标竖线靠右=侧栏在右,收起时镜像 */}
+        {/* 右栏开关：固定贴屏幕右缘——展开时落在对话栏右上角，收起时留在同一位置。
+            不再挂在编辑器标题行上（2026-10-21）。 */}
         <button
           type="button"
           className={`right-toggle${rightColCollapsed ? ' collapsed' : ''}`}
-          style={{ right: rightColCollapsed ? 10 : rightColWidth + 10 }}
+          style={{ right: 10 }}
           onClick={toggleRightCol}
           title={rightColCollapsed ? '展开侧栏' : '收起侧栏'}
         >
@@ -1538,7 +1528,10 @@ export function App() {
             <line x1="10.5" y1="4" x2="10.5" y2="12" stroke="currentColor" strokeWidth="1.5" />
           </svg>
         </button>
-        <div className="right-col" style={{ width: rightColCollapsed ? 0 : rightColWidth }}>
+        <div
+          className={`right-col${rightColCollapsed ? ' collapsed' : ''}`}
+          style={{ width: rightColCollapsed ? 0 : rightColWidth }}
+        >
           {/* 拖拽手柄:贴左缘的窄条,hover 高亮;按住左右拖调右栏宽度 */}
           {!rightColCollapsed && (
           <div className="right-resizer" onMouseDown={handleResizeStart} title="拖拽调整右栏宽度" />

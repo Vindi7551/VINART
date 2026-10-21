@@ -156,6 +156,8 @@ interface EditPanelProps {
   onSelectionStyle: (path: string, value: unknown) => void;
   /** 图层操作信号（增删/排序/撤销/重做） */
   onSignal: (sig: EditSignal) => void;
+  /** 收起整栏（按钮在面板标题右侧；折叠态的浮标由宿主渲染） */
+  onCollapse?: () => void;
 }
 
 export function EditPanel({
@@ -174,6 +176,7 @@ export function EditPanel({
   onLayerPatch,
   onSelectionStyle,
   onSignal,
+  onCollapse,
 }: EditPanelProps) {
   // ⚠️ 找的是**元素**（含嵌套）：`doc.layers` 现在是**图层**，元素在 `Layer.elements` 里。
   const node = findElement(layout.doc, selectedLayer);
@@ -379,6 +382,21 @@ export function EditPanel({
             : layer
               ? `图层 · ${layer.name ?? layer.id}`
               : toolDef?.label
+        }
+        actions={
+          onCollapse ? (
+            <button
+              type="button"
+              className="panel-collapse-btn"
+              onClick={onCollapse}
+              title="收起版式编辑"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <rect x="1.5" y="2.5" width="13" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
+                <line x1="10.5" y1="4" x2="10.5" y2="12" stroke="currentColor" strokeWidth="1.5" />
+              </svg>
+            </button>
+          ) : undefined
         }
       />
       <PanelBody className={tool === 'layers' ? 'ui-panel-body--fill' : undefined}>

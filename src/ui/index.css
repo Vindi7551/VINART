@@ -463,14 +463,6 @@ html, body, #root {
   color: var(--text-muted);
 }
 
-.preview-image {
-  max-width: 100%;
-  max-height: 100%;
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  object-fit: contain;
-}
-
 /* ===== 一键生成表单 ===== */
 /* 展开超高时自己内部滚（不把对话流挤出栏）——与 step-panel 同一约束 */
 .pipeline-form {
@@ -861,7 +853,7 @@ html, body, #root {
 }
 
 /* ===== 右栏收起/展开开关 ===== */
-/* 悬浮贴右栏左缘外;收起时 right 由内联 style 驱动滑到屏幕右缘 */
+/* 固定贴屏幕右缘：展开时落在对话栏右上角，收起时在同一位置 */
 .right-toggle {
   position: absolute;
   top: 10px;
@@ -1143,6 +1135,11 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+/* 对话栏展开时，右上角有「收起」按钮：给消息流让出顶部空间，避免第一条消息被压住 */
+.right-col:not(.collapsed) .chat-stream {
+  padding-top: 44px;
 }
 
 .chat-empty {
@@ -1954,6 +1951,26 @@ html, body, #root {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
+}
+
+/* 面板标题右侧的「收起」：与浮标同样式，但住在标题行里 */
+.panel-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.panel-collapse-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .ui-panel-body {

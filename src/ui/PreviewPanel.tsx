@@ -7,8 +7,6 @@ import { createEditorStack, type EditorStack } from '../editor/editor-stack';
 import type { PreviewData, HostSignal } from './types';
 
 interface PreviewPanelProps {
-  /** 数据还没到时的兜底图（PNG） */
-  previewUrl?: string | null;
   /** 版式编辑模式：有值 = 用服务端现场渲染的 HTML + 父侧编辑器 */
   layoutData?: PreviewData | null;
   /** 会话 id：有值 = 素材 base 走 file API（工作目录模式）；无 = 旧约定 /files/ */
@@ -119,7 +117,6 @@ const DEFAULT_WIDTH = 800;
 const DEFAULT_HEIGHT = 1200;
 
 export function PreviewPanel({
-  previewUrl,
   layoutData,
   sessionId,
   fontFamilies,
@@ -972,8 +969,6 @@ export function PreviewPanel({
               </div>
             ) : null}
           </div>
-        ) : previewUrl ? (
-          <img className="preview-image" src={previewUrl ?? undefined} alt="设计预览" />
         ) : (
           <div className="preview-placeholder">
             <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
