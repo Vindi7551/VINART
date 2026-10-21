@@ -18,7 +18,7 @@ export interface SkillSummary {
   whenToUse?: string;
   /**
    * 来源（三选一）：
-   * - bundled：代码内置（随产品发；V1 空壳，将来放产品能力说明书）
+   * - bundled：随产品发布（`<repo>/src/designharness/skills/bundled/`）
    * - project：<workDir>/skills/ 下项目级自建（按工作目录隔离）
    * - user   ：~/.vinart/skills/ 下用户全局自建（跨所有工作目录可用）
    * 同名优先级：**bundled > project > user**（决策 2026-10-11，见 registry.ts 头注）。

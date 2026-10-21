@@ -21,14 +21,14 @@ skill 从三个地方来，合并后暴露给模型：
 
 | 来源 | 位置 | 全局可用 | 载体 | 谁维护 |
 |---|---|---|---|---|
-| `bundled` | 代码内置（`registerBundledSkill`） | ✅ | TS 代码 | 产品开发者 |
+| `bundled` | `<repo>/src/designharness/skills/bundled/<name>/SKILL.md` | ✅ | 文件（随代码发布） | 产品开发者 |
 | `project` | `<workDir>/skills/<name>/SKILL.md` | ❌ 按工作目录隔离 | 文件 | 用户（某项目） |
 | `user` | `~/.vinart/skills/<name>/SKILL.md` | ✅ | 文件 | 用户（全局） |
 
 ```
-<工作目录>/skills/<name>/SKILL.md      项目级——只在该目录的会话里可见
-~/.vinart/skills/<name>/SKILL.md        用户全局——跨所有工作目录可用
-（代码内置）registerBundledSkill(...)   产品级——随产品版本发布
+src/designharness/skills/bundled/<name>/SKILL.md   产品级——随代码发布（用户改不到）
+<工作目录>/skills/<name>/SKILL.md                   项目级——只在该目录的会话里可见
+~/.vinart/skills/<name>/SKILL.md                    用户全局——跨所有工作目录可用
 ```
 
 > `~/.vinart/` 是既有的用户级目录（会话中央注册表 `~/.vinart/workdirs.json` 也在此），
@@ -107,7 +107,7 @@ whenToUse: 用户要为亚马逊产品设计 listing 套图、提到五点描述
 
 **约束与安全：**
 
-- 仅 `project` / `user` 层支持（有目录）；`bundled` 是代码、无目录。
+- 三层都支持（都有目录）；`bundled` 的目录随代码发布，打包后只读。
 - `file` 路径**必须落在该 skill 目录内**——`../` 穿越会被拒（`readSkillFile` 做 resolve 前缀校验）。
 - 单文件读取上限 **64 KiB**，超出返回错误（避免撑爆上下文）。
 
@@ -115,7 +115,8 @@ whenToUse: 用户要为亚马逊产品设计 listing 套图、提到五点描述
 
 - **用户全局（推荐给领域知识）**：`~/.vinart/skills/<name>/SKILL.md` —— 零改码、跨所有项目生效。
 - **项目级**：`<workDir>/skills/<name>/SKILL.md` —— 零改码、只对该项目生效（同名可覆盖 `user`）。
-- **内置（产品说明书）**：`registerBundledSkill({...})` —— 需改码（当前为空壳机制，暂无调用方）。
+- **内置（产品说明书）**：`<repo>/src/designharness/skills/bundled/<name>/SKILL.md` ——
+  随代码发布，**同名时压过 project/user**（产品事实不该被覆盖）。
 
 > 领域知识（Amazon listing / eBay / Etsy 方法论）应走**用户全局层**，不进 `bundled`——
 > `bundled` 的正当用途是「产品自身能力说明书」，把业务领域知识塞进去是层次混淆。
