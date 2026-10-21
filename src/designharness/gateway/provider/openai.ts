@@ -39,6 +39,16 @@ export function createOpenAI(config: OpenAIConfig): ChatProvider {
         max_tokens: opts?.maxTokens ?? 32768,
         // 工具调用是 Open 标准 chat 规范：有就带，没有就不带该键
         ...(opts?.tools?.length ? { tools: opts.tools } : {}),
+        // 思考模式（DeepSeek 扩展）：开关与强度是两个字段。
+        // `off` 只关思考、不带 reasoning_effort；不开/不传则沿用服务端默认。
+        ...(opts?.reasoningEffort
+          ? {
+              thinking: { type: opts.reasoningEffort === 'off' ? 'disabled' : 'enabled' },
+              ...(opts.reasoningEffort === 'off'
+                ? {}
+                : { reasoning_effort: opts.reasoningEffort }),
+            }
+          : {}),
       };
 
       const response = await fetchWithRetry(

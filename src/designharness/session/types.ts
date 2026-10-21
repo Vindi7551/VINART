@@ -34,6 +34,8 @@ export interface ChatSession {
       /** 当前打开的版式名（来自 /chat 的 activeLayout），传给工具上下文 */
       activeLayout?: string;
       onEvent?: (evt: Record<string, unknown>) => void;
+      /** 思考强度（来自 /chat 的 thinking）；undefined = 不下发，沿用服务端默认 */
+      reasoningEffort?: 'off' | 'low' | 'high' | 'max';
     },
   ): AsyncIterable<ChatChunk>;
 

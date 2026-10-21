@@ -1749,6 +1749,26 @@ html, body, #root {
   to { transform: rotate(360deg); }
 }
 
+/* 思考档位：紧凑的下拉，放在模型名旁边 */
+.composer-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.composer-thinking select {
+  font: inherit;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1px 4px;
+  cursor: pointer;
+}
+
 /* 当前模型：只读展示，不做下拉（Vinart 只有一个 chat 模型） */
 .composer-model {
   max-width: 150px;

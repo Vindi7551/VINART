@@ -10,7 +10,7 @@ import { EditPanel } from './EditPanel';
 import { ToolBar } from './ToolBar';
 import { shouldFollowSelection, toolForLayer, type ToolId } from './tools';
 import type { Message, DelegationRecord, ChatReference, MentionItem } from './types';
-import type { PreviewData, HostSignal, SessionItem } from './types';
+import type { PreviewData, HostSignal, SessionItem, ThinkingLevel } from './types';
 import { iterElements } from '../document/vocabulary';
 import { fieldsFor, type SelectionSnapshot } from '../editor/inspector';
 import { findElement, findLayer, type DesignDocument } from '../document/vocabulary';
@@ -127,6 +127,18 @@ export function App() {
   const [workDir, setWorkDir] = useState<string | null>(null);
   /** 已注册的 chat 模型名（服务端 /api/models）——工具条上显示"当前模型"，不硬编码 */
   const [chatModels, setChatModels] = useState<string[]>([]);
+  /**
+   * 思考档位（off/low/high/max）。默认 off = 保持现有行为（deepseek-flash 不传时实测不思考）。
+   * 存在 localStorage：刷新页面后沿用上次选择。
+   */
+  const [thinking, setThinking] = useState<ThinkingLevel>(() => {
+    const v = localStorage.getItem('vinart.thinking');
+    return v === 'low' || v === 'high' || v === 'max' ? v : 'off';
+  });
+  const handleThinkingChange = (v: ThinkingLevel) => {
+    setThinking(v);
+    localStorage.setItem('vinart.thinking', v);
+  };
 
   async function refreshSessions() {
     try {
@@ -1250,6 +1262,7 @@ export function App() {
             text,
             ...(images.length ? { images } : {}),
             activeLayout: layout?.name ?? null,
+            thinking,
             ...(references?.length ? { references } : {}),
           }),
         });
@@ -1364,7 +1377,7 @@ export function App() {
         setIsGenerating(false);
       }
     },
-    [sessionId, ensureSession, layout, refreshSessions, toChatImageDataURL, openLayoutByName],
+    [sessionId, ensureSession, layout, refreshSessions, toChatImageDataURL, openLayoutByName, thinking],
   );
 
   // 供 UI 判断：agent 层(对话式生成)是否可用
@@ -1541,6 +1554,8 @@ export function App() {
             workDir={workDir}
             dirLocked={sessionId !== null}
             modelName={chatModels[0] ?? null}
+            thinking={thinking}
+            onThinkingChange={handleThinkingChange}
             onPickDir={handlePickDir}
             onSetWorkDir={handleSetWorkDir}
           />

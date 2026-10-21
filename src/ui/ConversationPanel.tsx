@@ -6,7 +6,7 @@ import {
   type MentionItem,
   type ChatReference,
 } from './ComposerInput';
-import type { Message } from './types';
+import type { Message, ThinkingLevel } from './types';
 
 /**
  * 右栏对话面板 —— 消息流 + **单卡片式输入区**。
@@ -38,6 +38,9 @@ interface ConversationPanelProps {
   dirLocked?: boolean;
   /** 当前 chat 模型名（只读；来自服务端 /api/models） */
   modelName?: string | null;
+  /** 思考档位（off/low/high/max）——由 App 持有并持久化 */
+  thinking?: ThinkingLevel;
+  onThinkingChange?: (v: ThinkingLevel) => void;
   /** 打开应用内目录浏览器 */
   onPickDir: () => void;
   onSetWorkDir: (dir: string) => void;
@@ -130,6 +133,8 @@ export function ConversationPanel({
   workDir,
   dirLocked = false,
   modelName = null,
+  thinking = 'off',
+  onThinkingChange,
   onPickDir,
   onSetWorkDir,
 }: ConversationPanelProps) {
@@ -295,6 +300,22 @@ export function ConversationPanel({
             <div className="composer-spacer" />
 
             {isGenerating && <span className="composer-spinner" title="生成中…" role="status" aria-label="生成中" />}
+            <label
+              className="composer-thinking"
+              title="思考强度：关 = 更快更省；低/高/最高 = 更慢、更贵，复杂任务更稳"
+            >
+              <span>思考</span>
+              <select
+                value={thinking}
+                onChange={(e) => onThinkingChange?.(e.target.value as ThinkingLevel)}
+                aria-label="思考强度"
+              >
+                <option value="off">关</option>
+                <option value="low">低</option>
+                <option value="high">高</option>
+                <option value="max">最高</option>
+              </select>
+            </label>
             {modelName && (
               <span className="composer-model" title={`当前模型：${modelName}（配置在 keys.json）`}>
                 {modelName}

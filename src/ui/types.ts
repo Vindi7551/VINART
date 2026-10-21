@@ -1,5 +1,8 @@
 import type { DesignDocument } from '../document/vocabulary';
 
+/** 思考档位（与 /chat 的 thinking、gateway 的 reasoningEffort 对齐） */
+export type ThinkingLevel = 'off' | 'low' | 'high' | 'max';
+
 /** 与 server 的 ChatReference 对齐（目前只有元素引用） */
 export interface ChatReference {
   kind: 'element';

@@ -157,6 +157,15 @@ export interface ChatOptions {
   maxTokens?: number;
   /** 可供模型调用的工具（省略 = 不开启工具调用） */
   tools?: ToolDef[];
+  /**
+   * 思考强度（OpenAI 兼容扩展；DeepSeek 用 `thinking` + `reasoning_effort` 两个字段）。
+   * - `off`：显式关思考（`{thinking:{type:'disabled'}}`）
+   * - `low` / `high` / `max`：开思考并给强度
+   * - `undefined`：**不下发**，沿用服务端默认（当前 `deepseek-flash` 实测默认不思考）
+   *
+   * 不认这组参数的 provider 应忽略；思考模式会忽略 temperature。
+   */
+  reasoningEffort?: 'off' | 'low' | 'high' | 'max';
 }
 
 // ── 附件 ──

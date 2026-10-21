@@ -547,6 +547,7 @@ async function handleSessions(
       activeLayout?: string;
       images?: string[];
       references?: ChatReference[];
+      thinking?: string;
     };
     try {
       // 96MB：覆盖单张 64MiB 图（Files API 上限）的 base64 ~86MB + JSON 余量。
@@ -557,6 +558,7 @@ async function handleSessions(
         activeLayout?: string;
         images?: string[];
         references?: ChatReference[];
+        thinking?: string;
       };
     } catch (e) {
       res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -564,6 +566,13 @@ async function handleSessions(
     }
     const text = String(body.text ?? '').trim();
     const rawImages = Array.isArray(body.images) ? body.images : [];
+    // 思考档位：off / low / high / max（对应 DeepSeek 的 thinking + reasoning_effort）。
+    // 不传 = 不下发，沿用服务端默认；传了非法值直接 400，不静默忽略。
+    const thinking = body.thinking === undefined ? undefined : String(body.thinking);
+    if (thinking !== undefined && !['off', 'low', 'high', 'max'].includes(thinking)) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end(`thinking 只支持 off / low / high / max，收到：${thinking}`);
+    }
     if (!text && rawImages.length === 0) {
       res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end('缺少 text 或 images');
@@ -695,6 +704,7 @@ async function handleSessions(
       for await (const chunk of session.send(text, attachments.length ? attachments : undefined, {
         systemNote,
         activeLayout: body.activeLayout as string | undefined,
+        reasoningEffort: thinking as 'off' | 'low' | 'high' | 'max' | undefined,
         // 进度事件分流：子 agent spawn/result → 'agent'（委派卡片）；
         // kind:'tool-call'（主 AI 工具循环中间轮）→ 落转录账本 + 'tool' 实时推——
         // 不落账的话刷新会话后「AI 调过工具」完全蒸发；不进模型上下文，纯审计
