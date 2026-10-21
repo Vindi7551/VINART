@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import type { ThinkingLevel } from './types';
 
 const LEVELS = ['off', 'low', 'high', 'max'] as const satisfies readonly ThinkingLevel[];
@@ -8,6 +9,30 @@ const LABELS: Record<ThinkingLevel, string> = {
   high: '高',
   max: '极高',
 };
+
+interface Particle {
+  id: number;
+  x: number;
+  y: number;
+  size: number;
+  duration: number;
+  drift: number;
+  expires: number;
+}
+
+/** 单颗粒子：连续随机发射，每颗只播一次，播完就删 */
+function makeParticle(id: number): Particle {
+  const duration = 1.05 + Math.random() * 0.55;
+  return {
+    id,
+    x: 3 + Math.random() * 94,
+    y: 22 + Math.random() * 48,
+    size: 2 + Math.random() * 2.6,
+    duration,
+    drift: (Math.random() - 0.5) * 16,
+    expires: performance.now() + duration * 1000 + 80,
+  };
+}
 
 /**
  * 推理强度控制：折叠态就是「模型名 + 当前档位 + ▾」，
@@ -30,6 +55,8 @@ export function ThinkingControl({
   const [dragging, setDragging] = useState(false);
   const [dragPct, setDragPct] = useState(0);
   const [dragIdx, setDragIdx] = useState(0);
+  const [particles, setParticles] = useState<Particle[]>([]);
+  const particleIdRef = useRef(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
@@ -42,6 +69,7 @@ export function ThinkingControl({
   const stopPct = (idx / (LEVELS.length - 1)) * 100;
   const activeIdx = dragging ? dragIdx : idx;
   const displayPct = dragging ? dragPct : stopPct;
+  const atMax = activeIdx === LEVELS.length - 1;
 
   useEffect(() => {
     if (!open) return;
@@ -65,6 +93,28 @@ export function ThinkingControl({
     },
     [],
   );
+
+  // 最高档：连续、随机间隔地发射单颗粒子，避免整批刷新造成卡顿
+  useEffect(() => {
+    if (!open || !atMax) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const spawn = () => {
+      if (cancelled) return;
+      const now = performance.now();
+      setParticles((prev) => [
+        ...prev.filter((p) => p.expires > now),
+        makeParticle(++particleIdRef.current),
+      ]);
+      timer = window.setTimeout(spawn, 90 + Math.random() * 170);
+    };
+    spawn();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      setParticles([]);
+    };
+  }, [open, atMax]);
 
   const applyDrag = (clientX: number) => {
     const el = trackRef.current;
@@ -156,7 +206,7 @@ export function ThinkingControl({
           </div>
 
           <div
-            className={`thinking-slider${dragging ? ' dragging' : ''}`}
+            className={`thinking-slider${dragging ? ' dragging' : ''}${atMax ? ' max' : ''}`}
             role="slider"
             tabIndex={0}
             aria-label="推理强度"
@@ -211,6 +261,26 @@ export function ThinkingControl({
                 className="thinking-fill"
                 style={{ clipPath: `inset(0 ${100 - displayPct}% 0 0)` }}
               />
+              {atMax && (
+                <div className="thinking-particles" aria-hidden="true">
+                  {particles.map((p) => (
+                    <span
+                      key={p.id}
+                      className="thinking-particle"
+                      style={
+                        {
+                          left: `${p.x}%`,
+                          bottom: `${p.y}%`,
+                          width: p.size,
+                          height: p.size,
+                          animationDuration: `${p.duration}s`,
+                          '--dx': `${p.drift}px`,
+                        } as CSSProperties
+                      }
+                    />
+                  ))}
+                </div>
+              )}
               {LEVELS.map((l, i) => (
                 <span
                   key={l}

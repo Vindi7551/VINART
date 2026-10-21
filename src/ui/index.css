@@ -1895,6 +1895,63 @@ html, body, #root {
   transition: none;
 }
 
+/* 最高档：轨道微光 + 粒子 */
+.thinking-slider.max .thinking-track {
+  box-shadow:
+    0 0 0 1px rgba(108, 92, 231, 0.18),
+    0 0 14px rgba(108, 92, 231, 0.38),
+    inset 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.thinking-slider.max .thinking-knob {
+  box-shadow:
+    0 0 0 5px rgba(108, 92, 231, 0.14),
+    0 3px 8px rgba(0, 0, 0, 0.18);
+}
+
+.thinking-particles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.thinking-particle {
+  position: absolute;
+  border-radius: 50%;
+  background: #f1ecff;
+  box-shadow:
+    0 0 5px rgba(255, 255, 255, 0.95),
+    0 0 9px rgba(160, 140, 255, 0.8);
+  transform: translateY(4px) scale(0.5);
+  animation: thinking-particle-rise 1.25s ease-out forwards;
+  will-change: transform, opacity;
+}
+
+@keyframes thinking-particle-rise {
+  0% {
+    transform: translateY(4px) scale(0.5);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.95;
+  }
+  70% {
+    opacity: 0.55;
+  }
+  100% {
+    transform: translate(var(--dx, 0px), -18px) scale(1.15);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-particle {
+    animation: none;
+    opacity: 0.7;
+    transform: none;
+  }
+}
+
 .thinking-dot {
   position: absolute;
   top: 50%;
