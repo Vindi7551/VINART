@@ -17,8 +17,7 @@
 /**
  * 审核禁词表——多语言合并检查（词形互不冲突，一次全查）。
  * 实测德语 Logos / Marken / Wasserzeichen 触发内容审核；英文 / 中文
- * 等价词同样是审核器高危区。订单生成（order.ts）与运行时（image.ts）
- * 共用这一份，保证两道关同源。
+ * 等价词同样是审核器高危区。运行时（image.ts）的清理与检查共用这一份。
  */
 export const BANNED_WORDS =
   /\blogos?\b|\bwatermarks?\b|\bbrand( |-)?marks?\b|logos|marken|wasserzeichen|水印|品牌标识/gi;

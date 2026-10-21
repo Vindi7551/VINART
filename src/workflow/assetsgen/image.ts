@@ -120,7 +120,7 @@ export function promptLanguage(prompt: string, declared?: string): string {
 /**
  * 运行时安全检查——提示词里**禁止出现品牌 / 水印类词汇**：
  * 实测会触发内容审核（讽刺的是"禁止品牌标识"这条指令本身就会触发）。
- * 禁词表与订单生成（order.ts）共用 asset-order.ts 的 BANNED_WORDS——
+ * 禁词表来自 asset-order.ts 的 BANNED_WORDS——
  * 审核器共性与提示词语言无关。
  */
 function assertPromptSafe(prompt: string, file: string): void {

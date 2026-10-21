@@ -114,7 +114,7 @@ src/
 │   └── composite/            ④ 合成（**今天空着**：由 Chromium 代劳）
 ├── bitmap/                ⚠️ 位图能力 —— 未实现，见 `docs/HYBRID-RENDERING.md`
 └── workflow/              一条工作流一个目录
-    └── assetsgen/         素材生成（asset-order · order · image）
+    └── assetsgen/         素材生成（asset-order · image）
 ```
 
 **逻辑真源分布**（改之前先定位）：
@@ -126,7 +126,7 @@ src/
 | 文档 → HTML | `render/vocabulary/emit.ts` 的 `emitDocument(doc, opts)` |
 | 文字自适应 | `render/vocabulary/fit.ts` 的 `emitFitted(doc, page)` |
 | 编辑器 | `editor/vocab-editor.ts` + `editor/text-session.ts` |
-| 素材生成 | `workflow/assetsgen/{order,image}.ts` |
+| 素材生成 | `workflow/assetsgen/image.ts` |
 | 字体库 | `src/fonts/registry.ts` + `designassets/fonts/families/`（`/api/fonts/...` 供 URL） |
 
 ### 工具集（`src/designharness/tools/`）
@@ -302,13 +302,13 @@ src/
 | `src/document/README.md` | ⭐**文档模型 + 分母表**。**改字段之前先读。** |
 | `src/editor/README.md` | 编辑器机制 · 打字链路 · 两条不变量 |
 | `src/render/vocabulary/README.md` | 词汇渲染器（支持的 / 不支持的 / 待办） |
-| `docs/EDITOR-EVOLUTION.md` | **项目级**：编辑器现状 + 类 PS 演进方案 + 分阶段验收 |
+| `docs/EDITOR-EVOLUTION.md` | **项目级**：编辑器演进（M1/M2 已实现，M3 进行中）+ 实测证据 |
 | `src/workflow/assetsgen/README.md` | 素材订单与生成 |
 | `src/designharness/SESSIONS.md` | 会话层设计 |
 | `src/designharness/SKILLS.md` | 技能层设计（三层来源 + 优先级 bundled>project>user） |
 
 ⚠️ **已知过时文档（待清）**：`docs/CODE-TOUR.md`（2026-10-16 已加"已过期"横幅 + 就地标注，
-但正文仍是旧契约口径）、`docs/LISTING-QUALITY-ALIGNMENT.md` / `docs/PHOTOSHOP-CAPABILITIES.md` /
+但正文仍是旧契约口径）、`docs/PHOTOSHOP-CAPABILITIES.md` /
 `docs/HYBRID-RENDERING.md`（提到已删除的 `render_sketch` / `generate_assets` / `compile_appearance`）、
 `src/designharness/subagent/subagent-system.md`（整篇按旧契约写）。
 `docs/MIGRATION.md` / `docs/DOCUMENT-MODEL.md` **已不存在**（此前这里列着它们）。
