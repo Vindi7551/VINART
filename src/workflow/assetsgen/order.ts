@@ -66,8 +66,8 @@ function systemPrompt(
 ): string {
   const sizeOptions = SIZE_OPTIONS.join(' / ');
   const productRef = productAvailable
-    ? '可以使用 { "ref": "@product", "role": "subject" } 引用商品实物照（商品保真场景）。'
-    : '**不要**引用 "@product"（本次没有商品照）。';
+    ? '引用商品实物照：把文件名写进 `references`（如 `"references": ["uploads/chat-xxxx.png"]`）——**没有 role 字段**。'
+    : '**不要**写 `references`（本次没有可引用的商品照）。';
   const colorRule = withProductPhoto
     ? `\n## 颜色纪律（实测教训，必须遵守）\n参考图**附在本消息里**。引用参考图的订单：\n- **颜色词必须以参考图为准**——图里是什么色就写什么色\n- **禁止**凭 brief 措辞或品类常识推断颜色（实测：brief 说「拼色」、按常识写了 light grey，实物下半是亮蓝 → 成品错色）\n- 拿不准的颜色就不写具体色名，用「the exact colors shown in Reference 1」让参考图定色\n`
     : '';
@@ -97,7 +97,7 @@ export interface GenerateOrdersOptions {
    * 市场语言无关——不要把终端市场的语言直接搬到这里。
    */
   promptLang?: string;
-  /** 商品照是否可用（决定模型能不能引用 @product） */
+  /** 商品照是否可用（决定提示词里是否说明「可把商品照写进 references」） */
   productAvailable?: boolean;
   /**
    * 商品照 data URL——传了就**给编写模型看图**。
@@ -203,7 +203,7 @@ export async function generateOrders(opts: GenerateOrdersOptions): Promise<Asset
 
     const problems = validateOrders(orders, spec);
     if (!problems.length) {
-      // 订单自包含语言标记——gen 阶段（image.ts）按它拼参考图角色说明
+      // 订单自包含语言标记——提示词含中文时 gen 阶段会自动用中文，这里只是兜底
       for (const o of orders) o.promptLang = promptLang;
       return orders;
     }

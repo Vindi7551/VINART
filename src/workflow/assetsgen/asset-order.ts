@@ -6,7 +6,7 @@
  * 📖 职责边界与完整说明见同目录 `README.md`。
  *
  * ⚠️ 四条硬约束（内核已封装，不要在各处重复处理）：
- *   · 参考图**最多 2 张**同时传
+ *   · 参考图**不设硬上限**（方舟 ≤14 张；每张是 data URL，注意请求体大小）
  *   · 输出尺寸**下限 3,686,400 像素**（约 1920²；竖构图用 1440x2560）
  *   · 提示词**避免品牌 / 水印类词汇** —— 实测会触发内容审核
  *     （讽刺的是"禁止品牌标识"这条指令本身就会触发）。
@@ -24,33 +24,15 @@ export const BANNED_WORDS =
   /\blogos?\b|\bwatermarks?\b|\bbrand( |-)?marks?\b|logos|marken|wasserzeichen|水印|品牌标识/gi;
 
 /**
- * 参考图的**角色**。
+ * 参考图**就是文件名**，没有角色字段：
+ * - 相对**版式目录**：`'detail.png'`
+ * - 相对**工作目录**：`'uploads/chat-xxxx.png'`（用户贴的商品照）
+ * - 绝对路径也可以，但必须落在工作目录里
  *
- * ⚠️ 这一点以前是手写在提示词散文里的（"Referenzbild 1 = das Produkt.
- * Referenzbild 2 = der Layout-Entwurf."），换用途就得重写一遍，加到三张就乱。
- * 现在结构化：由内核统一生成"哪张图是干什么"的那段说明。
+ * ⚠️ 哪张图是干什么的，由**提示词自己说**（如「[图片1] 是商品照，外观必须一致」）——
+ * 不再有 role 字段、也不由内核猜。提示词里的 `[图片N]` 会在发送前编译成
+ * 「第 N 张（文件名）」；参考图说明只负责把没被点名的「第 N 张 ↔ 文件名」对上。
  */
-export type ReferenceRole =
-  /** 主体：外观必须与之一致（如商品实物） */
-  | 'subject'
-  /** 构图控制：只取它的区域划分与位置，不取内容（如版式草图） */
-  | 'compose'
-  /** 风格参考：光调、氛围、材质感 */
-  | 'style'
-  /** 细节参考：局部特写、纹理 */
-  | 'detail';
-
-export interface AssetReference {
-  /**
-   * 参考图来源，两种写法：
-   * - `'@product'` —— 商品实物照（路径由调用方的 `productPath` 指定）
-   * - 其它字符串   —— 版式目录里的文件名，如 `'detail.png'`
-   */
-  ref: string;
-  role: ReferenceRole;
-  /** 附加说明，会写进参考图角色说明里 */
-  note?: string;
-}
 
 /** 一次素材生成请求 */
 export interface AssetRequest {
@@ -88,13 +70,13 @@ export interface AssetRequest {
    * （若将来接入 Midjourney / SD1.5 / SDXL 这类**标签权重型**模型，
    * 以上规范反过来——订单生成要按该模型的方言重写。）
    *
-   * ## 保真声明（订单引用 `@product` 时）
+   * ## 保真声明（有参考图时）
    *
-   * 引用实物照（`@product`）的订单，提示词里应有**保真声明**——否则模型会
+   * 引用商品实物照的订单，提示词里应有**保真声明**——否则模型会
    * 擅自改 logo、增删部件，成品与实物不符。典型句式：
    *   "keep the shape, lid, label and color exactly the same,
    *    do not add extra text or graphics"
-   * （image.ts 会对引用 @product 却缺保真声明的订单给 warn）
+   * （image.ts 对有参考图却缺保真表述的订单给 warn）
    *
    * 声明的**具体措辞按行业由 brief 指定**，这里只提供机制——不绑定某个行业。
    */
@@ -106,12 +88,12 @@ export interface AssetRequest {
    * （官方文档：所有模型支持中英文；德语等是 5.0 额外支持的语言），
    * 所以默认 `en`。与 listing 的市场语言**无关**，不要把市场语言搬进来。
    *
-   * 订单自包含这个字段：gen 阶段（image.ts）要按它拼参考图角色说明，
-   * 读订单即得，不需要调用方再传一遍。
+   * 订单自包含这个字段：gen 阶段拼参考图说明时用它兜底
+   * （提示词含中文时直接用中文，不看它）。
    */
   promptLang?: string;
-  /** 参考图及角色 */
-  references?: AssetReference[];
+  /** 参考图文件名（最多 14 张；不设更小的硬上限） */
+  references?: string[];
 }
 
 /** 一个版式需要生成的全部素材 */

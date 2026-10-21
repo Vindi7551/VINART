@@ -48,10 +48,13 @@
   合法后会**立刻写盘**（同一轮 `get_design` 能读到新值），并给 App 发 `doc-patch { patches }`；
   App 把 patches 应用到当前 doc（保留用户未保存的编辑），编辑器不重挂、可撤销。
   ⚠️ `patch_doc` **不能新增 / 删除 / 复制节点**；结构变了就新建一个 layout，或在编辑器里改。
-- `generate_assets(images?, icons?, productPath?, layout?)`：生成素材文件，**不改 doc、不发 artifacts**。
+- `generate_assets(images?, icons?, layout?)`：生成素材文件，**不改 doc、不发 artifacts**。
   可选 `layout` 生成到系列里的另一张；不传用当前 active。
   - `images`：商品/场景图，走生图模型。每张 `{ file, size, prompt, references }`；
-    `references` 用 `@product`（商品实物照）/ 版式目录里的文件名；
+    `references` 直接写文件名：商品照写 `uploads/…`（用户贴图时系统注记里有路径），
+    版式目录里的文件写 `xxx.png`；**没有 role 字段**——prompt 里用 `[图片1]` /
+    `[图片2]` 指第几张参考图（如「[图片1] 是商品照，外观必须一致」）。
+    方舟最多 14 张，一般 1–3 张就够。
   - `icons`：**你直接写的线框 SVG**，每张 `{ file, svg }`。约定
     `viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"`；
   - 生成后用 `patch_doc` 把对应节点的 `asset` 指过去（这一步才会刷新预览）。

@@ -276,7 +276,7 @@ function truncateByLastN(history: ChatMessage[], userMsg: ChatMessage, n: number
  * 把附图的落盘路径追加进正文。
  *
  * 为什么：模型看得见图块（file/image_url），但路径字符串只活在附件元数据里——
- * 不写进正文，它要用路径时（compile_appearance / generate_assets 的 productPath、
+ * 不写进正文，它要用路径时（generate_assets 的 references、
  * 「刚才那张图存哪了」）说不出，实测只会反问用户要文件名。
  *
  * transcript 只存原始 text，这行由组装层（buildUserMessage / deriveMessages）

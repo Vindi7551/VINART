@@ -75,11 +75,16 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
             properties: {
               file: { type: 'string', description: '输出文件名，如 scene.png' },
               size: { type: 'string', description: '如 2048x2048 / 1440x2560' },
-              prompt: { type: 'string' },
+              prompt: {
+                type: 'string',
+                description: '生图提示词；可用 [图片1] / [图片2] 指代第几张参考图',
+              },
               references: {
                 type: 'array',
-                description: '参考图；@product 商品照 / 版式目录里的文件名',
-                items: { type: 'object', additionalProperties: true },
+                description:
+                  '参考图：直接写文件名 —— 商品照写 uploads/xxx.png，' +
+                  '版式目录里的文件写 xxx.png（方舟最多 14 张）',
+                items: { type: 'string' },
               },
             },
           },
@@ -96,10 +101,6 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
               svg: { type: 'string', description: '完整 <svg>…</svg>' },
             },
           },
-        },
-        productPath: {
-          type: 'string',
-          description: '可选：商品实物照路径（订单引用 @product 时需要）',
         },
         layout: {
           type: 'string',
@@ -135,8 +136,7 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
             ...(await generateAssets({
               orders: images,
               outDir,
-              productPath:
-                (typeof args.productPath === 'string' && args.productPath.trim()) || null,
+              workDir,
               host: renderer,
               force: false,
             })),
