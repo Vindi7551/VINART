@@ -133,8 +133,9 @@ src/
 
 当前主 AI 工具：`skill` + `sketch_plan`（**只新建**版式，`layout` 必填且不能已存在）
 + `get_design`（当前 doc 语义视图，含 `frame01`/`rect01`）
-+ `patch_doc`（增量改：move / size（0–1）、rotate（仅 image/svg/shape）、opacity、
-  颜色/字体/asset/text；元素级、批量、all-or-nothing）
++ `patch_doc`（增量改：move / size（0–1）、rotate / skewX / skewY / origin / scale（transform，仅 image/svg/shape，scale 仅 image/shape）、opacity、
+  圆角 / 阴影 / 混合 / 滤镜 / 裁剪 / 蒙版 / 描边 / 图片 fit / 文字对齐与装饰 / runs（整段富文本） / 颜色/字体/asset/text；
+  元素级、批量、all-or-nothing）
 + `generate_assets`（`images` 生图 / `icons` 主 AI 线框 SVG；只落盘、不改 doc）。
 `patch_doc` 不新增/删除节点；结构变 → 新 layout 或编辑器。
 `sketch_plan` 不再读 `ctx.activeLayout`；新建时有 active 只刷画廊，没有 active 才自动打开。

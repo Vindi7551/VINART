@@ -54,6 +54,15 @@ export function semanticView(doc: DesignDocument): unknown {
               }),
           fill: e.fill ?? null,
           stroke: e.stroke ?? null,
+          ...(e.opacity !== undefined ? { opacity: e.opacity } : {}),
+          ...(e.radius !== undefined ? { radius: e.radius } : {}),
+          ...(e.shadow !== undefined ? { shadow: e.shadow } : {}),
+          ...(e.blend !== undefined ? { blend: e.blend } : {}),
+          ...(e.filter !== undefined ? { filter: e.filter } : {}),
+          ...(e.backdrop !== undefined ? { backdrop: e.backdrop } : {}),
+          ...(e.clip !== undefined ? { clip: e.clip } : {}),
+          ...(e.mask !== undefined ? { mask: e.mask } : {}),
+          ...(e.transform !== undefined ? { transform: e.transform } : {}),
           ...(e.type === 'text'
             ? {
                 fontFamily: e.fontFamily ?? null,
@@ -63,6 +72,33 @@ export function semanticView(doc: DesignDocument): unknown {
                 letterSpacing: e.letterSpacing ?? null,
                 align: e.align ?? null,
                 wrap: e.wrap ?? 'normal',
+                ...(e.lineHeight !== undefined ? { lineHeight: e.lineHeight } : {}),
+                ...(e.wordSpacing !== undefined ? { wordSpacing: e.wordSpacing } : {}),
+                ...(e.stretch !== undefined ? { stretch: e.stretch } : {}),
+                ...(e.alignLast !== undefined ? { alignLast: e.alignLast } : {}),
+                ...(e.textTransform !== undefined ? { textTransform: e.textTransform } : {}),
+                ...(e.smallCaps !== undefined ? { smallCaps: e.smallCaps } : {}),
+                ...(e.underline !== undefined ? { underline: e.underline } : {}),
+                ...(e.strike !== undefined ? { strike: e.strike } : {}),
+                ...(e.decoration !== undefined ? { decoration: e.decoration } : {}),
+                ...(e.baselineShift !== undefined ? { baselineShift: e.baselineShift } : {}),
+                ...(e.dropCap !== undefined ? { dropCap: e.dropCap } : {}),
+                ...(e.writingMode !== undefined ? { writingMode: e.writingMode } : {}),
+                ...(e.direction !== undefined ? { direction: e.direction } : {}),
+                ...(e.curve !== undefined ? { curve: e.curve } : {}),
+                ...(e.path !== undefined ? { path: e.path } : {}),
+                ...(e.features !== undefined ? { features: e.features } : {}),
+                ...(e.variations !== undefined ? { variations: e.variations } : {}),
+                ...(e.runs.length > 1 || e.runs.some((r) => Object.keys(r).some((k) => k !== 'text'))
+                  ? { runs: e.runs }
+                  : {}),
+              }
+            : {}),
+          ...(e.type === 'image'
+            ? {
+                ...(e.fit !== undefined ? { fit: e.fit } : {}),
+                ...(e.position !== undefined ? { position: e.position } : {}),
+                ...(e.render !== undefined ? { render: e.render } : {}),
               }
             : {}),
         };
@@ -76,8 +112,9 @@ export function createGetDesignTool(config: { sessionId: string }): AgentTool {
     name: 'get_design',
     description:
       '读取版式的语义视图：图层/元素 id、name、type、text、frame/rect（px）、frame01/rect01（0–1）、' +
-      '当前 fill/stroke/font/wrap。默认读当前 active；也可以传 layout 读本会话系列里的另一张。' +
-      '做颜色/字体/几何 patch 前先用它确认节点 id 与当前 0–1 尺寸。',
+      '当前 fill/stroke/font/wrap/radius/shadow/blend/filter/clip/mask、图片 fit/position、文字对齐与装饰等。' +
+      '默认读当前 active；也可以传 layout 读本会话系列里的另一张。' +
+      '做任何 patch 前先用它确认节点 id 与当前 0–1 尺寸。',
     parameters: {
       type: 'object',
       additionalProperties: false,

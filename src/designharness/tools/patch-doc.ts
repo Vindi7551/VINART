@@ -1,5 +1,5 @@
 /**
- * `patch_doc` 工具 —— 按节点 id 批量 patch 当前版式 doc 的**几何/颜色/字体/素材引用**。
+ * `patch_doc` 工具 —— 按节点 id 批量 patch 当前版式 doc 的**几何/外观/文字/素材引用**。
  *
  * 语义：
  * - 全部 patch 通过 → **立刻写盘**（AI 回读一致）+ 发 `doc-patch { patches }`；
@@ -33,12 +33,14 @@ export function createPatchDocTool(config: { sessionId: string }): AgentTool {
     description:
       '按节点 id 批量 patch 当前版式 doc：' +
       '几何 move {dx,dy} 相对位移 / size {w,h} 目标尺寸（**都是 0–1 画布比例**；text 的 size 只给 w）；' +
-      'rotate 度（仅 image/svg/shape）；opacity 0–1；' +
-      '颜色/字体 fill / stroke.paint / fontFamily / fontSizePx / weight / italic / letterSpacing / lineHeight；' +
-      'wrap（仅 text；normal=在框内换行、nowrap=单行，省略 wrap 即 normal）；' +
-      '素材引用 asset（仅 image/svg，填 generate_assets 产出的文件名）；' +
-      '文本 text（仅 text 节点，纯文本收成单 run，保留第一个 run 的样式，允许空串清空）。' +
-      '全部合法才写；有任何一条错就整批不写。group 不支持 patch。先用 get_design 确认节点 id 和当前 rect01/frame01。',
+      'rotate / skewX / skewY / origin（rotate/skew 是度，origin 0–1；仅 image/svg/shape）；' +
+      'scale {x,y}（仅 image/shape；改变画面变形，不改版式占位）；opacity 0–1；' +
+      '外观 fill / radius / shadow / blend / filter / backdrop / clip / mask；' +
+      '描边 stroke.paint / stroke.width / stroke.dash / stroke.inset / stroke.cap / stroke.join / stroke.over；' +
+      '字体 fontFamily / fontSizePx / weight / italic / letterSpacing / lineHeight / wordSpacing / stretch；' +
+      '文字 align / alignLast / textTransform / smallCaps / underline / strike / decoration / baselineShift / dropCap / writingMode / direction / curve / path（仅 text，沿路径） / wrap / text（纯文本收成单 run） / runs（整段替换，TextRun[]，至少一段；同一段多色/多字号用它）；' +
+      '图片 fit / position / render；素材 asset（仅 image/svg）；name；' +
+      '全部合法才写；有任何一条错就整批不写。group 不支持 patch。先用 get_design 确认节点 id 和 rect01/frame01。',
     parameters: {
       type: 'object',
       additionalProperties: false,
