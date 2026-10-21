@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import type { ChatReference, MentionItem } from './types';
 
 export type { ChatReference, MentionItem };
@@ -44,6 +44,12 @@ export const ComposerInput = forwardRef<ComposerInputHandle, ComposerInputProps>
     const [popover, setPopover] = useState<{ query: string } | null>(null);
     const [active, setActive] = useState(0);
     const composing = useRef(false);
+    /** 候选按钮引用：键盘上下移动时把当前项滚进视野（列表不再截断，可能有几十项） */
+    const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+    useEffect(() => {
+      if (!popover) return;
+      optionRefs.current[active]?.scrollIntoView({ block: 'nearest' });
+    }, [active, popover]);
 
     useImperativeHandle(ref, () => ({
       pickFiles: () => fileInputRef.current?.click(),
@@ -53,12 +59,11 @@ export const ComposerInput = forwardRef<ComposerInputHandle, ComposerInputProps>
     const filtered = (() => {
       const q = popover?.query.trim().toLowerCase() ?? '';
       if (!mentions.length) return [];
-      const list = q
+      return q
         ? mentions.filter(
             (m) => m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q),
           )
         : mentions;
-      return list.slice(0, 8);
     })();
 
     const textBeforeCaret = (): string => {
@@ -277,20 +282,28 @@ export const ComposerInput = forwardRef<ComposerInputHandle, ComposerInputProps>
         />
         {popover && filtered.length > 0 && (
           <div className="mention-popover" role="listbox">
-            {filtered.map((m, i) => (
-              <button
-                key={`${m.layout}:${m.id}`}
-                type="button"
-                className={`mention-option${i === active ? ' active' : ''}`}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  insertMention(m);
-                }}
-              >
-                <span className="mention-option-name">{m.name}</span>
-                <span className="mention-option-id">{m.id}</span>
-              </button>
-            ))}
+            {filtered.map((m, i) => {
+              const showGroup = i === 0 || filtered[i - 1]?.layerId !== m.layerId;
+              return (
+                <div key={`${m.layout}:${m.layerId}:${m.id}`}>
+                  {showGroup && <div className="mention-group">{m.layerName}</div>}
+                  <button
+                    ref={(el) => {
+                      optionRefs.current[i] = el;
+                    }}
+                    type="button"
+                    className={`mention-option${i === active ? ' active' : ''}`}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      insertMention(m);
+                    }}
+                  >
+                    <span className="mention-option-name">{m.name}</span>
+                    <span className="mention-option-id">{m.id}</span>
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
         <input

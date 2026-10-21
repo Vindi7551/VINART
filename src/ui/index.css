@@ -1578,6 +1578,19 @@ html, body, #root {
   z-index: 30;
 }
 
+/* `@` 候选按图层分组：标题吸顶，长列表滚动时知道自己在哪一层 */
+.mention-group {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 8px 3px;
+  margin-bottom: 2px;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-light);
+}
+
 .mention-option {
   display: flex;
   align-items: center;

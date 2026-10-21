@@ -17,6 +17,9 @@ export interface MentionItem {
   id: string;
   name: string;
   type: string;
+  /** 所属图层（`@` 弹层按它分组） */
+  layerId: string;
+  layerName: string;
 }
 
 export interface Message {

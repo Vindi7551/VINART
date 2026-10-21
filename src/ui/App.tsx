@@ -598,6 +598,8 @@ export function App() {
           id: e.id,
           name: e.name ?? e.id,
           type: e.type,
+          layerId: l.id,
+          layerName: l.name ?? l.id,
         })),
     );
   }, [layout]);
