@@ -27,7 +27,7 @@
 - 先定年代，再选 3 个视觉信号（颜色/字体/一个装饰），不要全上；
 - 颗粒/半调/印刷错位交给生图，不要用 CSS 噪点硬凑；
 - 标题可以斜/压边（用 `patch_doc rotate` 对 image/svg/shape，文字旋转暂不支持）；
-- 图位优先 `diptych` / `editorial-grid`，像老杂志/老海报。
+- 图位可按内容选 `diptych` / `editorial-grid` 等，像老杂志/老海报。
 
 ## 反模式
 

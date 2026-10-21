@@ -18,7 +18,7 @@
 
 - 背景用 `canvas.background`，不要铺满 `shape`；
 - 标题与正文拉开字号档差（约 2.5–3 倍），副标与标题用 `group` 档间距；
-- 图槽位优先 `triptych` / `full-bleed-inset`；文字放素材安静区；
+- 图槽位可按内容选 `triptych` / `full-bleed-inset` 等；文字放素材安静区；
 - 压暗用渐变 scrim，只盖文字带；
 - 装饰线用极扁 `rect`，不要用阴影假装层次。
 

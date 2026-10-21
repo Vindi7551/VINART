@@ -5,17 +5,17 @@
 
 ## 一、先选槽位数，再选 recipe
 
-| recipe | 图槽位 | 长相 | 适用 | 默认？ |
-|---|---|---|---|---|
-| `type-only` | 0 | 纯文字 + 细线 | 引言 / 展览信息 / 大字报 | 只在纯文字时 |
-| `hero-overlay` | 1 | 满幅主图 + 压暗 + 大字 | 氛围 / 单主体 | 只在单主体时 |
-| `split-panel` | 1 | 左文右图 | 引言 / 单主体 + 信息 | 只在单主体时 |
-| `diptych` | 2 | 两张等大并排 | 对比 / 前后 | ✅ |
-| `full-bleed-inset` | 2 | 满幅主图 + 细节内嵌（文字可上可下） | 质感 / 工艺 | ✅ |
-| `triptych` | 3 | 主图 + 两张细节 | 最通用 | ✅ 首选 |
-| `editorial-grid` | 4 | 大图 + 三小图 | 多卖点 / 图集 | ✅ |
+| recipe | 图槽位 | 长相 | 适用 |
+|---|---|---|---|
+| `type-only` | 0 | 纯文字 + 细线 | 引言 / 展览信息 / 大字报 |
+| `hero-overlay` | 1 | 满幅主图 + 压暗 + 大字 | 氛围 / 单主体 |
+| `split-panel` | 1 | 左文右图 | 引言 / 单主体 + 信息 |
+| `diptych` | 2 | 两张等大并排 | 对比 / 前后 |
+| `full-bleed-inset` | 2 | 满幅主图 + 细节内嵌（文字可上可下） | 质感 / 工艺 |
+| `triptych` | 3 | 主图 + 两张细节 | 工艺 / 多证据 |
+| `editorial-grid` | 4 | 大图 + 三小图 | 多卖点 / 图集 |
 
-**默认在 2–4 槽位里选。** 1 图 recipe 只用于"确实只需要一个主体"的场景；
+**槽位数按内容任务选（0–4 都可能），没有默认档位。** 1 图 recipe 只用于"确实只需要一个主体"的场景；
 用之前先回答：这个信息任务真的拆不出细节 / 场景 / 对比吗？
 
 ## 二、七个骨架
@@ -100,7 +100,7 @@ scrim     x 0   y .54 w 1   h .46  （可选；fill 用底部渐变，桌面够�
   底部同理 `to top`（`fill` 支持 CSS 渐变字符串，见 06）；
 - 文字区必须在素材的**安静区**（暗部 / 天空 / 桌面），不在主体上。
 
-### ⑥ `triptych` · 3 图 · 主图 + 两张细节（首选）
+### ⑥ `triptych` · 3 图 · 主图 + 两张细节
 
 ```
 hero      x .06 y .06 w .55 h .62  fit cover
@@ -168,9 +168,70 @@ note      x .06 y .92 w .88   fontScale .013
 - 如果画面平，先回 `03-排版思想.md` / `04-杠杆点.md`，**不要靠换 recipe 解决层级问题**；
 - recipe 是骨架，不是死板：允许 **1–2 处故意偏离**，但**只能让杠杆点去偏**（见 03「打破网格」）。
 
-## 七、一个最小 plan 示例（triptych）
+## 七、完整 plan 示例（挑一份改，别默认抄同一个）
 
+> 示例只是骨架：**先按内容任务定槽位数**，再挑最接近的一份改。
+> 坐标都是 0–1；文字只写 `x/y/w`；`asset` 一律 `@placeholder`（素材阶段再 patch）。
+> 槽位名与素材文件名一致（`slot-hero` → `slot-hero.png`）。
+
+### ① `hero-overlay`（1 图）
+
+```yaml
+canvas: { ratio: '4:5', background: '#0E0E10' }
+layers:
+  - name: 主视觉
+    elements:
+      - { type:'image', name:'slot-hero', rect:{x:0,y:0,w:1,h:1}, asset:'@placeholder', fit:'cover' }
+      - { type:'shape', kind:'rect', name:'scrim', rect:{x:0,y:.52,w:1,h:.48} }
+  - name: 文字信息
+    elements:
+      - { type:'text', name:'kicker',   rect:{x:.08,y:.10,w:.50}, fontScale:.016, placeholder:'LIMITED' }
+      - { type:'text', name:'title',    rect:{x:.08,y:.58,w:.84}, fontScale:.10,  placeholder:'夜色里的第一杯' }
+      - { type:'text', name:'subtitle', rect:{x:.08,y:.72,w:.60}, fontScale:.028, placeholder:'浅烘 · 单品 · 手冲' }
+      - { type:'text', name:'note',     rect:{x:.08,y:.88,w:.84}, fontScale:.015, placeholder:'2026 秋季限定' }
 ```
+
+> `scrim` 的填充留到 patch 时用渐变（见 06）；plan 里不写 `fill`。
+
+### ② `diptych`（2 图）
+
+```yaml
+canvas: { ratio: '4:5', background: '#F7F3EA' }
+layers:
+  - name: 主视觉
+    elements:
+      - { type:'image', name:'slot-a', rect:{x:.05,y:.05,w:.43,h:.55}, asset:'@placeholder', fit:'cover' }
+      - { type:'image', name:'slot-b', rect:{x:.52,y:.05,w:.43,h:.55}, asset:'@placeholder', fit:'cover' }
+  - name: 文字信息
+    elements:
+      - { type:'text', name:'title',    rect:{x:.05,y:.65,w:.90}, fontScale:.055, placeholder:'两种喝法' }
+      - { type:'text', name:'subtitle', rect:{x:.05,y:.74,w:.60}, fontScale:.022, placeholder:'同一支豆子的两面' }
+      - { type:'text', name:'labels',   rect:{x:.05,y:.82,w:.90}, fontScale:.016, placeholder:'热冲 · 冰滴' }
+      - { type:'text', name:'note',     rect:{x:.05,y:.92,w:.90}, fontScale:.013, placeholder:'季节限定' }
+```
+
+### ③ `full-bleed-inset`（2 图）
+
+```yaml
+canvas: { ratio: '4:5', background: '#0E0E10' }
+layers:
+  - name: 主视觉
+    elements:
+      - { type:'image', name:'slot-hero',  rect:{x:0,y:0,w:1,h:1}, asset:'@placeholder', fit:'cover' }
+      - { type:'image', name:'slot-inset', rect:{x:.68,y:.06,w:.26,h:.22}, asset:'@placeholder', fit:'cover' }
+  - name: 文字信息
+    elements:
+      - { type:'text', name:'kicker',   rect:{x:.07,y:.55,w:.55}, fontScale:.016, placeholder:'SINGLE ORIGIN' }
+      - { type:'text', name:'title',    rect:{x:.07,y:.59,w:.62}, fontScale:.08,  placeholder:'把产地装进杯子' }
+      - { type:'text', name:'subtitle', rect:{x:.07,y:.69,w:.50}, fontScale:.024, placeholder:'浅烘 · 柑橘 · 蜂蜜' }
+      - { type:'text', name:'note',     rect:{x:.07,y:.90,w:.62}, fontScale:.015, placeholder:'2026 新产季' }
+```
+
+> 主体在中间时用这份 **text-bottom**；顶部是暗部/天空才用 ⑤a 的 text-top，并可加 `scrim`。
+
+### ④ `triptych`（3 图）
+
+```yaml
 canvas: { ratio: '4:5', background: '#F7F3EA' }
 layers:
   - name: 主视觉
@@ -180,9 +241,27 @@ layers:
       - { type:'image', name:'slot-detail-2', rect:{x:.64,y:.38,w:.30,h:.30}, asset:'@placeholder', fit:'cover' }
   - name: 文字信息
     elements:
-      - { type:'text', name:'title',    rect:{x:.06,y:.72,w:.88}, fontScale:.06, placeholder:'手冲的清晨' }
+      - { type:'text', name:'title',    rect:{x:.06,y:.72,w:.88}, fontScale:.06,  placeholder:'手冲的清晨' }
       - { type:'text', name:'subtitle', rect:{x:.06,y:.81,w:.60}, fontScale:.022, placeholder:'一杯，从水温开始' }
       - { type:'text', name:'labels',   rect:{x:.06,y:.89,w:.88}, fontScale:.015, placeholder:'手冲 · 浅烘 · 单品' }
+```
+
+### ⑤ `editorial-grid`（4 图）
+
+```yaml
+canvas: { ratio: '4:5', background: '#F7F3EA' }
+layers:
+  - name: 主视觉
+    elements:
+      - { type:'image', name:'slot-hero', rect:{x:.06,y:.05,w:.88,h:.48},  asset:'@placeholder', fit:'cover' }
+      - { type:'image', name:'slot-2',    rect:{x:.06,y:.56,w:.27,h:.19},  asset:'@placeholder', fit:'cover' }
+      - { type:'image', name:'slot-3',    rect:{x:.355,y:.56,w:.27,h:.19}, asset:'@placeholder', fit:'cover' }
+      - { type:'image', name:'slot-4',    rect:{x:.65,y:.56,w:.29,h:.19},  asset:'@placeholder', fit:'cover' }
+  - name: 文字信息
+    elements:
+      - { type:'text', name:'title',    rect:{x:.06,y:.79,w:.88}, fontScale:.05,  placeholder:'一支豆子的四种表情' }
+      - { type:'text', name:'subtitle', rect:{x:.06,y:.86,w:.70}, fontScale:.02,  placeholder:'从产地到杯中' }
+      - { type:'text', name:'note',     rect:{x:.06,y:.92,w:.88}, fontScale:.013, placeholder:'2026 秋季系列' }
 ```
 
 槽位名与后面的素材文件名一致（`slot-hero.png`），patch 时按 `get_design` 的 id 对应。
