@@ -179,6 +179,9 @@ note      x .06 y .92 w .88   fontScale .013
 > 示例只是骨架：**先按内容任务定槽位数**，再挑最接近的一份改。
 > 坐标都是 0–1；文字只写 `x/y/w`；`asset` 一律 `@placeholder`（素材阶段再 patch）。
 > 槽位名与素材文件名一致（`slot-hero` → `slot-hero.png`）。
+>
+> ⚠️ **先考虑 0 图 / 1 图的可能性，再考虑多图**——不要默认从 `hero-overlay` 或
+> `full-bleed-inset` 开始。`type-only` / `split-panel` 不是降级，是另一种主视觉。
 
 ### ① `hero-overlay`（1 图）
 
@@ -269,5 +272,43 @@ layers:
       - { type:'text', name:'subtitle', rect:{x:.06,y:.86,w:.70}, fontScale:.02,  placeholder:'从产地到杯中' }
       - { type:'text', name:'note',     rect:{x:.06,y:.92,w:.88}, fontScale:.013, placeholder:'2026 秋季系列' }
 ```
+
+### ⑥ `type-only`（0 图，字体主视觉）
+
+```yaml
+canvas: { ratio: '4:5', background: '#F7F3EA' }
+layers:
+  - name: 主视觉
+    elements:
+      - { type:'text', name:'kicker', rect:{x:.08,y:.12,w:.50}, fontScale:.016, placeholder:'独立出版 · 第 3 期' }
+      - { type:'text', name:'title',  rect:{x:.08,y:.20,w:.84}, fontScale:.15,  placeholder:'夜行' }
+      - { type:'shape', kind:'rect',  name:'rule', rect:{x:.08,y:.58,w:.30,h:.004} }
+  - name: 文字信息
+    elements:
+      - { type:'text', name:'subtitle', rect:{x:.08,y:.63,w:.60}, fontScale:.028, placeholder:'一场关于城市与失眠的展览' }
+      - { type:'text', name:'dates',    rect:{x:.08,y:.73,w:.50}, fontScale:.020, placeholder:'9.12 — 10.20' }
+      - { type:'text', name:'note',     rect:{x:.08,y:.90,w:.84}, fontScale:.014, placeholder:'周二至周日 11:00–19:00' }
+```
+
+> 纯字体不是“没图可放”的兜底：大字号、字距、色块、细线本身就是主视觉。
+
+### ⑦ `split-panel`（1 图，左文右图）
+
+```yaml
+canvas: { ratio: '4:5', background: '#F7F3EA' }
+layers:
+  - name: 主视觉
+    elements:
+      - { type:'image', name:'slot-hero', rect:{x:.50,y:0,w:.50,h:1}, asset:'@placeholder', fit:'cover' }
+  - name: 文字信息
+    elements:
+      - { type:'text', name:'kicker', rect:{x:.07,y:.12,w:.36}, fontScale:.016, placeholder:'NIGHT WALK' }
+      - { type:'text', name:'title',  rect:{x:.07,y:.20,w:.38}, fontScale:.07,  placeholder:'夜行' }
+      - { type:'text', name:'body',   rect:{x:.07,y:.52,w:.36}, fontScale:.022, placeholder:'一场关于城市与失眠的展览' }
+      - { type:'text', name:'labels', rect:{x:.07,y:.68,w:.36}, fontScale:.017, placeholder:'9.12 — 10.20' }
+      - { type:'text', name:'note',   rect:{x:.07,y:.90,w:.36}, fontScale:.014, placeholder:'周二至周日 11:00–19:00' }
+```
+
+> 只有一张照片时，`split-panel` 比 `full-bleed-inset` 更克制，也更容易让文字成为主角。
 
 槽位名与后面的素材文件名一致（`slot-hero.png`），patch 时按 `get_design` 的 id 对应。
