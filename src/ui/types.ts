@@ -1,8 +1,34 @@
+import type { DesignDocument } from '../document/vocabulary';
+
+/** 思考档位（与 /chat 的 thinking、gateway 的 reasoningEffort 对齐） */
+export type ThinkingLevel = 'off' | 'low' | 'high' | 'max';
+
+/** 与 server 的 ChatReference 对齐（目前只有元素引用） */
+export interface ChatReference {
+  kind: 'element';
+  layout: string;
+  id: string;
+  name: string;
+}
+
+/** 输入框 `@` 候选：当前版式的元素 */
+export interface MentionItem {
+  layout: string;
+  id: string;
+  name: string;
+  type: string;
+  /** 所属图层（`@` 弹层按它分组） */
+  layerId: string;
+  layerName: string;
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant';
   text: string;
   attachments?: string[];
+  /** 用户消息里的 @ 元素引用（输入框序列化后带上来） */
+  references?: ChatReference[];
   /** 'log' = 管线日志流(等宽字体、终端式渲染),缺省 = 普通对话 */
   kind?: 'chat' | 'log';
   /** 委派记录：哪个子 agent 被调用、结果如何（spawn_design_agents 进度卡片） */
@@ -56,63 +82,55 @@ export interface SessionItem {
 }
 
 // ══════════════════════════════════════════════
-// 版式编辑(design-sketch / design-appearance 的前端宽松视图)
+// 版式编辑（新协议：DesignDocument 直接过线）
 // ══════════════════════════════════════════════
 
-export interface LayoutRect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-export interface LayoutLayer {
-  id: string;
-  type: 'image' | 'text' | 'shape';
-  rect: LayoutRect;
-  text?: string | string[];
-  fontScale?: number;
-  weight?: number;
-  curve?: number;
-  transform?: { rotate?: number; skewX?: number; origin?: { x: number; y: number } };
-  [key: string]: unknown;
-}
-
-export interface LayoutSpec {
-  canvas: { width: number; height: number };
-  layers: LayoutLayer[];
-  name?: string;
-  title?: string;
-  [key: string]: unknown;
-}
-
-export interface LayerAppearance {
-  color?: string;
-  fill?: string;
-  opacity?: number;
-  accent?: { words: string[]; color: string };
-  fontFamily?: string;
-  stroke?: { color: string; width: number };
-  [key: string]: unknown;
-}
-
-export interface LayoutAppearance {
-  layers?: Record<string, LayerAppearance>;
-  [key: string]: unknown;
-}
-
-/** GET /api/layout/<name>/data 的返回 */
-export interface LayoutData {
+/**
+ * ⭐ 新协议（2026-10-15）：**DesignDocument 直接过线**——词汇表文档本身就是
+ * 编辑器的输入与持久化单位。旧的 LayoutSpec/LayoutData（spec+appearance 双层、
+ * accent 染色）随旧链弃用（见 docs/MIGRATION.md）。
+ */
+export interface PreviewData {
   name: string;
-  spec: LayoutSpec;
-  appearance: LayoutAppearance;
+  /** 词汇表文档 —— 编辑器的输入，也是保存落盘的单位 */
+  doc: DesignDocument;
+  /** 服务端 `emitDocument` 现场生成的渲染 HTML（srcdoc 用；素材 URL 已解析） */
   html: string;
+  /** 素材名 → URL 映射——⭐ 前端结构性变化时**自己 emitDocument** 用（编辑即渲染，无网络往返） */
+  assets: Record<string, string>;
+  /** 字体库 manifest（编辑器字体下拉用）；服务端 `/data` 下发 */
+  fontFamilies?: string[];
+  /** family → 下拉显示标签（如 Bitter（仅英文））；没有就不加后缀 */
+  fontLabels?: Record<string, string>;
 }
 
-/** 宿主 → iframe 的信号(面板发起的选中/patch,seq 防重) */
+/** 宿主 → 编辑器的信号(面板/图层清单发起;seq 防重)。`patch` = 单字段（path + value）。 */
 export interface HostSignal {
   seq: number;
-  type: 'select' | 'patch';
-  id: string;
-  patch?: Record<string, unknown>;
+  type:
+    | 'select'
+    | 'patch'
+    | 'undo'
+    | 'redo'
+    | 'add-text'
+    // ⚠️ `add-rect` / `add-ellipse` / `add-polygon` / `add-path` **已删**（2026-10-17）：
+    //    形状一律**拖画**（`.canvas-draw-layer` + `makeShapeNode`），不再有"一键放一个写死尺寸"的入口。
+    | 'remove'
+    | 'up'
+    | 'down'
+    /** ⭐ **新建一个空图层**（追加到最上层并选中它） */
+    | 'new-layer'
+    /** ⭐ **跳到历史里的第 index 步**（历史面板点击；`index` 字段给出，0 = 最初） */
+    | 'goto-step'
+    /** ⭐ **删掉历史里的第 index 步**（历史面板右键；`index` 字段给出。不可逆） */
+    | 'remove-history'
+    /** ⭐ 给**画面上选中的那几个字**刷样式（`path` 来自 `selectionFields()`） */
+    | 'style-selection';
+  /** select/patch/remove/up/down/style-selection/goto-step 需要 */
+  id?: string;
+  /** `patch` / `style-selection` 要 */
+  path?: string;
+  /** `goto-step` 要 */
+  index?: number;
+  value?: unknown;
 }

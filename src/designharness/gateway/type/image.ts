@@ -12,6 +12,8 @@ export interface ImageGenerateParams {
   count?: number;
   /** 输出格式，默认 png */
   format?: 'png' | 'jpeg';
+  /** 取消信号（用户点停止时中断请求） */
+  signal?: AbortSignal;
 }
 
 /** 图片生成返回结果 */

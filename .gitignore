@@ -22,3 +22,10 @@ tsconfig.tsbuildinfo
 _patch2.py
 _patch3.py
 
+# 字体二进制不入库（体积大；随安装包/手动放置）
+designassets/fonts/_downloads/
+designassets/fonts/families/*/*.woff2
+designassets/fonts/families/*/*.otf
+designassets/fonts/families/*/*.ttf
+
+

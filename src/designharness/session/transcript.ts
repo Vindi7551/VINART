@@ -101,7 +101,9 @@ export type SessionEvent =
       detail: Record<string, unknown>;
     }
   // project 字段仅老数据仍带（2026-10-10 拆除项目层后的读取兼容）——新写入不再产生
-  | { seq?: number; ts: string; kind: 'meta'; title?: string; workDir?: string; project?: string };
+  | { seq?: number; ts: string; kind: 'meta'; title?: string; workDir?: string; project?: string }
+  /** 当前打开的版式（UI 状态；只记最后一次；null = 没有 active） */
+  | { seq?: number; ts: string; kind: 'active-layout'; layout: string | null };
 
 export interface SessionIndexEntry {
   id: string;
@@ -257,17 +259,30 @@ export function newSessionId(): string {
 // ── 写 ──────────────────────────────────────────────────────────────────
 
 /**
- * 新建会话（**惰性**）：只分配 id 并登记落点，不写盘、不写索引——
- * 第一个事件落盘时才真正建文件，「空会话」因此在磁盘上不存在。
- * workDir 必填：一个会话的家就是它的工作目录（会话跟着目录走）。
+ * 新建会话：**POST 即落盘**——建 `<workDir>/.vinart/sessions/<id>.jsonl`，
+ * 写第一行 meta（workDir），并同步索引。
  *
- * ⚠️ 这里**不 mkdir**：落点目录由 `appendEventInner` 在真正要写时才建。
- * 「选目录/建会话」都不得在用户目录里留下空文件夹（惰性会话的底线）。
+ * 惰性只剩「**浏览不创建**」：App 只在用户发第一条消息时 POST；
+ * 一旦 POST，会话就已经开始，文件/meta 立刻存在 ⇒
+ * `getWorkDir` / `setActiveLayout` / `/api/layout/<name>/data?session=` 不再有
+ * “id 有了但文件还没建”的窗口。
+ *
+ * 「空会话」（POST 后放弃/首轮失败）保留在磁盘上，由用户手动删。
  */
 export async function createSession(workDir: string): Promise<string> {
   const id = newSessionId();
   const abs = await registerRoot(workDir);
-  pending.set(id, { root: abs });
+  const loc: SessionLocation = {
+    file: sessionFileOf(abs, id),
+    root: abs,
+    index: indexFileOf(abs),
+  };
+  const meta: SessionEvent = { ts: new Date().toISOString(), kind: 'meta', workDir: abs };
+  await mkdir(dirname(loc.file), { recursive: true });
+  await writeFile(loc.file, JSON.stringify(meta) + '\n', 'utf8');
+  pending.delete(id);
+  locCache.set(id, loc);
+  await touchIndex(loc, id, meta);
   return id;
 }
 
@@ -327,6 +342,33 @@ export async function loadTranscript(sessionId: string): Promise<SessionEvent[]>
   const loc = await resolveSessionLocation(sessionId);
   if (!loc) return [];
   return readEvents(loc.file);
+}
+
+/**
+ * 记录当前打开的版式（session meta 的追加事件；只记最后一次）。
+ *
+ * ⚠️ **不创建会话**：文件不存在直接返回 false——「打开一张旧图」不应该凭空建 session。
+ * 会话还不存在时，active 由客户端内存持有，第一次 /chat 再落。
+ */
+export async function setActiveLayout(sessionId: string, layout: string | null): Promise<boolean> {
+  const loc = await resolveSessionLocation(sessionId);
+  if (!loc || !existsSync(loc.file)) return false;
+  await appendEvent(sessionId, {
+    ts: new Date().toISOString(),
+    kind: 'active-layout',
+    layout,
+  });
+  return true;
+}
+
+/** 会话最后一次记录的 active 版式；没有则 null */
+export async function getActiveLayout(sessionId: string): Promise<string | null> {
+  const events = await loadTranscript(sessionId);
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.kind === 'active-layout') return e.layout ?? null;
+  }
+  return null;
 }
 
 /**

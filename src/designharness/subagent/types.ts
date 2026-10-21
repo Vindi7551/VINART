@@ -33,6 +33,11 @@ export interface AgentToolContext {
    * （宽松 Record），消费方按 kind 分拣。
    */
   onEvent?: (evt: Record<string, unknown>) => void;
+  /**
+   * 主 AI 当前打开的版式（来自 `/chat` 的 `activeLayout`）——
+   * 工具据此决定写哪个 `designs/<layout>/doc.json`，AI 不需要自己传 layout。
+   */
+  activeLayout?: string;
 }
 
 export interface AgentToolResult {

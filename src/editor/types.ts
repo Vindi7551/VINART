@@ -3,82 +3,33 @@
  *
  * 只放「编辑器自己需要知道的最小形状」——**不** import `src/ui/types.ts`，
  * 免得核心层反向依赖 React 外壳（依赖方向必须是 `ui → editor`）。
- * 两者靠**结构类型**对齐：`PreviewPanel` 把 `LayoutSpec` 传进来时由 `tsc` 兜底，
- * 不兼容就编译不过。
  *
- * ⚠️ 本目录有一条可机器断言的不变量（见 `src/editor/README.md` 与
- * `docs/EDITOR-EVOLUTION.md` §5.1）：**不引用任何全局网页对象**——
- * 所有文档对象都必须从参数流入，编辑器不认识"当前页面"是谁。
- * 这条断言用一条 grep 就能跑（命令写在 README 里，免得本文件自己被扫到）。
+ * 与 `src/document/vocabulary.ts` 的词汇**结构同形**（rect 是 0–1 比例等）——
+ * 但类型在这里独立声明：编辑器只依赖"最小形状"，不依赖词汇全文。
+ *
+ * ⚠️ 本目录有一条可机器断言的不变量（见 `src/editor/README.md`）：**不引用任何
+ * 全局网页对象**——所有文档对象都必须从参数流入，编辑器不认识"当前页面"是谁。
+ *
+ * （旧链遗留区——EditorLayer/EditorSpec/*Appearance/LayerPatch/GestureSession——
+ *   已随旧编辑器 `index.ts` 一起退役删除：它们只服务于已作废的
+ *   design-sketch / design-appearance 契约。2026-10-15 清理。）
  */
 
 // ══════════════════════════════════════════════════════════════════════
-// 数据（与 design-sketch / design-appearance 同形）
+// 数据（与词汇 `ElementBase.rect` 结构同形）
 // ══════════════════════════════════════════════════════════════════════
 
-/** 0–1 比例矩形（相对画布）。语义与 `design-sketch.ts` 的 `Rect` 完全一致。 */
+/**
+ * 矩形（**画布 px**）。与词汇 `ElementBase.rect` **结构同形**。
+ *
+ * ⚠️ 早先这里是 0–1 比例（"手势算 px、落定回写比例"），**已经没这回事了** ——
+ *    `rect` 在文档里直接就是画布 px，两边同一套单位，不来回换算。
+ */
 export interface EditorRect {
   x: number;
   y: number;
   w: number;
   h: number;
-}
-
-/** 视觉变换 —— **不参与布局计算**（对齐/网格全按 rect）。 */
-export interface EditorTransform {
-  rotate?: number;
-  skewX?: number;
-  origin?: { x: number; y: number };
-}
-
-export interface EditorLayer {
-  id: string;
-  /** `'image' | 'text' | 'shape'`（留成 string 是为了结构兼容 UI 侧的宽松视图） */
-  type: string;
-  rect: EditorRect;
-  text?: string | string[];
-  fontScale?: number;
-  weight?: number;
-  curve?: number;
-  transform?: EditorTransform;
-  [key: string]: unknown;
-}
-
-export interface EditorSpec {
-  canvas: { width: number; height: number };
-  layers: EditorLayer[];
-  [key: string]: unknown;
-}
-
-export interface EditorLayerAppearance {
-  color?: string;
-  fill?: string;
-  opacity?: number;
-  accent?: { words: string[]; color: string };
-  accents?: Array<{ words: string[]; color: string }>;
-  [key: string]: unknown;
-}
-
-export interface EditorAppearance {
-  /** 可省 —— 与 `ui/types.ts` 的宽松视图同形，便于结构兼容 */
-  layers?: Record<string, EditorLayerAppearance>;
-  [key: string]: unknown;
-}
-
-/** 手势落定时上报给宿主的**增量**。字段缺席 = 不改这一项。
- *  带索引签名是为了能直接喂给宿主的通用合并函数（`Record<string, unknown>`）。 */
-export interface LayerPatch {
-  rect?: EditorRect;
-  text?: string | string[];
-  fontScale?: number;
-  weight?: number;
-  color?: string;
-  fill?: string;
-  opacity?: number;
-  rotate?: number;
-  accent?: { words: string[]; color: string };
-  accents?: Array<{ words: string[]; color: string }>;
-  [key: string]: unknown;
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -93,11 +44,49 @@ export interface LayerPatch {
  *
  * ⚠️ 只允许作为**参数**出现，绝不取全局的那一个（否则不变量立刻破功，
  * 断言命令见 `src/editor/README.md`）。
+ *
+ * ## 就地改字为什么要的那几样（2026-10-15 补）
+ *
+ * 「在画面上打字」需要往**子文档**上挂事件、并读它**自己的**选区：
+ * - `addEventListener` / `removeEventListener`：`beforeinput` / `compositionend` /
+ *   `paste` / `cut` / `mouseup` / `keyup` / `keydown` 都挂在子文档上
+ *   （⚠️ 焦点在 iframe 里时，按键**不经过父页面** —— 只挂父文档会永远收不到）；
+ * - `defaultView`：选区 API（`getSelection` / `Range`）是 **window** 上的，
+ *   必须用**子文档自己的** window。`document.getSelection()` 在 Chrome 里返回的是
+ *   顶层文档的选区（对 `designMode` 的 iframe 才会转发）⇒ 读它拿到的可能是父页面的选区。
+ *   取子文档的 window **仍然是"从参数流入"**，不是全局取用。
+ *
+ * 三者都是**可选**的：纯几何/手势那套（拖拽、顶点、覆盖层）不需要它们，
+ * 不提供时文字就地编辑会自己降级（不崩，只是不能打字）。
  */
 export interface LayerDom {
   querySelector(selectors: string): Element | null;
   querySelectorAll(selectors: string): ArrayLike<Element>;
   elementFromPoint(x: number, y: number): Element | null;
+  addEventListener?(type: string, listener: EventListener, options?: boolean | AddEventListenerOptions): void;
+  removeEventListener?(type: string, listener: EventListener, options?: boolean | AddEventListenerOptions): void;
+  /** 子文档自己的 window（选区 / Range 从这里拿） */
+  readonly defaultView?: SubWindowLike | null;
+}
+
+/**
+ * 子文档 window 的**最小形状** —— 只要就地改字用到的那几样。
+ *
+ * 显式声明而不是用 `Window`，有两个原因：
+ * ① 不变量"不引用任何全局网页对象"要求这里是**从参数流入**的类型，不是全局类型；
+ * ② 测试的假 DOM 只要满足这几样就能驱动整条打字链路（不必造一个真 window）。
+ */
+export interface SubWindowLike {
+  getSelection(): SelectionLike | null;
+}
+
+/** 选区的最小形状（`Selection` 的子集；`isCollapsed` / `anchorNode` 是记账必需） */
+export interface SelectionLike {
+  readonly isCollapsed: boolean;
+  readonly anchorNode: Node | null;
+  readonly anchorOffset: number;
+  removeAllRanges(): void;
+  addRange(range: Range): void;
 }
 
 /**
@@ -154,34 +143,3 @@ export type Hit =
   | { kind: 'rotate' }
   | { kind: 'layer'; id: string }
   | { kind: 'empty' };
-
-// ══════════════════════════════════════════════════════════════════════
-// 手势会话（一次手势 = 一个事务；M2 的撤销以它为粒度）
-// ══════════════════════════════════════════════════════════════════════
-
-export interface MoveSession {
-  kind: 'move';
-  /** 手势起点（来自 **state**，不是从渲染产物读回来的） */
-  start: LocalBox;
-  /** 按下时的指针位置（local px） */
-  origin: LocalPoint;
-}
-
-export interface ResizeSession {
-  kind: 'resize';
-  dir: HandleDir;
-  start: LocalBox;
-  origin: LocalPoint;
-}
-
-export interface RotateSession {
-  kind: 'rotate';
-  /** 旋转中心（local px） */
-  center: LocalPoint;
-  /** 按下时"中心→指针"的角度（度） */
-  angle0: number;
-  /** 起始角度（度） */
-  rotate0: number;
-}
-
-export type GestureSession = MoveSession | ResizeSession | RotateSession;

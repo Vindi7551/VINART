@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Markdown } from './Markdown';
-import type { Message } from './types';
+import {
+  ComposerInput,
+  type ComposerInputHandle,
+  type MentionItem,
+  type ChatReference,
+} from './ComposerInput';
+import type { Message, ThinkingLevel } from './types';
+import { ThinkingControl } from './ThinkingControl';
 
 /**
  * 右栏对话面板 —— 消息流 + **单卡片式输入区**。
@@ -23,13 +30,18 @@ import type { Message } from './types';
 interface ConversationPanelProps {
   messages: Message[];
   isGenerating: boolean;
-  onSend: (text: string, files?: File[]) => void;
+  onSend: (text: string, files?: File[], references?: ChatReference[]) => void;
+  /** 当前版式的元素，供输入框 `@` 引用 */
+  mentions: MentionItem[];
   /** 当前会话的工作目录(📂 设置;null=未选,此时不允许发消息——会话跟着目录走) */
   workDir: string | null;
   /** 会话是否已绑定目录(已绑定 → 📂 置灰:换目录 = 新开会话) */
   dirLocked?: boolean;
   /** 当前 chat 模型名（只读；来自服务端 /api/models） */
   modelName?: string | null;
+  /** 思考档位（off/low/high/max）——由 App 持有并持久化 */
+  thinking?: ThinkingLevel;
+  onThinkingChange?: (v: ThinkingLevel) => void;
   /** 打开应用内目录浏览器 */
   onPickDir: () => void;
   onSetWorkDir: (dir: string) => void;
@@ -53,11 +65,6 @@ function SendIcon() {
       <polyline points="6 12 12 6 18 12" />
     </svg>
   );
-}
-
-/** 待发图片的文件名（过长截断） */
-function shortName(name: string): string {
-  return name.length > 12 ? name.slice(0, 12) + '…' : name;
 }
 
 /** 毫秒 → 人类可读时长：<1s 显示毫秒，<60s 显示一位小数的秒，其余显示分秒 */
@@ -123,68 +130,32 @@ export function ConversationPanel({
   messages,
   isGenerating,
   onSend,
+  mentions,
   workDir,
   dirLocked = false,
   modelName = null,
+  thinking = 'off',
+  onThinkingChange,
   onPickDir,
   onSetWorkDir,
 }: ConversationPanelProps) {
-  const [input, setInput] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  /** 待发送图片：file + 预览用 objectURL（移除/发送时 revoke，防内存泄漏） */
-  const [pendingFiles, setPendingFiles] = useState<Array<{ file: File; url: string }>>([]);
+  const composerRef = useRef<ComposerInputHandle>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const [dirInputOpen, setDirInputOpen] = useState(false);
   const [dirDraft, setDirDraft] = useState('');
 
   /** 没选目录 = 没有产物的家，聊天被门禁挡住（与后端 400 同一条规则） */
   const noWorkDir = !workDir;
-  const canSend = !noWorkDir && !isGenerating && (!!input.trim() || pendingFiles.length > 0);
+  const canSend = !noWorkDir && !isGenerating;
 
-  const addFiles = (files: File[]) => {
-    setPendingFiles((prev) => [
-      ...prev,
-      ...files
-        .filter((f) => f.type.startsWith('image/'))
-        .map((file) => ({ file, url: URL.createObjectURL(file) })),
-    ]);
-  };
-
-  const handleSend = () => {
-    const text = input.trim();
-    if (!text && pendingFiles.length === 0) return;
-    if (noWorkDir) return; // 双保险：按钮已 disabled
-    onSend(text, pendingFiles.length > 0 ? pendingFiles.map((p) => p.file) : undefined);
-    pendingFiles.forEach((p) => URL.revokeObjectURL(p.url));
-    setInput('');
-    setPendingFiles([]);
+  const handleComposerSend = (
+    text: string,
+    files?: File[],
+    references?: ChatReference[],
+  ) => {
+    onSend(text, files, references);
     requestAnimationFrame(() => {
       streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight, behavior: 'smooth' });
-    });
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-
-  /** 直接粘贴图片进输入框（截图/复制图后 Ctrl+V 即挂到待发送区） */
-  const handlePaste = (e: React.ClipboardEvent) => {
-    const imgs = Array.from(e.clipboardData?.items ?? [])
-      .filter((it) => it.type.startsWith('image/'))
-      .map((it) => it.getAsFile())
-      .filter((f): f is File => !!f);
-    if (imgs.length === 0) return;
-    e.preventDefault();
-    addFiles(imgs);
-  };
-
-  const removeFile = (i: number) => {
-    setPendingFiles((prev) => {
-      URL.revokeObjectURL(prev[i].url);
-      return prev.filter((_, idx) => idx !== i);
     });
   };
 
@@ -209,6 +180,15 @@ export function ConversationPanel({
               <div className="chat-attachments">
                 {msg.attachments.map((url, i) => (
                   <img key={i} className="chat-attachment" src={url} alt={`素材 ${i + 1}`} />
+                ))}
+              </div>
+            )}
+            {msg.references && msg.references.length > 0 && (
+              <div className="chat-references">
+                {msg.references.map((r, i) => (
+                  <span key={`${r.layout}:${r.id}:${i}`} className="chat-ref-chip">
+                    @{r.name}
+                  </span>
                 ))}
               </div>
             )}
@@ -258,36 +238,20 @@ export function ConversationPanel({
 
       <div className="input-area">
         <div className="composer">
-          {pendingFiles.length > 0 && (
-            <div className="composer-files">
-              {pendingFiles.map((p, i) => (
-                <span key={i} className="file-badge">
-                  <img className="file-badge-thumb" src={p.url} alt="" />
-                  <span className="file-badge-name">{shortName(p.file.name)}</span>
-                  <button onClick={() => removeFile(i)} title="移除">×</button>
-                </span>
-              ))}
-            </div>
-          )}
-
-          <div className="input-row">
-            <textarea
-              rows={1}
-              placeholder={
-                noWorkDir
-                  ? '未选工作目录——不允许开始对话（先点下方 📂 选目录）'
-                  : '描述你的设计想法，可直接粘贴图片（Ctrl+V）…'
-              }
-              value={input}
-              disabled={noWorkDir}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-            />
-          </div>
+          <ComposerInput
+            ref={composerRef}
+            disabled={noWorkDir || isGenerating}
+            placeholder={
+              noWorkDir
+                ? '未选工作目录——不允许开始对话（先点下方 📂 选目录）'
+                : '描述你的设计想法，可直接粘贴图片（Ctrl+V），@ 引用当前元素…'
+            }
+            mentions={mentions}
+            onSend={handleComposerSend}
+          />
 
           <div className="input-toolbar">
-            <button className="composer-tool" title="上传素材" onClick={() => fileInputRef.current?.click()}>
+            <button className="composer-tool" title="上传素材" onClick={() => composerRef.current?.pickFiles()}>
               <PlusIcon />
             </button>
 
@@ -337,34 +301,22 @@ export function ConversationPanel({
             <div className="composer-spacer" />
 
             {isGenerating && <span className="composer-spinner" title="生成中…" role="status" aria-label="生成中" />}
-            {modelName && (
-              <span className="composer-model" title={`当前模型：${modelName}（配置在 keys.json）`}>
-                {modelName}
-              </span>
-            )}
+            <ThinkingControl
+              modelName={modelName}
+              value={thinking}
+              onChange={(v) => onThinkingChange?.(v)}
+            />
 
             <button
               className="composer-send"
               title={noWorkDir ? '未选工作目录，不允许开始对话' : '发送'}
-              onClick={handleSend}
+              onClick={() => composerRef.current?.submit()}
               disabled={!canSend}
             >
               <SendIcon />
             </button>
           </div>
         </div>
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          hidden
-          onChange={(e) => {
-            if (e.target.files) addFiles(Array.from(e.target.files));
-            e.target.value = '';
-          }}
-        />
       </div>
     </aside>
   );

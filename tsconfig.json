@@ -18,5 +18,11 @@
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src", "scripts", "keys.json"]
+  // ⚠️ `test` 必须在 include 里（2026-10-15 补）：不含它的话 `tsc` **不检查测试**，
+  //    于是 `test/editor-geometry.test.ts` 里那句"import 一个已删除的模块"
+  //    烂了很久没人发现 —— vitest 报 `Cannot find module` + **0 个测试通过**，
+  //    而这在输出里一点都不显眼。
+  //    ⚠️ 注意：`test/` 用 vitest 的全局类型（describe/it/expect 是从 'vitest' 显式 import 的，
+  //    所以不需要额外的 types 配置）。
+  "include": ["src", "scripts", "test", "vitest.config.ts", "keys.json"]
 }

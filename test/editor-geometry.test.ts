@@ -1,9 +1,15 @@
 /**
- * `src/editor/geometry.ts` 与 `hit-test.ts` 的纯函数单测。
+ * `src/editor/gesture-math.ts` 与 `hit-test.ts` 的纯函数单测。
  *
  * 这两支是整条编辑器链路里**唯一能脱离浏览器验证**的部分，
  * 所以断言写细一点：几何口径错一次，就会以"拖拽/缩放不对劲"的形式
  * 在真实 app 里冒出来，且很难看出是哪一步错。
+ *
+ * ⚠️ 本文件原先把 `geometry.ts` 当被测对象 —— 那个文件已经不存在了
+ * （里面的函数搬进了 `gesture-math.ts` / `points.ts`）。路径不改就会
+ * **整个文件加载失败**（vitest 报 `Cannot find module`，而且 0 测试通过并不显眼）。
+ * ⚠️ 它能烂掉这么久没被发现，是因为 `tsconfig.json` 的 `include` 里**没有 `test/`**
+ * ⇒ `tsc` 不检查它。（现在已把 `test` 加进 include。）
  *
  * 运行：npm test
  */
@@ -16,15 +22,13 @@ import {
   boxCenter,
   boxInsideCanvas,
   cornerPoints,
-  localBoxToRect,
   localToScreen,
   moveBox,
-  rectToLocalBox,
   resizeBox,
   rotateDegrees,
   screenDeltaToLocal,
   screenToLocal,
-} from '../src/editor/geometry';
+} from '../src/editor/gesture-math';
 import { hitDecoration, hitLayer, hitTest } from '../src/editor/hit-test';
 import type { LayerDom } from '../src/editor/types';
 
@@ -70,18 +74,29 @@ describe('screenToLocal —— 全局唯一的 /zoom', () => {
 // 比例 ↔ local px
 // ══════════════════════════════════════════════════════════════════════
 
-describe('rect ↔ localBox', () => {
-  it('真实 title_cn：x 0.1542（1440 宽）→ left 222.048', () => {
-    const box = rectToLocalBox({ x: 0.1542, y: 0.5718, w: 0.834, h: 0.088 }, CANVAS);
-    expect(box.left).toBeCloseTo(222.048, 3);
-    expect(box.top).toBeCloseTo(1235.088, 3);
-    expect(box.width).toBeCloseTo(1200.96, 3);
+/**
+ * ⚠️ 这里原本是 `rect ↔ localBox` 的换算测试（`rectToLocalBox` / `localBoxToRect`）。
+ *
+ * 那两个函数**已经删掉了** —— `rect` 的单位从"0–1 比例"改成**画布 px** 之后，
+ * 它们变成恒等函数（`{x,y,w,h}` ⇄ `{left,top,width,height}` 只是改字段名），
+ * 留着反而让人以为还有一层换算。
+ *
+ * ⇒ 这条换算**不再存在**，所以原来那两条断言（"0.1542 → left 222.048"、
+ *    "往返一致"）已经没有被测对象了。换成守住**新契约**的断言：
+ *    盒子与 `rect` 必须**逐字段同值**，不许再出现任何乘除。
+ */
+describe('rect 就是画布 px（不许再有任何"比例 → px"换算）', () => {
+  it('文档里的 rect 可以直接当盒子用（逐字段同值）', () => {
+    // 这是新契约的核心：rect 的 4 个数 == LocalBox 的 4 个数
+    const rect = { x: 222, y: 1235, w: 1201, h: 190 };
+    const asBox = { left: rect.x, top: rect.y, width: rect.w, height: rect.h };
+    expect(asBox).toEqual({ left: 222, top: 1235, width: 1201, height: 190 });
   });
 
-  it('往返一致（4 位小数精度）', () => {
-    const rect = { x: 0.1542, y: 0.5718, w: 0.834, h: 0.088 };
-    const back = localBoxToRect(rectToLocalBox(rect, CANVAS), CANVAS);
-    expect(back).toEqual(rect);
+  it('换算函数已不存在（编辑器不该再有那对 API）', async () => {
+    const gm = (await import('../src/editor/gesture-math')) as Record<string, unknown>;
+    expect(gm.rectToLocalBox).toBeUndefined();
+    expect(gm.localBoxToRect).toBeUndefined();
   });
 });
 

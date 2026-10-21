@@ -87,21 +87,85 @@ html, body, #root {
   color: var(--text-primary);
 }
 
-/* ===== Artifact Gallery（管线产物缩略图条） ===== */
+/* ===== Artifact Gallery（管线产物缩略图条）=====
+   **顶部滑出式**：平时收起、**不占位**；鼠标移到**窗口顶端**就滑下来，移开就滑回去。
+
+   ⚠️ 为什么必须 `position: fixed` 而不是原来的 in-flow：画廊原先夹在 header 与 `.main` 之间，
+   是一条普通横条 —— 收/放会把 `.main` 顶上顶下，**画布跟着跳**。浮层不会。
+
+   ⚠️ `.gallery-dock` **自己只有热区那么高**（= header 的 44px，正好盖住 header 那条），
+   面板是它的绝对定位**子元素** ⇒ 鼠标在面板里时 `.gallery-dock:hover` 仍然成立
+   （CSS 的 `:hover` 把后代算在内）⇒ 能在面板里横滚、点卡片，不会一点就缩回去。 */
+.gallery-dock {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 44px; /* = .header 的高度：热区严丝合缝盖住 header 那条 */
+  z-index: 30; /* 压过 .main（.header 的 z-index 其实无效——它是 static） */
+}
+
 .artifact-gallery {
-  flex-shrink: 0;
+  position: absolute;
+  top: 100%; /* 挂在热区**下面** ⇒ 展开时落在 header 下沿，不盖住 logo */
+  left: 0;
+  right: 0;
+  /* 收起：整块移到屏幕上方（自己高度 + 热区高度）⇒ 一个像素都不露。
+     ⚠️ `-100%` 是相对**自己的高度**（translateY 的百分比口径） */
+  transform: translateY(calc(-100% - 44px));
+  transition: transform 0.22s ease;
   padding: 10px 20px 12px;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-light);
+  box-shadow: var(--shadow-sm);
 }
 
+.gallery-dock:hover .artifact-gallery {
+  transform: translateY(0);
+}
+
+/* ⭐ 钉住：面板不再跟着鼠标走（`.pinned` 与 `:hover` 的优先级相同、且都设同一个值 ⇒ 不打架） */
+.gallery-dock.pinned .artifact-gallery {
+  transform: translateY(0);
+}
+
+/* 标题那一行：**左边**是钉住按钮，紧跟标题（靠左排，不靠右） */
 .artifact-gallery-title {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
   font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-bottom: 8px;
+}
+
+/* 钉住按钮（住在画廊里 ⇒ 得先滑下来才够得着，正是要的） */
+.gallery-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.gallery-pin:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.gallery-pin.on {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--accent);
 }
 
 .artifact-strip {
@@ -141,6 +205,36 @@ html, body, #root {
   background: var(--white);
 }
 
+/* 设计缩略图：只读 iframe + scale（和 LayerThumb 同思路） */
+.design-thumb {
+  position: relative;
+  display: block;
+  width: 96px;
+  height: 72px;
+  overflow: hidden;
+  background: var(--white);
+}
+
+.design-thumb iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 0;
+  pointer-events: none;
+  transform-origin: top left;
+  background: transparent;
+}
+
+/* 加载中/失败：占位 SVG（不是 final.png） */
+.design-thumb img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--white);
+}
+
 .artifact-name {
   display: block;
   font-size: 11px;
@@ -157,6 +251,68 @@ html, body, #root {
   display: flex;
   flex: 1;
   min-height: 0;
+  /* 工具栏宽度 —— **唯一真源**。`.left-toggle` 是绝对定位 + 内联 `left`，
+     工具栏占了最左这一条之后它必须让开（否则正好压在第一格工具上），
+     所以 JS 那边用 `calc(var(--toolbar-w) + …)` 而不是再写一个 44。 */
+  --toolbar-w: 44px;
+}
+
+/* ===== 主工具栏（最左一栏 · 固定宽 · 不参与拖拽）=====
+   两段：上 = 工具（单选、有高亮），下 = 动作（点一下就走、不留高亮）。
+   ⚠️ 这里的按钮**刻意不用**基元层的 `.ui-btn` —— 那是"面板里"的按钮（有边框、
+   有内边距）；工具栏按钮是另一种东西。样式仍然全走 token，不写内联颜色。 */
+.toolbar {
+  flex: none;
+  width: var(--toolbar-w);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border);
+}
+
+.toolbar-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.toolbar-sep {
+  width: 22px;
+  height: 1px;
+  background: var(--border);
+  margin: 2px 0;
+}
+
+.tool-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.tool-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+/* 当前工具：常驻高亮（这是"我现在在哪个工具里"的唯一指示） */
+.tool-btn.active {
+  background: var(--accent-light);
+  color: var(--accent);
+}
+.tool-btn:disabled {
+  opacity: 0.45;
+  cursor: wait;
 }
 
 /* ===== Preview Panel (Left) ===== */
@@ -305,14 +461,6 @@ html, body, #root {
 .preview-placeholder-hint {
   font-size: 13px;
   color: var(--text-muted);
-}
-
-.preview-image {
-  max-width: 100%;
-  max-height: 100%;
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  object-fit: contain;
 }
 
 /* ===== 一键生成表单 ===== */
@@ -705,7 +853,7 @@ html, body, #root {
 }
 
 /* ===== 右栏收起/展开开关 ===== */
-/* 悬浮贴右栏左缘外;收起时 right 由内联 style 驱动滑到屏幕右缘 */
+/* 固定贴屏幕右缘：展开时落在对话栏右上角，收起时在同一位置 */
 .right-toggle {
   position: absolute;
   top: 10px;
@@ -987,6 +1135,11 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+/* 对话栏展开时，右上角有「收起」按钮：给消息流让出顶部空间，避免第一条消息被压住 */
+.right-col:not(.collapsed) .chat-stream {
+  padding-top: 44px;
 }
 
 .chat-empty {
@@ -1337,6 +1490,145 @@ html, body, #root {
   color: var(--text-muted);
 }
 
+/* ===== contentEditable 输入框 + 引用 chip ===== */
+.composer-input-wrap {
+  position: relative;
+}
+
+.composer-input {
+  min-height: 76px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  outline: none;
+  color: var(--text-primary);
+}
+
+.composer-input:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.ref-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 220px;
+  margin: 0 2px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 18px;
+  vertical-align: baseline;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+  user-select: none;
+}
+
+.mention-chip {
+  background: var(--accent-light);
+  color: var(--accent);
+  border: 1px solid rgba(108, 92, 231, 0.25);
+}
+
+.image-chip {
+  position: relative;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+/* 图片 chip 悬停显示缩略图（缩略图 URL 由内联 --thumb 注入） */
+.image-chip:hover::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  width: 160px;
+  height: 160px;
+  border-radius: 8px;
+  background: var(--bg-surface) var(--thumb) center / contain no-repeat;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  z-index: 20;
+  pointer-events: none;
+}
+
+.mention-popover {
+  position: absolute;
+  left: 4px;
+  bottom: calc(100% + 4px);
+  min-width: 220px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  z-index: 30;
+}
+
+/* `@` 候选按图层分组：标题吸顶，长列表滚动时知道自己在哪一层 */
+.mention-group {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 8px 3px;
+  margin-bottom: 2px;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.mention-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.mention-option.active,
+.mention-option:hover {
+  background: var(--bg-hover);
+}
+
+.mention-option-id {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.chat-references {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.chat-ref-chip {
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--accent-light);
+  color: var(--accent);
+  font-size: 11px;
+}
+
 /* 工具条：左（上传 / 目录）——— 右（生成中 / 模型 / 发送） */
 .input-toolbar {
   display: flex;
@@ -1467,15 +1759,200 @@ html, body, #root {
   to { transform: rotate(360deg); }
 }
 
-/* 当前模型：只读展示，不做下拉（Vinart 只有一个 chat 模型） */
-.composer-model {
-  max-width: 150px;
+/* 推理强度：折叠态 = 模型名 + 当前档位 + ▾ */
+.thinking-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.thinking-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  padding: 2px 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.thinking-trigger:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.thinking-model {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
-  color: var(--text-muted);
+}
+
+.thinking-current {
+  color: var(--text-secondary);
   flex-shrink: 0;
+}
+
+.thinking-chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.thinking-trigger[aria-expanded='true'] .thinking-chevron {
+  transform: rotate(180deg);
+}
+
+.thinking-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: 288px;
+  padding: 12px 12px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-lg);
+  z-index: 60;
+}
+
+.thinking-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.thinking-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.thinking-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.thinking-reset:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.thinking-slider {
+  position: relative;
+  height: 48px;
+  margin: 16px 0 2px;
+  cursor: grab;
+  touch-action: none;
+  outline: none;
+  user-select: none;
+}
+
+.thinking-slider.dragging {
+  cursor: grabbing;
+}
+
+.thinking-slider:focus-visible .thinking-knob {
+  box-shadow: 0 0 0 4px rgba(108, 92, 231, 0.16);
+}
+
+.thinking-track {
+  position: absolute;
+  left: 11px;
+  right: 11px;
+  top: 50%;
+  height: 18px;
+  transform: translateY(-50%);
+  background: #e4e4ec;
+  border-radius: 999px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.thinking-fill {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, #c9bffb 0%, #9a86f4 40%, #6c5ce7 68%, #4634c0 100%);
+  border-radius: 999px;
+  clip-path: inset(0 100% 0 0);
+  transition: clip-path 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.thinking-slider.dragging .thinking-fill {
+  transition: none;
+}
+
+.thinking-dot {
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  opacity: 0.5;
+  transform: translate(-50%, -50%);
+}
+
+.thinking-dot.active {
+  background: var(--accent);
+  opacity: 1;
+}
+
+.thinking-knob {
+  position: absolute;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+  transform: translate(-50%, -50%);
+  transition: left 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+  pointer-events: none;
+}
+
+.thinking-slider.dragging .thinking-knob {
+  transition: none;
+}
+
+.thinking-labels {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0 0;
+}
+
+.thinking-labels button {
+  padding: 2px 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.thinking-labels button:hover {
+  color: var(--text-primary);
+}
+
+.thinking-labels button.active {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* 发送：项目强调色（紫）圆形 ↑ */
@@ -1641,6 +2118,26 @@ html, body, #root {
   flex-shrink: 0;
 }
 
+/* 面板标题右侧的「收起」：与浮标同样式，但住在标题行里 */
+.panel-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.panel-collapse-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 .ui-panel-body {
   flex: 1;
   min-height: 0;
@@ -1664,7 +2161,528 @@ html, body, #root {
   font-weight: 600;
   color: var(--text-secondary);
   letter-spacing: 0.04em;
-  margin-bottom: 4px;
+}
+
+/* ── 小节标题行：折叠箭头 + 图标 + 标题 + 数量徽标 ────────────────── */
+.ui-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+  margin-bottom: 6px;
+}
+/* 可折叠的那一版：整行可点、带 hover 底色（负 margin 让底色比文字宽一点，像一整条） */
+.ui-section-head.foldable {
+  cursor: pointer;
+  margin-left: -5px;
+  padding: 2px 5px;
+  border-radius: var(--radius-sm);
+}
+.ui-section-head.foldable:hover {
+  background: var(--bg-hover);
+}
+.ui-section-head.foldable:hover .ui-section-icon {
+  color: var(--text-secondary);
+}
+
+.ui-caret {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+.ui-caret.open {
+  transform: rotate(90deg);
+}
+
+.ui-section-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-muted);
+}
+
+/* 数量徽标推到最右（"这个分类里有 8 个字段"） */
+.ui-section-count {
+  margin-left: auto;
+  font-size: 10px;
+  line-height: 15px;
+  padding: 0 5px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  background: var(--bg-hover);
+}
+
+/* ── 字段网格：两列；需要宽的整行跨两列 ─────────────────────────── */
+.ui-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 8px;
+  align-items: end;
+}
+.ui-fields > .ui-field {
+  margin-bottom: 0;
+}
+.ui-fields > .ui-field.wide {
+  grid-column: 1 / -1;
+}
+/* 窄栏里数字框不要固定 100px，撑满自己那格 */
+.ui-fields .ui-num {
+  width: 100%;
+}
+/* 复选框那一格：标签在左、框靠右（标签在上会显得空） */
+.ui-field.check {
+  flex-direction: row;
+  align-items: center;
+}
+.ui-field.check > .ui-check {
+  margin-left: auto;
+}
+
+/* 数字框 + 单位后缀 / 色块 + 十六进制串：横排、自适应 */
+.ui-num-wrap,
+.ui-color-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ui-num-wrap > .ui-input,
+.ui-color-row > .ui-input {
+  flex: 1;
+  min-width: 0;
+}
+.ui-suffix {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ── 颜色 / 渐变编辑器（paint） ───────────────────────────────── */
+.ui-paint-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+.ui-paint-row > .ui-input,
+.ui-paint-row > .ui-paint-text {
+  flex: 1;
+  min-width: 0;
+}
+.ui-paint-preview {
+  flex: none;
+  width: 30px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+  background-repeat: repeat;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+.ui-paint-preview:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.ui-paint-dialog {
+  display: grid;
+  gap: 14px;
+}
+.ui-paint-big-preview {
+  height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background-repeat: repeat;
+}
+.ui-paint-layers {
+  display: grid;
+  gap: 6px;
+}
+.ui-paint-layers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.ui-paint-layers-actions {
+  display: flex;
+  gap: 4px;
+}
+.ui-paint-layer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+}
+.ui-paint-layer.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.ui-paint-layer-preview {
+  flex: none;
+  width: 26px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  background-repeat: repeat;
+}
+.ui-paint-layer-name {
+  font-size: 12px;
+  color: var(--text);
+}
+.ui-paint-layer-kind {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.ui-paint-add {
+  justify-self: start;
+}
+.ui-paint-editor {
+  display: grid;
+  gap: 10px;
+}
+.ui-paint-rowline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ui-paint-label {
+  flex: none;
+  min-width: 52px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.ui-paint-color {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.ui-paint-color > .ui-input {
+  flex: 1;
+  min-width: 0;
+}
+.ui-paint-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.ui-paint-stops {
+  display: grid;
+  gap: 6px;
+}
+.ui-paint-stops-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.ui-paint-stop {
+  display: grid;
+  grid-template-columns: 1fr 76px 28px;
+  align-items: center;
+  gap: 8px;
+}
+.ui-paint-raw {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+/* 复选框 */
+.ui-check {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+/* 下拉（原生 select，跟 .ui-input 同口径） */
+.ui-select {
+  cursor: pointer;
+}
+
+/* ── 方形图标按钮（动作按钮统一长这样）─────────────────────────── */
+.ui-btn.sq {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+}
+.ui-btn.sq.tiny {
+  width: 20px;
+  height: 20px;
+}
+
+/* ── 图层清单：**限高可滚**（不然 18 行会把属性表单顶到折叠线以下）── */
+.ui-layer-list {
+  max-height: 216px;
+  overflow-y: auto;
+  padding: 2px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+}
+
+/*
+ * 图层页：这一页**只有**清单，所以让正文不滚、清单撑满面板；
+ * 滚动条只在图层真的多到装不下时才出现。
+ * （历史页仍用上面的 216px 限高 —— 它下面还有说明文字。）
+ */
+.ui-panel-body--fill {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.ui-layer-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ui-layer-page > .ui-section {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+.ui-layer-page .ui-layer-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
+/* 图层行比元素/组行高：给缩略图留出能看清的高度；元素/组行保持紧凑 */
+.ui-layer-row {
+  min-height: 88px;
+  padding: 6px 8px;
+}
+
+/* 图层缩略图：只读 iframe，按画布比例 scale 到行内 */
+.ui-layer-thumb {
+  flex: none;
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+}
+.ui-layer-thumb iframe {
+  display: block;
+  border: 0;
+  pointer-events: none;
+  transform-origin: top left;
+  background: transparent;
+}
+
+/* 隐藏的图层：缩略图仍显示内容（忽略 visible），只压暗/去饱和提示“这层没显示” */
+.ui-layer-thumb.is-hidden {
+  opacity: 0.5;
+  filter: grayscale(0.5);
+}
+
+/* 图层 / 组的**直接**子元素数量（不递归） */
+.ui-layer-count {
+  flex: none;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
+  color: var(--text-muted);
+  background: var(--bg-hover);
+}
+
+/* 组行的展开箭头：点组行切换；和图层行的右键菜单展开是两套 */
+.ui-group-caret {
+  display: inline-block;
+  width: 10px;
+  margin-right: 2px;
+  color: var(--text-muted);
+  transition: transform 0.12s ease;
+}
+.ui-group-caret.open {
+  transform: rotate(90deg);
+}
+
+/* 行内改名：图层行里是直接子元素；元素行里嵌在 layer-name 里 */
+.ui-rename-input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  height: 22px;
+  padding: 0 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  outline: none;
+}
+.ui-layer-row > .ui-rename-input {
+  flex: 1;
+}
+
+/* 图层块 = 图层那一行 + 它下面缩进的元素行（结构：画布 → 图层 → 元素） */
+.ui-layer-block + .ui-layer-block {
+  margin-top: 3px;
+  padding-top: 3px;
+  border-top: 1px dashed var(--border-light);
+}
+
+/**
+ * ⭐ **当前图层**（"我在这层干活"）—— 用**阴影**表示，和"选中"的整行高亮区分开。
+ *
+ * ⚠️ 这两个状态是**独立的**：一行可以"被选中"但"不是当前图层"。
+ *    所以这里刻意**不改背景色**（那是选中的视觉），只加内阴影 + 左侧竖色条。
+ */
+.ui-layer-block.is-current {
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1.5px var(--accent), inset 0 0 8px rgba(108, 92, 231, 0.35);
+  border-left: 3px solid var(--accent);
+}
+
+/* ── 形状绘制层（只在「形状」工具下挂载）：盖住画布，拖一个框就画出来 ── */
+.canvas-draw-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  cursor: crosshair;
+  /* 触摸也要能用，否则手机上拖不动 */
+  touch-action: none;
+}
+/**
+ * 绘制过程的**预览层**：里面装的是 `emitElementHtml` 生成的真实形状（强调色描边）。
+ * `inset:0` ⇒ 元素自己的 `position:absolute` + 画布 px 坐标直接落位，不用额外换算。
+ * ⚠️ `pointer-events:none`：预览绝不能抢指针，否则拖到一半就断了。
+ */
+.canvas-draw-preview {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+/**
+ * 很淡的**包围盒**（只是尺寸参考，不抢形状的戏）。
+ * ⚠️ 刻意比形状本身淡得多 —— 用户要的是"看得出正在画的是什么形状"，
+ *    而不是"一个抢眼的虚线方框"。
+ */
+.canvas-draw-box {
+  position: absolute;
+  border: 1px dashed rgba(108, 92, 231, 0.35);
+  pointer-events: none;
+}
+
+/* ── 右键浮层（`ContextMenu`）── 贴着鼠标点、不阻塞、点外面自己关 */
+.ui-ctxmenu {
+  position: fixed;
+  z-index: 60;
+  min-width: 132px;
+  padding: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+.ui-ctxmenu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+}
+.ui-ctxmenu-item:hover {
+  background: var(--bg-hover);
+}
+.ui-ctxmenu-item.is-active {
+  color: var(--accent);
+  font-weight: 700;
+}
+.ui-ctxmenu-check {
+  width: 12px;
+  flex: 0 0 12px;
+  color: var(--accent);
+}
+.layer-name-layer {
+  font-weight: 700;
+}
+.layer-name-el {
+  padding-left: 12px;
+  color: var(--text-secondary);
+}
+
+/* ⭐ 历史页里"已撤销"的那些步（PS 里是灰掉的）—— 点它们 = 重做回去 */
+.layer-name.is-undone {
+  opacity: 0.45;
+}
+/* 行内动作：平时藏起来，hover / 选中才出现 —— 一屏 18×3 个按钮太吵 */
+/* ⚠️ 用绝对定位浮在名字上，不占横向宽度 —— 否则加了缩略图后图层名会被挤成省略号 */
+.ui-layer-actions {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: none;
+  padding-left: 10px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(to right, transparent, var(--bg-hover) 22%);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.ui-list-item.active .ui-layer-actions {
+  background: linear-gradient(to right, transparent, var(--accent-light) 22%);
+}
+.ui-list-item:hover .ui-layer-actions,
+.ui-list-item.active .ui-layer-actions {
+  opacity: 1;
+}
+/* 选中行里的图标按钮：底色已是强调色，图标别再叠一层 hover 底色 */
+.ui-list-item.active .ui-btn.sq.tiny {
+  color: var(--accent);
+}
+
+/* ── 文字选区面板（"选中的字"）：强调色的一小块，与节点级表单区分开 ── */
+.ui-selection {
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent-light);
+  padding: 8px 8px 6px;
+}
+.ui-selection-text {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  max-height: 34px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ui-hint {
@@ -1695,6 +2713,10 @@ html, body, #root {
   gap: 3px;
   margin-bottom: 8px;
   min-width: 0;
+}
+/* 网格里不需要下边距（靠 gap 撑开） */
+.ui-fields > .ui-field {
+  margin-bottom: 0;
 }
 .ui-field-label {
   color: var(--text-secondary);
@@ -1807,8 +2829,9 @@ html, body, #root {
   color: var(--danger);
 }
 
-/* 列表项（图层清单）：横向排布 = 眼睛 + 名字 */
+/* 列表项（图层清单）：横向排布 = 缩略图 + 眼睛 + 名字 */
 .ui-list-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;

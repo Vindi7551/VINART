@@ -1,0 +1,15 @@
+{
+  "family": "Noto Sans SC",
+  "dir": "NotoSansSC",
+  "weights": [400, 700],
+  "files": {
+    "400": "400.woff2",
+    "700": "700.woff2"
+  },
+  "license": "OFL-1.1",
+  "source": "https://github.com/notofonts/noto-cjk",
+  "subset": "SC（简体中文全字库；非拉丁子集）",
+  "scripts": ["hans", "latin"],
+  "character": "中文黑体，字形中性、可读性高；适合正文与标签",
+  "bestFor": "正文、标签、现代/科技类"
+}

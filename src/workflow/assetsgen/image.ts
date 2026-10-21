@@ -9,88 +9,118 @@
  *
  * ## 职责
  *
- *   输入  素材订单（`assets.json`）+ 版式（找每个素材所属的图位）
+ *   输入  素材订单（`assets.json`）
  *   输出  素材文件（`outDir/<file>`）
  *
- *   中间：商品抠图（仅当订单引用 `@product`）·
- *         草图按**图位 rect** 裁切（compose 参考）·
- *         提示词拼参考图角色说明 · 调生图模型（审核失败自动重试）
- *
- * ⚠️ 版式**草图**的渲染不在这里——它属于 `design-sketch` 阶段
- * （`runtime.ts` / `sketch.ts`），调用方保证 gen 之前草图已存在。
+ *   中间：提示词拼参考图说明 · 调生图模型（审核失败自动重试）
  */
 
-import { existsSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, isAbsolute, resolve, sep } from 'node:path';
 
-import type { DesignSketch } from '../design-sketch/design-sketch';
-import { BANNED_WORDS, type AssetOrders, type AssetReference, type AssetRequest } from './asset-order';
-import { cropToRef, dataUrlToBuffer, downscaleToRef, prepareProduct } from './cutout';
+import { BANNED_WORDS, type AssetOrders, type AssetRequest } from './asset-order';
 
 /**
- * 提供临时浏览器页的宿主（用**最小结构类型**，避免依赖 playwright）。
- * 参考图的缩放 / 裁切都在浏览器 canvas 里做。
+ * 本地文件 → data URL（**原图直传，不压缩**）。
+ *
+ * ⚠️ mime 必须和真实字节一致——按文件头判断，别按扩展名：
+ * 有些文件扩展名和内容对不上（接口会照 mime 解）。
  */
-export interface CanvasHost {
-  newPage(): Promise<{
-    evaluate: <T>(fn: (arg: unknown) => T, arg: unknown) => Promise<T>;
-    close(): Promise<void>;
-    /** 可选：设置视口（文字自适应测量需要与画布同尺寸） */
-    setViewportSize?: (size: { width: number; height: number }) => Promise<void>;
-  }>;
+export function fileDataUrl(file: string): string {
+  const buf = readFileSync(file);
+  const mime =
+    buf[0] === 0x89 && buf[1] === 0x50
+      ? 'image/png'
+      : buf[0] === 0xff && buf[1] === 0xd8
+        ? 'image/jpeg'
+        : buf[0] === 0x52 && buf[1] === 0x49
+          ? 'image/webp'
+          : 'application/octet-stream';
+  return `data:${mime};base64,${buf.toString('base64')}`;
 }
 
 /**
- * 参考图**角色** → 各语言说明。
+ * 提示词里指代参考图的记号：`[图片1]` / `[图片 1]` / `[Image 1]`。
  *
- * 这段说明以前是**手写在提示词散文里**的（"Referenzbild 1 = das Produkt.
- * Referenzbild 2 = der Layout-Entwurf."）——换用途就得重写一遍，加到三张就乱。
- * 现在由角色统一生成，且顺序与 `refs` 数组严格一致。
- *
- * 语言按订单的 `promptLang` 选（promptLang 记在 assets.json 里，订单自包含），
- * 兜底 `en`——seedream 中英双语原生，英文是一等公民；德语是 5.0 才额外
- * 支持的语言，不该当默认。
+ * 用方括号而不是 `@` —— 聊天里的 `@` 已经用来指画布元素，
+ * 同一个符号两套含义，主 AI 会混。
  */
-const ROLE_LABELS: Record<string, Record<string, string>> = {
-  en: {
-    subject: 'the subject appearance reference (match its look exactly, then re-shoot it in the scene — do not paste this photo into the frame)',
-    compose: 'the layout draft (take only the arrangement, not the contents)',
-    style: 'a style reference (light mood and material feel)',
-    detail: 'a close-up detail',
-  },
-  de: {
-    subject: 'die Referenz für das Aussehen des Motivs (Aussehen exakt übernehmen, dann im Szene neu fotografieren – dieses Foto nicht einfügen)',
-    compose: 'der Layout-Entwurf (nur die Anordnung übernehmen, keine Inhalte daraus)',
-    style: 'eine Stilreferenz (Lichtstimmung und Materialwirkung)',
-    detail: 'eine Detailaufnahme',
-  },
-  zh: {
-    subject: '主体外观参考（外观必须完全一致，然后**在场景里重拍一遍**——不要把这张照片贴进画面）',
-    compose: '版式草图（只取构图排布，不取内容）',
-    style: '风格参考（光线氛围与材质质感）',
-    detail: '局部细节特写',
-  },
-};
+const REF_MENTION = /\[\s*(?:图片|image)\s*(\d+)\s*\]/gi;
 
-/** 参考图说明段的前缀词，同样按语言 */
-const REF_PREFIX: Record<string, string> = {
-  en: 'REFERENCE IMAGES',
-  de: 'BILDNACHWEISE',
-  zh: '参考图说明',
-};
+/**
+ * 把提示词里的 `[图片N]` 编译成「第 N 张（文件名）」。
+ *
+ * `indexMap` 是「**原始编号 → 最终编号**」：参考图文件不存在会被丢掉，
+ * 后面的编号会前移——提示词里写的是原始编号，必须按这张表换算，
+ * 否则 `[图片3]` 会指到错的那张。
+ *
+ * 指不到的编号**原样保留**（由调用方记 warning），不报错、不删字。
+ */
+export function compileRefMentions(
+  prompt: string,
+  refs: string[],
+  lang: string,
+  indexMap?: Map<number, number>,
+): { text: string; mentioned: Set<number>; unknown: number[] } {
+  const mentioned = new Set<number>();
+  const unknown: number[] = [];
+  const text = prompt.replace(REF_MENTION, (whole, digits: string) => {
+    const n = Number(digits);
+    const final = indexMap ? indexMap.get(n) : n >= 1 && n <= refs.length ? n : undefined;
+    if (!final || final < 1 || final > refs.length) {
+      unknown.push(n);
+      return whole;
+    }
+    mentioned.add(final - 1);
+    const name = basename(refs[final - 1]!);
+    return lang === 'zh' ? `第 ${final} 张（${name}）` : `Reference ${final} (${name})`;
+  });
+  return { text, mentioned, unknown };
+}
 
-/** 把角色说明拼到提示词前面（语言按订单 promptLang，兜底 en） */
-function buildPrompt(prompt: string, refs: AssetReference[], lang: string): string {
+/**
+ * 参考图说明 —— **只负责把「第 N 张 ↔ 文件名」对上**。
+ *
+ * ⚠️ 这里**不再按 role 自动生成角色长句**：那句
+ * "the subject appearance reference (… do not paste …)" 是写给
+ * **写提示词的人**的规则，贴在生图 payload 上只会让模型分心
+ * （而且是否定句——本项目实测否定词对 seedream 无效）。
+ * 哪张图是干什么的，由提示词自己说。
+ *
+ * `mentioned` 是提示词里已经用 `[图片N]` 指过的（0 基）；这些不再重复进图例。
+ * 语言跟随**提示词本身**（含中文就写中文），不再只看 `promptLang` ——
+ * 走 `generate_assets` 工具时订单里根本没有 promptLang，以前中文提示词
+ * 一直配着英文图例。
+ */
+export function buildPrompt(
+  prompt: string,
+  refs: string[],
+  lang: string,
+  mentioned?: Set<number>,
+): string {
   if (!refs.length) return prompt;
-  const labels = ROLE_LABELS[lang] ?? ROLE_LABELS.en;
-  const lines = refs.map((r, i) => `Reference ${i + 1} = ${labels[r.role] ?? r.role}`);
-  return `${REF_PREFIX[lang] ?? REF_PREFIX.en}: ${lines.join('. ')}. ${prompt}`;
+  const rest = refs
+    .map((r, i) => ({ r, i }))
+    .filter(({ i }) => !mentioned?.has(i));
+  if (!rest.length) return prompt;
+  if (lang === 'zh') {
+    const names = rest.map(({ r, i }) => `第 ${i + 1} 张（${basename(r)}）`);
+    return `参考图说明：${names.join('、')}。${prompt}`;
+  }
+  const names = rest.map(({ r, i }) => `Reference ${i + 1} (${basename(r)})`);
+  return `REFERENCE IMAGES: ${names.join(', ')}. ${prompt}`;
+}
+
+/** 提示词语言：含中文就按中文拼图例，否则用订单声明，兜底 en */
+export function promptLanguage(prompt: string, declared?: string): string {
+  if (/[\u4e00-\u9fa5]/.test(prompt)) return 'zh';
+  return declared ?? 'en';
 }
 
 /**
  * 运行时安全检查——提示词里**禁止出现品牌 / 水印类词汇**：
  * 实测会触发内容审核（讽刺的是"禁止品牌标识"这条指令本身就会触发）。
- * 禁词表与订单生成（order.ts）共用 asset-order.ts 的 BANNED_WORDS——
+ * 禁词表来自 asset-order.ts 的 BANNED_WORDS——
  * 审核器共性与提示词语言无关。
  */
 function assertPromptSafe(prompt: string, file: string): void {
@@ -125,10 +155,10 @@ function warnPromptStyle(prompt: string, file: string): void {
 }
 
 /**
- * 商品图的**保真声明**检查——订单引用 @product 却没有保真表述时 warn。
+ * 商品图的**保真声明**检查——用了参考图却没有保真表述时 warn。
  *
- * 保真声明是商品图与艺术图的唯一实质区别：不声明，模型会擅自改 logo、
- * 增删部件——对应平台「与实物不符」违规、退货与广告拒审。
+ * ⚠️ role 删掉后不再有「主体参考图」这个概念，只能按「有参考图」判断：
+ * 提示词没写保持/一致类要求时提醒一句（只是 console warn，不拦流程）。
  */
 function warnFidelity(prompt: string, file: string): void {
   if (
@@ -138,26 +168,37 @@ function warnFidelity(prompt: string, file: string): void {
   )
     return;
   console.warn(
-    `    ⚠️ ${file} 引用了 @product 但 prompt 里没有保真声明——模型可能擅自改 logo、增删部件（平台「与实物不符」违规）。\n` +
+    `    ⚠️ ${file} 用了参考图，但 prompt 里没有保真声明——如果它需要外观一致，模型可能擅自改 logo、增删部件（平台「与实物不符」违规）。\n` +
       '       典型句式：keep the shape, lid, label and color exactly the same, do not add extra text or graphics',
   );
 }
 
 export interface GenerateAssetsOptions {
   orders: AssetOrders;
-  /** 版式（用于找每个素材所属的 image 节点 → 裁草图参考） */
-  spec: DesignSketch;
-  /** 素材输出目录（同时也是 sketch.png 所在目录） */
+  /** 素材输出目录 */
   outDir: string;
   /**
-   * 商品照路径。**仅当订单引用 `@product` 时必须提供**；
-   * 没有引用（如纯场景版式）传 null，商品抠图整段跳过。
+   * 工作目录 —— 参考图除了版式目录，也可以引用工作目录里的文件
+   * （用户贴的商品照落在 `<workDir>/uploads/`）。
    */
-  productPath: string | null;
-  /** 提供浏览器页（canvas 处理参考图） */
-  host: CanvasHost;
+  workDir: string;
   /** true = 已存在的素材也重新生成 */
   force: boolean;
+  /** 用户取消信号（点停止时中断正在进行的请求） */
+  signal?: AbortSignal;
+  /** 每张素材完成后的进度（聊天链经 ctx.onEvent 上抛） */
+  onProgress?: (p: AssetProgress) => void;
+}
+
+/** 单张素材完成时的进度 */
+export interface AssetProgress {
+  file: string;
+  /** 1 基序号（按订单顺序） */
+  index: number;
+  total: number;
+  ok: boolean;
+  skipped?: boolean;
+  error?: string;
 }
 
 /** 单张素材的生成结果（聊天工具链路要逐张向用户汇报） */
@@ -169,67 +210,72 @@ export interface AssetJobResult {
   /** 生成产物字节数 */
   bytes?: number;
   error?: string;
+  /** 被跳过的参考图等提示——回给模型，避免「参考图被悄悄丢掉」 */
+  warnings?: string[];
 }
 
-function guessRole(ref: string): 'subject' | 'compose' | 'detail' {
-  if (ref === '@product') return 'subject';
-  if (ref === '@sketch') return 'compose';
-  return 'detail';
+/** references 里某一项 → 文件名（容错 LLM 的几种写法） */
+function refOf(r: unknown): string {
+  if (typeof r === 'string') return r;
+  if (r && typeof r === 'object') {
+    const o = r as Record<string, unknown>;
+    const v = o.ref ?? o.file ?? o.path ?? o.name;
+    if (typeof v === 'string') return v;
+  }
+  return '';
 }
 
-/**
- * orders 归一化（容错 LLM 写出的宽松形态）：
- * 实测：主 AI 会把 references 写成字符串数组 ["@product"]（契约是对象数组
- * [{ref, role}]）——不归一化会在参考图解析时 resolve(outDir, undefined) 炸掉整批
- * （paths[1] undefined，实测泳衣 PT04/PT05）。字符串按语义推断 role。
- */
 /**
  * 移除提示词里含禁词的短语片段（逗号/分号分隔）。
  * 否定式免责语（'no logos, no watermark'）是实测陷阱：负面提及照样触发
  * 内容审核（BANNED_WORDS 是字面匹配，不管否定）。移除即安全——生图模型
  * 不加免责语也不会画水印。
+ *
+ * 返回被删掉的片段，由 generateOne 记进 warnings——**不再静默改提示词**。
  */
-function stripBannedPhrases(prompt: string): string {
+export function stripBannedPhrases(prompt: string): { text: string; removed: string[] } {
   BANNED_WORDS.lastIndex = 0;
-  if (!BANNED_WORDS.test(prompt)) return prompt;
-  const cleaned = prompt.split(/[,;；，]s*/)
-    .filter((part) => {
-      BANNED_WORDS.lastIndex = 0;
-      return !BANNED_WORDS.test(part);
-    })
-    .join(", ")
-    .replace(/s{2,}/g, " ")
-    .replace(/[,;，]s*$/, "")
+  if (!BANNED_WORDS.test(prompt)) return { text: prompt, removed: [] };
+  const kept: string[] = [];
+  const removed: string[] = [];
+  for (const part of prompt.split(/[,;；，]\s*/)) {
+    BANNED_WORDS.lastIndex = 0;
+    if (BANNED_WORDS.test(part)) removed.push(part.trim());
+    else kept.push(part);
+  }
+  const text = kept
+    .join(', ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/[,;，]\s*$/, '')
     .trim();
   BANNED_WORDS.lastIndex = 0;
-  return cleaned || prompt; // 全被移除的极端情况：保留原文让 assertPromptSafe 拦
+  return { text: text || prompt, removed }; // 全被移除：保留原文让 assertPromptSafe 拦
 }
 
+/**
+ * orders 归一化（容错 LLM 写出的宽松形态）：
+ * 实测主 AI 会写 `{ file: "x.png" }`、`{ type: "sketch" }`——一律压成文件名；
+ * 取不到就留空，由 generateOne 跳过并记 warning（不再把 undefined 传给 resolve）。
+ *
+ * ⚠️ 提示词**不在这里改**：禁词清理挪到 generateOne，才能把删掉的片段记进 warning。
+ */
 function normalizeOrders(orders: AssetOrders): AssetOrders {
   return orders.map((o) => {
     const refs = (o as { references?: unknown }).references;
-    let references: AssetReference[] | undefined;
-    if (typeof refs === 'string') references = [{ ref: refs, role: guessRole(refs) }];
-    else if (Array.isArray(refs)) {
-      references = refs.map((r) => {
-        const ref = typeof r === 'string' ? r : (r as AssetReference).ref;
-        const role = typeof r === 'object' && r !== null && (r as AssetReference).role
-          ? (r as AssetReference).role
-          : guessRole(ref);
-        return { ref, role };
-      });
+    let references: string[] | undefined;
+    if (typeof refs === 'string') references = [refs];
+    else if (Array.isArray(refs)) references = refs.map(refOf);
+    else if (refs && typeof refs === 'object') {
+      // 写成单个对象（不是数组）也收——以前会整段被悄悄丢掉
+      references = [refOf(refs)];
     }
-    // 禁词短语清理：否定式免责语（如 'no logos, no watermark'）本身就会触发审核
-    // （BANNED_WORDS 命中，实测）——按逗号/分号拆句移除含禁词的片段。
-    // 移除后仍命中的（句中禁词）由 assertPromptSafe 拦（fail-loud 兜底）。
-    const promptClean = stripBannedPhrases(o.prompt);
-    return { ...o, ...(references ? { references } : {}), prompt: promptClean, size: o.size ?? '2048x2048' };
+    return { ...o, ...(references ? { references } : {}), size: o.size ?? '2048x2048' };
   });
 }
 
 
 export async function generateAssets(opts: GenerateAssetsOptions): Promise<AssetJobResult[]> {
-  const { spec, outDir, force } = opts;
+  const { outDir, workDir, force } = opts;
   const orders = normalizeOrders(opts.orders);
 
   if (!orders.length) {
@@ -239,140 +285,137 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<Asset
 
   // ── 前置检查 ──
 
-  const needsProduct = orders.some((o) => o.references?.some((r) => r.ref === '@product'));
-  if (needsProduct && !opts.productPath) {
-    throw new Error('订单引用了 @product，但没有提供商品照路径（productPath）');
-  }
-
   console.log(`\n[2] 生成素材（${orders.length} 张）`);
   const { getImageGateway } = await import('../../config');
   const gateway = getImageGateway();
 
-  // 提示词语言从订单读（订单自包含，order.ts 生成时写入）——
-  // 参考图角色说明要与提示词同语言，不搞德文前缀接英文正文的混搭。
-  const promptLang = orders.find((o) => o.promptLang)?.promptLang ?? 'en';
-
   const needed = (p: string) => force || !existsSync(p);
-  const sketchPath = resolve(outDir, 'sketch.png');
 
-  // ── 0. 商品抠图（仅当订单引用 @product）──
-  //
-  // ⚠️ 参考图分辨率**不能压**。曾经默认 768px，结果商品上的雕刻小字
-  // 在参考图里根本读不清 → 生成时模型只能编造（畸形/截断/"EMPF…"）。
-  // 裸调实验对照：原样 2.61MB 全分辨率传入，雕刻**逐字全对**（含最小的图标说明）。
-  // 我们把证据弄糊了再让它抄。这里给 2048（照片 1254px 会原样通过，不放大）。
-  let productRef: string | null = null;
-  if (needsProduct && opts.productPath) {
-    console.log('\n[0] 商品素材');
-    const page = await opts.host.newPage();
-    const probe = await prepareProduct(
-      page as unknown as { evaluate: <T>(fn: (a: unknown) => T, a: unknown) => Promise<T> },
-      opts.productPath,
-      2048,
-    );
-    await page.close();
-
-    console.log(`    照片     : ${probe.natural.W}×${probe.natural.H}`);
-    console.log(`    主体边界 : ${probe.bbox.bw}×${probe.bbox.bh}（占宽 ${((probe.bbox.bw / probe.natural.W) * 100).toFixed(1)}%）`);
-    console.log(`    抠图 alpha: 透明 ${(probe.alpha.transparent * 100).toFixed(1)}% / 实体 ${(probe.alpha.opaque * 100).toFixed(1)}% / 过渡 ${(probe.alpha.partial * 100).toFixed(1)}%`);
-    const cutoutPath = resolve(outDir, 'product-cutout.png');
-    writeFileSync(cutoutPath, dataUrlToBuffer(probe.cut));
-    console.log(`    抠图 → ${cutoutPath}`);
-    productRef = probe.ref;
-  }
+  /**
+   * 参考图 → 磁盘路径。
+   * 先按版式目录找，再按工作目录找（用户贴的商品照落在 `<workDir>/uploads/`）；
+   * 只接受工作目录里的文件（商品照就是这样一张普通参考图，不再走专用通道）。
+   *
+   * ⚠️ 一律先 resolve 成绝对路径再比较——`workDir` 可能是相对路径（探针 / 测试），
+   *    直接 startsWith 会把所有参考图都判成"越界"。
+   */
+  const workRoot = resolve(workDir);
+  const workPrefix = workRoot.endsWith(sep) ? workRoot : workRoot + sep;
+  const resolveRef = (ref: string): string | null => {
+    const candidates = isAbsolute(ref) ? [ref] : [resolve(outDir, ref), resolve(workRoot, ref)];
+    for (const p of candidates) {
+      if (existsSync(p) && p.startsWith(workPrefix)) return p;
+    }
+    return null;
+  };
 
   // ── 逐条生成（并发池）──
   // 聊天工具链路一次订单可能是十几张素材：串行 ≈ 15s/张 × N 太慢。
   // 并发池限 3——doubao API 扛得住；更高并发没实测过收益，不赌。
-  // host.newPage 并发开多页安全（共享 context，与多子 agent 并发渲染同机制）。
   const CONCURRENCY = 3;
+  /** 方舟生图接口的参考图上限——我们不再自设更小的硬限制 */
+  const MAX_REFS = 14;
 
   async function generateOne(job: AssetRequest): Promise<AssetJobResult> {
+    if (opts.signal?.aborted) return { file: job.file, ok: false, error: '已取消' };
+
     const target = resolve(outDir, job.file);
     if (!needed(target)) {
       console.log(`    ${job.file} 已存在，跳过`);
       return { file: job.file, ok: true, skipped: true };
     }
 
-    // ── 按**角色**组装参考图 ──
-    // 以前"哪张图是干什么"是手写在提示词散文里的，换用途就得重写；
-    // 现在由角色统一生成说明，且参考图顺序与说明顺序严格一致。
-    const refs: string[] = [];
-    const declared: AssetReference[] = [...(job.references ?? [])];
-    // ⚠️ **默认不带草图**（2026-10-11 改）。
-    //
-    // 旧行为是「没写 useSketchRef 就带草图」，本意是给模型构图参考；
-    // 但实测（gogokids-swim-vest 场景图）**草图上的辅助标记会被当设计画进素材**：
-    //   - 图位里的**中文图层名**（`label()` 画的，如「场景图：湖畔浅水（…）」）
-    //   - 虚线框（`sbox`）、12 等分网格（`sgrid`）
-    // 按 rect 裁切**救不了**——这些标记就画在图位**内部**，裁完照旧在。
-    //
-    // 场景图/环境图本来就该填满图位，构图由 brief 的文字意图描述即可，
-    // 不需要草图。要构图参考的订单**显式**写 `useSketchRef: true` 才带。
-    const hasSketch = declared.some((r) => r.ref === '@sketch');
-    if (!hasSketch && job.useSketchRef === true) {
-      declared.push({ ref: '@sketch', role: 'compose' });
-    }
+    // ── 参考图：解析文件 → 记下「文件名 ↔ 路径」──
+    // 哪张图是干什么的**不在这里判断**——role 已删，提示词自己说。
+    // 这里只负责：文件找得到就用，找不到就跳过并记 warning。
+    const declared = [...(job.references ?? [])];
+    const kept: Array<{ ref: string; path: string; origNo: number }> = [];
+    const warnings: string[] = [];
 
-    for (const r of declared) {
-      if (r.ref === '@product') {
-        if (!productRef) throw new Error(`素材 ${job.file} 引用了 @product，但商品抠图没有产出`);
-        refs.push(productRef);
-        continue;
-      }
-      if (r.ref === '@sketch') {
-        // 按**引用这份素材的 image 节点的 rect** 裁草图——
-        // 只让模型看到"这个图位"的构图，看不到版式的文字占位条。
-        // （实测：整张草图传进去，模型会把文字占位条当设计画进素材。）
-        const owner = spec.layers.find((l) => l.type === 'image' && l.asset === job.file);
-        const region =
-          owner && owner.type === 'image' ? owner.rect : { x: 0, y: 0, w: 1, h: 1 };
-        const ep = await opts.host.newPage();
-        refs.push(
-          await cropToRef(
-            ep as unknown as { evaluate: <T>(fn: (a: unknown) => T, a: unknown) => Promise<T> },
-            sketchPath,
-            region,
-            1536,
-          ),
-        );
-        await ep.close();
-        continue;
-      }
-      const p = resolve(outDir, r.ref);
-      if (!existsSync(p)) {
-        console.log(`    ⚠️ 参考图不存在，忽略：${r.ref}`);
+    // ⚠️ 遍历快照并带**原始编号**：下面会把无效的参考图从 declared 里删掉，
+    //    编号会前移；提示词里写的是原始编号，编译时要用 origNo 换算。
+    const snapshot = [...declared];
+    for (let i = 0; i < snapshot.length; i++) {
+      const r = snapshot[i]!;
+      const ref = typeof r === 'string' ? r.trim() : '';
+      if (!ref) {
+        warnings.push('参考图项为空，已忽略');
+        console.log(`    ⚠️ 参考图项为空，忽略：${JSON.stringify(r)}`);
         declared.splice(declared.indexOf(r), 1);
         continue;
       }
-      const ep = await opts.host.newPage();
-      refs.push(
-        await downscaleToRef(
-          ep as unknown as { evaluate: <T>(fn: (a: unknown) => T, a: unknown) => Promise<T> },
-          p,
-          1024,
-        ),
-      );
-      await ep.close();
+      if (ref.startsWith('@')) {
+        warnings.push(`不认识的引用 "${ref}"（商品照请直接写文件名），已忽略`);
+        console.log(`    ⚠️ 不认识的引用，忽略：${ref}（商品照请直接写文件名）`);
+        declared.splice(declared.indexOf(r), 1);
+        continue;
+      }
+      const p = resolveRef(ref);
+      if (!p) {
+        warnings.push(`参考图不存在，已忽略：${ref}`);
+        console.log(`    ⚠️ 参考图不存在，忽略：${ref}`);
+        declared.splice(declared.indexOf(r), 1);
+        continue;
+      }
+      kept.push({ ref, path: p, origNo: i + 1 });
     }
 
-    // 实测：参考图**最多 2 张**同时传可用。超了要先在 spec 里砍掉。
+    // 参考图**原图直传**（2026-10-21 起不压缩）：
+    //   · 以前压成 JPEG：白底 flatten 会丢 alpha，还会糊掉小字；
+    //   · 现在直接读原字节，mime 按文件头判断。
+    // 代价是请求体变大——下面按 base64 总长度提示，不硬拦。
+    const refs: string[] = [];
+    let refChars = 0;
+    for (const k of kept) {
+      const url = fileDataUrl(k.path);
+      refChars += url.length;
+      refs.push(url);
+    }
+    if (refChars > 120_000_000) {
+      const msg = `参考图 base64 合计 ${(refChars / 1_000_000).toFixed(1)}MB，接近 128MiB 请求体上限（实测 134MB 通过、135MB 返回 413），可能被 API 拒绝`;
+      console.log(`    ⚠️ ${job.file} ${msg}`);
+      warnings.push(msg);
+    }
+
+    // 参考图数量**不设硬上限**（方舟最多 14 张）。超过 2 张只提示、不让整张单失败——
+    // 图越多模型越容易分不清主次，但那是提示词该处理的事，不是硬约束。
     if (refs.length > 2) {
-      console.log(`    ✗ ${job.file} 需要 ${refs.length} 张参考图，实测最多 2 张可用`);
-      console.log('      请减少 references，或分两步生成。');
-      return { file: job.file, ok: false, error: `需要 ${refs.length} 张参考图，实测最多 2 张可用——请减少 references` };
+      const msg =
+        refs.length > MAX_REFS
+          ? `参考图 ${refs.length} 张，超过方舟上限 ${MAX_REFS} 张，可能被 API 拒绝`
+          : `用了 ${refs.length} 张参考图，模型可能分不清主次`;
+      console.log(`    ⚠️ ${job.file} ${msg}`);
+      warnings.push(msg);
     }
 
-    const usesProduct = declared.some((r) => r.ref === '@product');
-    if (usesProduct) warnFidelity(job.prompt, job.file);
+    if (kept.length) warnFidelity(job.prompt, job.file);
 
-    const prompt = buildPrompt(job.prompt, declared, promptLang);
-    assertPromptSafe(job.prompt, job.file);
+    // 禁词片段清理：删了什么要记进 warnings（不再静默改提示词）
+    const { text: safePrompt, removed } = stripBannedPhrases(job.prompt);
+    if (removed.length) {
+      warnings.push(`提示词里删掉了含审核禁词的片段：${removed.join(' / ')}`);
+    }
+    const lang = promptLanguage(safePrompt, job.promptLang);
+    // 原始编号 → 最终编号（参考图被丢掉时后面的会前移）
+    const indexMap = new Map(kept.map((k, i) => [k.origNo, i + 1]));
+    const { text: body, mentioned, unknown } = compileRefMentions(
+      safePrompt,
+      kept.map((k) => k.ref),
+      lang,
+      indexMap,
+    );
+    if (unknown.length) {
+      const list = [...new Set(unknown)].map((n) => `[图片${n}]`).join('、');
+      warnings.push(`提示词里的参考图编号不存在，已保留原文：${list}`);
+      console.log(`    ⚠️ 参考图编号不存在：${list}`);
+    }
+    const prompt = buildPrompt(body, kept.map((k) => k.ref), lang, mentioned);
+    assertPromptSafe(safePrompt, job.file);
     warnPromptStyle(prompt, job.file);
 
     console.log(`\n    ── ${job.file} ──`);
-    console.log(`       参考图 ${refs.length} 张：${declared.map((r) => r.ref + '(' + r.role + ')').join(', ') || '无'}`);
-    console.log(`       提示词 ${prompt.length} 字符（含自动生成的参考图说明 ${prompt.length - job.prompt.length} 字符）`);
+    console.log(`       参考图 ${refs.length} 张：${kept.map((k) => k.ref).join(', ') || '无'}`);
+    console.log(`       提示词 ${prompt.length} 字符（其中图例 ${prompt.length - body.length} 字符）`);
 
     const size = job.size ?? '2048x2048';
 
@@ -381,6 +424,9 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<Asset
     // InputTextSensitiveContentDetected 拦截。这种抖动只能靠重试兜。
     const MAX_ATTEMPTS = 3;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      if (opts.signal?.aborted) {
+        return { file: job.file, ok: false, error: '已取消', ...(warnings.length ? { warnings } : {}) };
+      }
       const t0 = Date.now();
       try {
         const r = await gateway.generate({
@@ -389,22 +435,42 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<Asset
           size,
           count: 1,
           format: 'png',
+          signal: opts.signal,
         });
         const img = r.images[0];
         if (!img) throw new Error('未返回图片');
 
-        const res = await fetch(img.url);
+        const res = await fetch(img.url, { signal: opts.signal });
         if (!res.ok) throw new Error(`下载 HTTP ${res.status}`);
 
         const buf = Buffer.from(await res.arrayBuffer());
+        // ⚠️ 只认 PNG：output_format 有可能被忽略（返回 JPEG），
+        //    按 PNG 头读宽高会得到乱码，还会把 JPEG 存成 .png。
+        if (!(buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)) {
+          return {
+            file: job.file,
+            ok: false,
+            error: `接口返回的不是 PNG（前 4 字节 ${buf.subarray(0, 4).toString('hex')}）`,
+            ...(warnings.length ? { warnings } : {}),
+          };
+        }
         writeFileSync(target, buf);
         console.log(
           `       ✓ ${job.file}  ${buf.readUInt32BE(16)}×${buf.readUInt32BE(20)}  ` +
             `${(buf.length / 1024).toFixed(0)} KB  ${((Date.now() - t0) / 1000).toFixed(0)}s` +
             (attempt > 1 ? `（第 ${attempt} 次尝试）` : ''),
         );
-        return { file: job.file, ok: true, bytes: buf.length };
+        return {
+          file: job.file,
+          ok: true,
+          bytes: buf.length,
+          ...(warnings.length ? { warnings } : {}),
+        };
       } catch (e) {
+        if (opts.signal?.aborted) {
+          console.log(`       ✗ ${job.file} 已取消`);
+          return { file: job.file, ok: false, error: '已取消', ...(warnings.length ? { warnings } : {}) };
+        }
         const msg = (e as Error).message;
         const short = msg.split('\n').filter(Boolean).slice(-1)[0] ?? msg;
         if (attempt < MAX_ATTEMPTS) {
@@ -413,7 +479,12 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<Asset
           await new Promise((r) => setTimeout(r, 1500 * attempt));
         } else {
           console.log(`       ✗ ${job.file} 连续 ${MAX_ATTEMPTS} 次失败：${short.slice(0, 300)}`);
-          return { file: job.file, ok: false, error: short.slice(0, 300) };
+          return {
+            file: job.file,
+            ok: false,
+            error: short.slice(0, 300),
+            ...(warnings.length ? { warnings } : {}),
+          };
         }
       }
     }
@@ -425,16 +496,27 @@ export async function generateAssets(opts: GenerateAssetsOptions): Promise<Asset
   let next = 0;
   async function worker(): Promise<void> {
     while (next < orders.length) {
+      if (opts.signal?.aborted) return;
       const i = next++;
       results[i] = await generateOne(orders[i]).catch((e) => ({
         file: orders[i]!.file,
         ok: false,
         error: String((e as Error).message ?? e),
       }));
+      const r = results[i]!;
+      opts.onProgress?.({
+        file: r.file,
+        index: i + 1,
+        total: orders.length,
+        ok: r.ok,
+        ...(r.skipped ? { skipped: true } : {}),
+        ...(r.error ? { error: r.error } : {}),
+      });
     }
   }
   await Promise.all(
     Array.from({ length: Math.min(CONCURRENCY, orders.length) }, () => worker()),
   );
-  return results;
+  // 取消时未开始的任务是空洞——过滤掉，别让 JSON 里出现 null
+  return results.filter((r): r is AssetJobResult => Boolean(r));
 }

@@ -1,0 +1,15 @@
+{
+  "family": "Noto Serif SC",
+  "dir": "NotoSerifSC",
+  "weights": [400, 700],
+  "files": {
+    "400": "400.woff2",
+    "700": "700.woff2"
+  },
+  "license": "OFL-1.1",
+  "source": "https://github.com/notofonts/noto-cjk",
+  "subset": "SC（简体中文全字库；非拉丁子集）",
+  "scripts": ["hans", "latin"],
+  "character": "中文宋体，横细竖粗、有书写感；适合标题与编辑气质",
+  "bestFor": "杂志、咖啡、展览、文化类标题"
+}

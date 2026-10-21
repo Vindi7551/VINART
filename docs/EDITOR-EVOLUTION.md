@@ -1,49 +1,40 @@
 # 编辑器演进与产品方向（EDITOR-EVOLUTION.md）
 
-> **状态：方案阶段，尚无实现。** `src/editor/` 目录已预留但为空。
+> **状态：M1 / M2 已实现；M3 的「界面那一半」已完成（真模式、图层置顶/置底/锁定仍缺）。**
+> `src/editor/` 已落地——模块清单与两条不变量见 `src/editor/README.md`；
+> 本文负责“为什么这么走”的方案与实测证据，模块细节以那份 README 为准。
 >
 > **这是项目级文档，不是模块说明。** 它记录 Vinart **编辑工具**的现状与走向  
 > **类 PS** 的演进方案 —— 编辑器是本项目的**核心功能**，其演化即产品演化。  
-> 实现开始后，`src/editor/README.md` 才是模块说明；本文负责"为什么这么走"。
 >
 > 本文所有数字与结论均为**实测**，证据索引见 §7。  
-> 术语沿用 `src/workflow/design-sketch/README.md`（「渲染」= 确定性那步；「方案生成」= 调模型那步）。
+> 术语沿用 `src/document/README.md`（「渲染」= 确定性那步；「方案生成」= 调模型那步）。
 
 ---
 
 ## 一、现状：编辑工具的全部代码与文件分布
 
-### 1.0 项目代码地图（**当前真实结构**，2026-10-10 实测）
-
-> ⚠️ 先看这个 —— `CLAUDE.md` 的 Architecture 章节**已严重过时**（详见 §8）。
+### 1.0 项目代码地图（**2026-10-21 实测**）
 
 ```
 src/
-├── config.ts              配置 / 密钥
-├── main.tsx               前端入口
-├── server/                HTTP 面（含 /api/layout/*、/api/sessions/*）
-├── ui/                    前端四栏：会话列表 / 画布 / 检查器 / 对话
-├── preview/               ⚠️ 编辑器相关（§1.1）—— 本层待拆
-├── editor/                ⚠️ 已预留，**空**（§5 的 M1 落点）
-├── designharness/         设计运行时（模型接入 + 上下文 + 会话 + 工具）
-│   ├── context/           上下文（chat-context / compaction / image-context）
-│   ├── gateway/           模型接入（client / provider / registry / fallback / resilience / type）
-│   ├── memory/            ⚠️ 空
-│   ├── session/           会话（chat-session / chat-store / manager / transcript）
-│   ├── skills/            技能（registry 三层来源 / skill-tool / types）
-│   ├── subagent/          子 agent（agent-loop / runner / spawn-tool / design-system）
-│   ├── tools/             工具（design-sketch / generate-assets / render-design /
-│   │                              compile-appearance / **edit-spec** / project-paths）
-│   ├── SESSIONS.md        会话层设计文档
-│   └── SKILLS.md          技能层设计文档（三层来源 + 优先级）
-├── render/                Blink 渲染（只有 blink-renderer.ts）
-├── schema/                ⚠️ **空**（`asset-order.ts` 已移至 `workflow/assetsgen/`）
-└── workflow/              一条工作流一个目录
-    ├── design-sketch/     版式规格 + **渲染真源 `render.ts`**
-    ├── appearance/        外观编译（compile.ts）
-    ├── assetsgen/         素材生成（asset-order / order / image / cutout）
-    └── compose/           组装出图（assemble / emit-html）
+├── config.ts / main.tsx
+├── server/                HTTP 面（/api/layout/* · /api/sessions/* · /api/fs/* · /api/workdirs）
+├── ui/                    前端五栏：工具栏 / 会话列表 / 画布 / 检查器 / 对话
+├── editor/                编辑器（vocab-editor · text-session · inspector · editor-stack …）
+├── designharness/
+│   ├── context/ gateway/ session/ skills/ subagent/
+│   └── tools/             sketch_plan · get_design · patch_doc · generate_assets · skill
+├── document/              vocabulary.ts + README（**唯一文档模型**）
+├── schema/                intent.ts + plan.ts（0–1 契约 / 草图）
+├── render/                vocabulary/emit.ts · rasterize/ · composite/
+└── workflow/
+    ├── assetsgen/         asset-order · image
+    └── translate/
 ```
+
+> 更细的目录与职责见 `CLAUDE.md`「架构」（2026-10-15 实测）。
+> 下面 §1.1 起是 **2026-10-10 的历史快照**（保留作"为什么改"的证据），文件清单已漂移，以本节为准。
 
 ### 1.1 编辑器相关文件清单（2026-10-10 实测行数）
 
@@ -51,6 +42,14 @@ src/
 > `src/preview/{layout-editor-script,interaction-script,extract-elements}.ts`
 > **已于 2026-10-11 随 M1 全部删除**（`src/preview/` 目录已不存在）；
 > `PreviewPanel.tsx` 也已重写为"父侧编辑器宿主"。当前状态看 §5.3 与 `src/editor/README.md`。
+>
+> ⚠️ **2026-10-21 复核（照下表去找文件会扑空，故逐项标注）**：
+> `src/ui/LayerInspector.tsx`、`src/ui/layer-visibility.ts`、`src/designharness/tools/edit-spec.ts`
+> **都已删除**；`designharness/tools/` 现在是
+> `sketch-plan / get-design / patch-doc / generate-assets / project-paths`。
+> `src/ui/types.ts` 仍存在，但**不再导出** `LayoutData` / `LayoutSpec` / `LayerAppearance` 这些旧字段名
+> （现在只有 `Message` / `DelegationRecord` / `ElementInfo` / `PipelineStep` / `SessionItem` / `PreviewData` / `HostSignal`）；
+> `src/ui/EditPanel.tsx` 也还在，但职责已变成**字段面板**（节点级 + 选区级），不再是"图层清单"。
 
 | 文件                                     | 行数   | 角色                                                                                                                          |
 | -------------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -352,7 +351,7 @@ HTML 是 spec 的**有损投影**：文字自适应走了"实测两遍回填 `fi
 > `mix-blend-mode` / `backdrop-filter` / 依赖下层的滤镜是**例外**（分层截图时下层根本不在场）。
 >
 > **★★ 关键补充：这条边界项目里早就写好了 —— 就是契约规则 3。**  
-> `src/workflow/design-sketch/README.md` §3.5 规则 3 原文：  
+> `src/document/README.md` §3.3 规则 3 原文：  
 > 「节点不得依赖父容器来实现自身效果。不能让某个节点的外观靠父级的  
 > `background` / `opacity` / `mix-blend-mode` / `filter`。每个节点必须能被单独截出来而不变样。」  
 > —— **判据与实验结论逐字吻合**（连例外清单都一样）。  
@@ -454,7 +453,7 @@ HTML 是 spec 的**有损投影**：文字自适应走了"实测两遍回填 `fi
 
 ---
 
-## 五、编辑器改造方案（`src/editor/` 重构 · 尚未实现）
+## 五、编辑器改造方案（`src/editor/` 重构 · M1/M2 已实现，M3 进行中）
 
 ### 5.0 一句话
 
@@ -505,6 +504,20 @@ src/editor/                        ← M1 已实现（✅）+ 后续（⏳）
 ├── overlay.ts        ✅ 父文档覆盖层（选中框 / 手柄 / 旋转柄）
 └── commands.ts / state.ts / tools/   ⏳ M2/M3：命令栈 · 工具状态机 · 图层管理
 ```
+
+> ⚠️ **2026-10-16 复核：上面这张模块图是 M1 时期的计划，已和代码漂开 —— 找文件看
+> [`src/editor/README.md`](../src/editor/README.md) 的模块表，那才是当前清单。**
+>
+> - `index.ts` —— **已删除**（旧链的 `createEditor` 入口，随旧契约一起退役）。
+> - `geometry.ts` —— 改名 **`gesture-math.ts`**（同样纯函数、同样可 vitest 直测）。
+> - `target.ts` —— 文件**还在**，但已成**孤儿**：`createTarget()` 零调用，待清理；
+>   新链编辑器 `vocab-editor.ts` 直接从参数拿子文档 root，不再走它。
+> - `commands.ts` / `state.ts` / `tools/` —— 没有按这个名字落地：命令栈是 **`editor-stack.ts`**（M2），
+>   工具枚举与图层管理落在 `ui/tools.tsx` + `vocab-editor.ts`（M3）。
+> - `types.ts` 里**已经没有** `LayerPatch` / `EditorTarget` / `EditorSpec`（旧链类型已删）。
+> - 新链编辑器是 **`vocab-editor.ts`（`createVocabEditor`）**。顺带一个 naming 变化：
+>   旧文档里写的 `layerById` 现在叫 **`elementById`**（= 词汇表的 `findElement`）——
+>   因为 `Layer` 已改指**图层**，旧的"五类节点联合"改名叫 `ElementNode`。
 
 ⭐ **`target.ts` 是架构约束的落点**：它把"目标是谁"抽象掉 —— `Document` / `ShadowRoot` /  
 未来的 canvas 容器都实现同一组方法，编辑器其余部分**不知道差别**。  
@@ -602,11 +615,20 @@ src/editor/                        ← M1 已实现（✅）+ 后续（⏳）
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | **M0 清场** ✅               | 删 `htmlCode` 世代：`interaction-script.ts` / `extract-elements.ts` / `layout-editor-script.ts` + `App.tsx` 的 `htmlCode`/`selectedElements`/`handleExport`                                       | `tsc --noEmit` 0 错；编辑功能不回退（**已随 M1 一起做，2026-10-11**）                                                  |
 | **M1 去注入 + 父侧接管**（**地基**）✅ | 新增 `src/editor/{types,geometry,hit-test,target,overlay,index}`；`PreviewPanel` 改为 iframe `pointer-events:none` + 父侧覆盖层；删两个数据块 / 全部 `ve:*` / postMessage；**sandbox 收紧到 `allow-same-origin`** | **2026-10-11 全绿**：行为契约 20/20、M1 不变量 19/19、几何单测 33/33；① 子文档 `<script>`=0 ② `src/editor/` grep 0 命中 ③ zoom 0.3005/0.2504/0.2087 三档 move+resize 精确 ④ 两段式命中 + 点边线不取消选中 ⑤ 拖出画布仍跟手 |
-| **M2 命令栈**                | `commands.ts` + 事务 + `Cmd/Ctrl+Z` / `Shift+Z`                                                                                                                                          | 拖一次 → 撤销一次回原位；redo 复原；跨工具混用不乱                                                                     |
+| **M2 命令栈** ✅             | `commands.ts` + 事务 + `Cmd/Ctrl+Z` / `Shift+Z`                                                                                                                                          | 拖一次 → 撤销一次回原位；redo 复原；跨工具混用不乱（**已落地为 `editor-stack.ts`，2026-10-16**）                                                                     |
 | **M3 工具状态机 + 图层管理**       | 显式工具枚举 + 光标/快捷键；图层顺序（上移/下移/置顶/置底）、锁定                                                                                                                                                   | 每个工具一条几何断言；图层顺序改动能被导出保留                                                                           |
 | **M4 为 PS 化铺路**           | 层模型加 `backend: 'dom' \| 'raster'`（默认 `dom`）；覆盖层已在父侧                                                                                                                                    | 标记为 raster 的层仍可选中/移动（只是不能改文字）                                                                     |
 
-> **M1 已完成**（2026-10-11）；M2/M3 是"PS 级"的必要件；M4 不做像素编辑，只铺接口。
+> **M1 / M2 已完成**；**M3 的「界面那一半」已完成**（见下），真模式与图层置顶/置底/锁定仍待做；
+> M4 不做像素编辑，只铺接口。
+>
+> **M3 的「界面那一半」已完成**（2026-10-16）：最左**主工具栏**
+> （`ui/ToolBar.tsx` + `ui/tools.tsx`）—— 6 个工具枚举（选择/外观/文字/图片/矢量/图层）
+> + 4 个动作（撤销/重做/保存/出图，**动作只此一处入口**，原来挂在检查器表头）；
+> 检查器改成**页驱动**（选了哪个工具就整块换成那一页的字段，取代原来的手风琴折叠）；
+> 新增入口补齐到**词汇表支持的全部四种几何**（原来只有 `rect`）。
+> ⚠️ **还差的**：每个工具一套指针行为 / 光标 / 快捷键（"**真模式**"，现在只有 `选择`/`矢量`
+> 有模式含义），以及图层的**置顶/置底/锁定**（现在只有 上移/下移/删除）。
 > §5.4 的 D1/D2/D3 已在 M1 中落地：**D1** 手势起点读内部工作副本（不再读 `offsetWidth`，
 > 实测位移从"±1px 量化"变成精确值）；**D2** 一次 `pointerdown…pointerup` 恰好一条 `onChange`
 > （原地单击不发提交）；**D3** `hit-test.ts` 两段式。
@@ -686,7 +708,7 @@ src/editor/                        ← M1 已实现（✅）+ 后续（⏳）
 | `htmlCode` 世代不可达                                | `App.tsx:106` 只赋初值；`:1114` 恒传 `undefined`                                                                                                                                           |
 | 分层栅格化保真度 98.79 %                                | `%TEMP%\vinart-layer-exp\`：`probe.cjs`、`diff-map.png`、`zoom-compare.png`                                                                                                            |
 | 分层性能数据                                          | 同上：`timing2.cjs`、`timing3.cjs`                                                                                                                                                      |
-| 契约规则 3 未被机器强制                                   | `grep mix-blend\|backdrop\|filter\|opacity src/workflow/design-sketch/validate.ts` → 无匹配                                                                                            |
+| 契约规则 3 未被机器强制                                   | `grep mix-blend\|backdrop\|filter\|opacity src/document/validate.ts` → 无匹配                                                                                            |
 | 渲染器不产出跨层效果                                      | `grep -rn "mix-blend\|backdrop-filter" src/workflow/ src/ui/ src/editor/` → 仅注释                                                                                                    |
 | **iframe 内 clientX 是 local 坐标**                 | `%TEMP%\vinart-coord\probe.cjs`（5 场景：scale 1/0.5/0.3/0.4 + 生产 sandbox，全一致）                                                                                                          |
 | **拖拽位移随 zoom 放大 1/zoom 倍**                      | `%TEMP%\vinart-coord\e2e-edit.cjs`（真实脚本 + 真实产物；修前 zoom=0.3 时 Δ=333.3 应为 100，修后 Δ=100）                                                                                               |
@@ -696,7 +718,7 @@ src/editor/                        ← M1 已实现（✅）+ 后续（⏳）
 | **sandbox 可收紧到 `allow-same-origin`**            | `%TEMP%\vinart-coord\probe-sandbox.cjs`：父侧仍可访问 `contentDocument`，子文档脚本**不执行**；现状配置浏览器自报警"can escape its sandboxing"                                                                 |
 | **就地改字与父侧接管不冲突**                                | 同上：父侧聚焦子文档 `contentEditable` 后 `keyboard.type('HELLO')` 写入成功                                                                                                                        |
 | 产物 CSS 里有 `html,body` 规则（**但已证其为冗余**）           | `render.ts:385-386`；产物样式表实测匹配到 2 条；渲染影响见 §4.1 三臂实测                                                                                                                                  |
-| 渲染真源                                            | `src/workflow/design-sketch/render.ts`（`renderDesign`，425 行）                                                                                                                        |
+| 渲染真源                                            | `src/render/declarative/render.ts`（`renderDesign`，425 行）                                                                                                                            |
 
 ---
 
@@ -704,13 +726,15 @@ src/editor/                        ← M1 已实现（✅）+ 后续（⏳）
 
 | 文档                                                    | 关系                                     |
 | ----------------------------------------------------- | -------------------------------------- |
-| `CLAUDE.md`                                           | 项目总览（✅ 已于 2026-10-10 全量重写，与本文一致）       |
-| `src/workflow/design-sketch/README.md`                | 渲染真源所在阶段（spec → HTML，纯函数）。**改那里之前先读它** |
-| `src/workflow/{compose,assetsgen}/README.md`          | 链路上的其它阶段                               |
+| `CLAUDE.md`                                           | 项目总览（✅ 2026-10-15 全量重写）       |
+| `src/document/README.md`                              | 文档模型规范 + **分母表**。**改字段之前先读它** |
+| `src/workflow/assetsgen/README.md`                    | 素材生成阶段                               |
 | `src/designharness/SESSIONS.md`                       | 会话层设计（同类"带状态横幅的设计文档"，格式参照）             |
-| `scripts/_probe-*.ts`                                 | 项目探针惯例；本文实验探针**尚未移植进来**（见 §7 ⚠️）       |
+| `test/*.test.ts` · `scripts/_probe-*.mjs`             | 断言 / 探针惯例                         |
 
-> ⚠️ **实测遗留的文档过时项**：`src/workflow/design-sketch/README.md` §七 仍写  
-> 「`src/schema/` 只剩 `asset-order.ts`」——实际 `src/schema/` **已空**，  
-> `asset-order.ts` 在 `workflow/assetsgen/`。另：`src/schema/` 与 `src/designharness/memory/`  
-> 是**空目录**，用途待定。
+> **2026-10-21 复核**：
+> · 文档模型是 `document/vocabulary.ts`，规范在 `document/README.md`（含分母表）；
+> · 渲染器是 `render/vocabulary/emit.ts` 的 `emitDocument()`；`render/declarative/` 与 `workflow/compose/` 已删除；
+> · `schema/` **存在**（`intent.ts` / `plan.ts`），不是空目录；
+> · `src/workflow/` 只有 `assetsgen/` 与 `translate/`；
+> · `src/bitmap/` 与 `designharness/memory/` 仍是空目录；探针在 `test/*.test.ts` 与 `scripts/_probe-*.mjs`。

@@ -1,12 +1,12 @@
 /**
  * Skill registry —— 三层来源合并：
- * - bundled：代码内置（registerBundledSkill，随产品发；V1 空壳，将来放产品能力说明书）
+ * - bundled：随产品发布（`<repo>/src/designharness/skills/bundled/<name>/SKILL.md`）
  * - project：<workDir>/skills/<name>/SKILL.md（项目级定制，按工作目录隔离）
  * - user   ：~/.vinart/skills/<name>/SKILL.md（用户全局，跨所有工作目录可用）
  *
  * **同名优先级：bundled > project > user**（决策 2026-10-11）：
  * - bundled 最高 = 只读锁定层。产品能力说明书是「产品事实」，不该被用户/项目用一份
- *   写错的版本覆盖 → 防止误导模型。代价：内置技能永远不可被覆盖（想定制只能换名）。
+ *   写错的版本覆盖 → 防止误导模型。它随代码发布、放在仓库里，打包后用户改不到。
  * - project > user = 就近优先。越靠近当前任务（具体项目）越优先，符合「我专门为这个项目
  *   写的就该生效」；user 是全局兜底，同名时让位给更具体的 project。
  * - 不同名时三层**全部生效**，互不干扰；「覆盖」仅在同名时发生。
@@ -15,22 +15,16 @@
  * - chat-store 的 systemNote：renderSkillCatalog() 渲染 <available_skills> 目录
  *   （内容稳定 → prompt cache 前缀命中，skill 集合变化才变字节）
  * - skill 工具（同目录 skill-tool.ts）：getSkill() 按名加载全文
+ *
+ * ⚠️ 三层都是**现场扫目录**（每轮 chat 重扫），改/加/删 skill 文件**下一轮生效**，
+ *    不需要重启 API。
  */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import type { SkillDefinition, SkillFrontmatter, SkillSummary } from './types';
 
-// ── bundled（代码内置）──
-
-const bundled: SkillDefinition[] = [];
-
-/** 内置 skill 注册（模块加载期调用；source 由本函数打上 'bundled'） */
-export function registerBundledSkill(skill: Omit<SkillDefinition, 'source'>): void {
-  bundled.push({ ...skill, source: 'bundled' });
-}
-
-// ── 文件系统来源（project / user 共用扫描）──
+// ── 文件系统来源 ──
 
 const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -51,11 +45,10 @@ function parseFrontmatter(raw: string): { data: SkillFrontmatter; content: strin
 }
 
 /**
- * 扫描一个 skills 根目录（<root>/<name>/SKILL.md），返回其中的 skill。
- * project（<workDir>/skills/）与 user（~/.vinart/skills/）共用本函数，
- * 两者只有根目录与 source 标记不同。
+ * 扫描一个 skills 根目录（<root>/<name>/SKILL.md）。
+ * bundled / project / user 三层共用本函数，只有根目录与 source 标记不同。
  */
-function scanSkillsRoot(root: string, source: 'project' | 'user'): SkillDefinition[] {
+function scanSkillsRoot(root: string, source: SkillDefinition['source']): SkillDefinition[] {
   if (!existsSync(root)) return [];
   const out: SkillDefinition[] = [];
   try {
@@ -89,6 +82,16 @@ function scanSkillsRoot(root: string, source: 'project' | 'user'): SkillDefiniti
   return out;
 }
 
+/**
+ * 产品内置：`<repo>/src/designharness/skills/bundled/<name>/SKILL.md`。
+ * 随代码发布，不放在用户目录——打包后目录只读，用户覆盖不了。
+ */
+const BUNDLED_ROOT = resolve('src/designharness/skills/bundled');
+
+function listBundledSkills(): SkillDefinition[] {
+  return scanSkillsRoot(BUNDLED_ROOT, 'bundled');
+}
+
 /** 项目级：<workDir>/skills/<name>/SKILL.md（按工作目录隔离） */
 function listProjectSkills(workDir: string): SkillDefinition[] {
   return scanSkillsRoot(join(resolve(workDir), 'skills'), 'project');
@@ -108,7 +111,7 @@ function listUserSkills(): SkillDefinition[] {
 export function listSkills(workDir: string): SkillSummary[] {
   const merged: SkillSummary[] = [];
   const seen = new Set<string>();
-  for (const s of [...bundled, ...listProjectSkills(workDir), ...listUserSkills()]) {
+  for (const s of [...listBundledSkills(), ...listProjectSkills(workDir), ...listUserSkills()]) {
     if (seen.has(s.name)) continue;
     seen.add(s.name);
     merged.push(s);
@@ -119,14 +122,14 @@ export function listSkills(workDir: string): SkillSummary[] {
 /** 按名加载完整定义；优先级同 listSkills（bundled > project > user）；不存在返回 null */
 export function getSkill(workDir: string, name: string): SkillDefinition | null {
   return (
-    bundled.find((s) => s.name === name) ??
+    listBundledSkills().find((s) => s.name === name) ??
     listProjectSkills(workDir).find((s) => s.name === name) ??
     listUserSkills().find((s) => s.name === name) ??
     null
   );
 }
 
-// ── 目录内文件读取（file 参数；仅 project / user 层有目录，bundled 无目录）──
+// ── 目录内文件读取（file 参数）──
 
 /**
  * 单个文件读取上限（超出报错，避免撑爆上下文）。
@@ -135,7 +138,7 @@ export function getSkill(workDir: string, name: string): SkillDefinition | null 
  */
 const FILE_MAX_BYTES = 64 * 1024;
 
-/** skill 目录（SKILL.md 所在目录）；bundled 无 path → null */
+/** skill 目录（SKILL.md 所在目录）；没有 path（理论上不会出现）→ null */
 function skillDirOf(skill: SkillDefinition): string | null {
   return skill.path ? dirname(skill.path) : null;
 }

@@ -36,7 +36,14 @@ interface SessionConfig {
 }
 
 /** 工具循环轮数上限：到达后最后一轮不再下发 tools，强制模型文本收尾 */
-const MAX_TOOL_ROUNDS = 6;
+/**
+ * 主 AI 单轮工具轮数上限。
+ *
+ * 设计任务一轮要读 skill（多个文件）+ sketch_plan + get_design + generate_assets
+ * + patch_doc，6 轮会在“素材刚生成、还没挂进 doc”时被强制收尾（2026-10-20 实测）。
+ * 给到 20：够走完一条完整设计链，又不至于无限循环。
+ */
+const MAX_TOOL_ROUNDS = 20;
 
 /**
  * 审计摘录：压平空白 + 超长截断。
@@ -97,8 +104,12 @@ export function createChatSession(config: SessionConfig): ChatSession {
       attachments?: Attachment[],
       opts?: {
         systemNote?: string;
+        /** 当前打开的版式名（来自 /chat 的 activeLayout），传给工具上下文 */
+        activeLayout?: string;
         /** 进度事件回调：工具执行中的中间状态（如子 agent spawn/result）实时上抛 */
         onEvent?: (evt: Record<string, unknown>) => void;
+        /** 思考强度（来自 /chat 的 thinking）；undefined = 不下发，沿用服务端默认 */
+        reasoningEffort?: 'off' | 'low' | 'high' | 'max';
       },
     ) {
       // ── 并发防护 ──
@@ -164,6 +175,7 @@ export function createChatSession(config: SessionConfig): ChatSession {
                 dir: process.cwd(),
                 signal: controller.signal,
                 onEvent: opts?.onEvent,
+                activeLayout: opts?.activeLayout,
               });
               resultContent = (result.isError ? 'ERROR: ' : '') + result.content;
             } catch (e) {
@@ -233,6 +245,7 @@ export function createChatSession(config: SessionConfig): ChatSession {
           for await (const chunk of gateway.stream(requestMessages, {
             temperature,
             maxTokens,
+            reasoningEffort: opts?.reasoningEffort,
             ...(withTools ? { tools: toolDefs } : {}),
           })) {
             // ── 中止检查 ──
@@ -265,7 +278,10 @@ export function createChatSession(config: SessionConfig): ChatSession {
           inDsml = false;
 
           fullContent += stripDsmlBlocks(filteredRound);
-          reasoningText += reasoningRound; // 只累加，不进历史（防自我强化/烧上下文）
+          // ⚠️ DeepSeek 文档要求带 tools 的请求回传历史 reasoning_content；
+          // 2026-10-21 实测 deepseek-flash 省略不报错（HTTP 200），故仍不进历史——
+          // 防自我强化/烧上下文。若将来出现 400，再改为只在当轮 requestMessages 里回传。
+          reasoningText += reasoningRound; // 只累加，不进历史
           if (roundUsage) {
             totalPrompt += roundUsage.promptTokens;
             totalCompletion += roundUsage.completionTokens;

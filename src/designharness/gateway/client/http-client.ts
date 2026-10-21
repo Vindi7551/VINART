@@ -10,10 +10,16 @@ export async function fetchWithTimeout(
   url: string,
   init: RequestInit & { timeout?: number },
 ): Promise<Response> {
-  const { timeout = 60_000, ...fetchInit } = init;
+  const { timeout = 60_000, signal: outer, ...fetchInit } = init;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
+  // 外部取消（用户点停止）与超时共用一个 controller；Node 20+ 不必用 AbortSignal.any
+  const onOuterAbort = () => controller.abort();
+  if (outer) {
+    if (outer.aborted) controller.abort();
+    else outer.addEventListener('abort', onOuterAbort, { once: true });
+  }
 
   try {
     const response = await fetch(url, {
@@ -22,6 +28,7 @@ export async function fetchWithTimeout(
     });
 
     clearTimeout(timer);
+    outer?.removeEventListener('abort', onOuterAbort);
 
     if (!response.ok) {
       // ⚠️ 必须把响应体带出来。
@@ -58,10 +65,12 @@ export async function fetchWithTimeout(
     return response;
   } catch (err) {
     clearTimeout(timer);
+    outer?.removeEventListener('abort', onOuterAbort);
 
     if (err instanceof GatewayError) throw err;
 
     if (err instanceof DOMException && err.name === 'AbortError') {
+      if (outer?.aborted) throw new GatewayError('请求已取消', undefined, false);
       throw new GatewayError(`Request timed out after ${timeout}ms`, undefined, true);
     }
 

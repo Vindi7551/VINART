@@ -1,193 +1,645 @@
-import { useEffect, useRef, useState } from 'react';
-import { LayerInspector } from './LayerInspector';
-import { Button, Hint, ListItem, Panel, PanelBody, PanelHeader } from './primitives';
-import type { LayoutData } from './types';
+import type { ReactNode } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+
+import { fieldsFor, fieldsForLayer, type Field, type SelectionSnapshot } from '../editor/inspector';
+import { findElement, findLayer, type DesignDocument, type ElementNode } from '../document/vocabulary';
+import { LayerThumb, baseCssOf } from './LayerThumb';
+import { SelectionStylePanel } from './SelectionStylePanel';
+import { Button, ContextMenu, Field as FieldRow, FieldGrid, Hint, ListItem, Panel, PanelBody, PanelHeader, Row, Section } from './primitives';
+import { FieldControl, isCheckKind, isWideKind } from './field-control';
+import {
+  IconCurve,
+  IconDown,
+  IconEye,
+  IconEyeOff,
+  IconFont,
+  IconFrame,
+  IconGlyph,
+  IconHistory,
+  IconImage,
+  IconLayers,
+  IconLock,
+  IconParagraph,
+  IconRotate,
+  IconStroke,
+  IconSwatch,
+  IconTrash,
+  IconType,
+  IconUnderline,
+  IconUnlock,
+  IconUp,
+} from './icons';
+import { fieldsOfTool, TOOLS, type ToolId } from './tools';
+import { SHAPE_KINDS } from './tools';
+import type { PreviewData, HostSignal } from './types';
 
 /**
- * 版式编辑面板 —— **独立一栏**（`.inspector-col`，贴在画布右侧），不再与对话同栏。
+ * 版式编辑面板 —— **独立一栏**（`.inspector-col`，贴在画布右侧）。
  *
- * 职责：图层清单 ↔ 选中元素参数 + 保存/重渲。
- * 折叠由**整栏**负责（`.inspector-toggle`），面板内不再有第二层折叠。
- * 表现层全部走 `primitives.tsx` 的基元（样式在 index.css 的 `.ui-*`，token 驱动）。
+ * ## ⭐ 这一版的核心变化：**页驱动，不是手风琴**（2026-10-16）
  *
- * **图层眼睛（2026-10-10）**：清单每行左侧一个可视性开关，只改**画布显示**。
- * 点眼睛**不顺带选中**该行（stopPropagation）；按住 Alt 点 = **独奏**（只看这一层，
- * 再 Alt 点一次还原）。隐藏态与宿主态同在 `hiddenLayers`（**不进 spec**，
- * 见 `layer-visibility.ts`），所以 💾 保存 / ⟳ 重渲都不会把它带进成品图。
+ * 左边工具栏选了哪个工具，这一栏就**整块换成那一页**。原来是把该节点的
+ * **全部字段平铺**、靠"展开/收起"加减（文字节点 36 个字段）。
+ *
+ * 现在两级层次：
+ *
+ * ```
+ * 工具页（左栏选，一次只看一类）
+ *   └── 小节（这一页里的字段分类，带图标 —— 不再折叠）
+ * ```
+ *
+ * | 原来 | 现在 |
+ * |---|---|
+ * | 36 个字段平铺 + 手风琴折叠 | 一页只看一类；`选择`页 6 个、`文字`页 27 个 |
+ * | 字段行/图层行/输入框**内联硬编码**（`#e8f0fe` / `#555`） | 全部走基元层，样式落 `.ui-*` token |
+ * | 图层 18 行 × `上/下/删` 文字按钮 | 图层**限高可滚** + **图标**动作（hover/选中才出现） |
+ * | 撤销/重做/保存/出图 在这里 | **搬到工具栏**（同一动作不留两处入口） |
+ *
+ * ⚠️ 字段清单仍然全部来自 `fieldsFor`（词汇字段的单一真源）—— **这一版只改编排，没动数据**。
+ *
+ * ## ⚠️ 取值一律走 `Field.get`，**不要**自己拿 `path` 去拆
+ *
+ * `Field` 的 `path` 只是**标识**（UI 当 key），**不是取值路径**：
+ * `runs[1].text` 按 `.` 拆出来是 `"runs[1]"`，**不是属性名** ⇒ 取不到（多片段全空框）。
  */
-interface EditPanelProps {
-  layout: LayoutData;
-  selectedLayer: string | null;
-  /** 当前激活的染色词(点图上染色片段切换) */
-  activeWord: string | null;
-  busy: boolean;
-  /** 被隐藏的图层(编辑器视角态,不进 spec) */
-  hiddenLayers: ReadonlySet<string>;
-  onSelectLayer: (id: string) => void;
-  /** 新增高亮词(宿主设为激活) */
-  onActivateWord: (word: string) => void;
-  /** 切换图层可视性(solo = Alt 独奏) */
-  onToggleVisible: (id: string, solo: boolean) => void;
-  /** 全部显示(独奏/多藏之后一键还原) */
-  onShowAll: () => void;
-  /** 参数面板改属性(React 数据 + iframe 由宿主统一转发) */
-  onLayerPatch: (id: string, patch: Record<string, unknown>) => void;
-  onSave: () => void;
-  onRender: () => void;
+
+const TYPE_NAMES: Record<string, string> = {
+  text: '文字',
+  rect: '矩形',
+  ellipse: '椭圆',
+  polygon: '多边形',
+  path: '路径',
+  image: '图片',
+  svg: '图标',
+  group: '组',
+};
+
+/**
+ * 选中项在文档里的位置：所在图层 + 从图层往下的**祖先组**。
+ * 选中元素时用它自动展开图层和沿途的组，把选中的那行露出来。
+ * 选中图层本身 ⇒ groupIds 为空；选中组本身 ⇒ 只展开它的祖先，不展开它自己。
+ */
+function pathOfElement(doc: DesignDocument, id: string): { layerId: string; groupIds: string[] } | null {
+  for (const layer of doc.layers) {
+    if (layer.id === id) return { layerId: layer.id, groupIds: [] };
+    const found = findInElements(layer.elements, id, []);
+    if (found) return { layerId: layer.id, groupIds: found };
+  }
+  return null;
 }
 
-/** 眼睛图标:可见 / 不可见(Lucide `eye` / `eye-off` 路径,描边随 currentColor) */
-function EyeIcon({ hidden }: { hidden: boolean }) {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      {hidden ? (
-        <>
-          <path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" />
-          <path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" />
-          <path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" />
-          <path d="m2 2 20 20" />
-        </>
-      ) : (
-        <>
-          <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
-          <circle cx="12" cy="12" r="3" />
-        </>
-      )}
-    </svg>
-  );
+function findInElements(els: ElementNode[], id: string, ancestors: string[]): string[] | null {
+  for (const e of els) {
+    if (e.id === id) return ancestors;
+    if (e.type === 'group') {
+      const found = findInElements(e.elements, id, [...ancestors, e.id]);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * 小节图标（这一页里的**字段分类**）。
+ *
+ * ⚠️ 分类名是 `inspector.ts` 给的**中文字符串**，这里是一一对应的映射；
+ *    加了分类忘配图标 ⇒ 那一节没图标（不会崩）。
+ */
+const GROUP_ICON: Record<string, ReactNode> = {
+  位置: <IconFrame />,
+  变换: <IconRotate />,
+  内容: <IconType />,
+  字体: <IconFont />,
+  描边: <IconStroke />,
+  排版: <IconParagraph />,
+  沿路径: <IconCurve />,
+  装饰: <IconUnderline />,
+  字形: <IconGlyph />,
+  外观: <IconSwatch />,
+  图片: <IconImage />,
+};
+
+/** 结构性信号的类型（App 负责 seq 包装） */
+export type EditSignal = Omit<HostSignal, 'seq'>;
+
+interface EditPanelProps {
+  layout: PreviewData;
+  selectedLayer: string | null;
+  /**
+   * ⭐ **历史列表**（`historyEntries(stack)` 的结果：升序、`undone` 标灰）。
+   * 栈在宿主的一个 ref 里 ⇒ 宿主靠 `histTick` 的重渲把新列表传下来。
+   */
+  history: Array<{ index: number; label: string; at: number; undone: boolean }>;
+  /** ⭐ 跳到第 index 步（0 = 最初） */
+  onGotoStep: (index: number) => void;
+  /** ⭐ 删掉历史里的第 index 步（右键菜单；不可逆） */
+  onRemoveHistoryStep: (index: number) => void;
+  /**
+   * ⭐ **当前图层**（"新增元素进哪一层"，也是编辑器里唯一能被选中的范围）。
+   *
+   * 与 `selectedLayer` **不是一回事**：点元素时 `selectedLayer` 变、这个**不变**。
+   * 图层行用它画**阴影**（Procreate 那种"我在这层干活"的提示）。
+   */
+  currentLayerId: string | null;
+  /** ⭐ 形状工具当前选的种类（与工具栏右键菜单共用同一个 state） */
+  shapeKind: 'rect' | 'ellipse' | 'polygon' | 'path';
+  onShapeKind: (k: 'rect' | 'ellipse' | 'polygon' | 'path') => void;
+  busy: boolean;
+  /** ⭐ 文字选区快照（在画面上选了字才有）；驱动顶部那一栏"选中的字" */
+  selection?: SelectionSnapshot | null;
+  /** ⭐ 当前工具页（左栏选的）—— 决定这一栏显示哪一类字段 */
+  tool: ToolId;
+  onSelectLayer: (id: string) => void;
+  /** 单字段 patch（path + value）——编辑器内部改 doc，onChange 统一回流 */
+  onLayerPatch: (id: string, path: string, value: unknown) => void;
+  /** ⭐ 给**选中的那几个字**刷样式（path 来自 selectionFields） */
+  onSelectionStyle: (path: string, value: unknown) => void;
+  /** 图层操作信号（增删/排序/撤销/重做） */
+  onSignal: (sig: EditSignal) => void;
+  /** 收起整栏（按钮在面板标题右侧；折叠态的浮标由宿主渲染） */
+  onCollapse?: () => void;
 }
 
 export function EditPanel({
   layout,
   selectedLayer,
-  activeWord,
+  currentLayerId,
+  history,
+  onGotoStep,
+  onRemoveHistoryStep,
+  shapeKind,
+  onShapeKind,
   busy,
-  hiddenLayers,
+  selection,
+  tool,
   onSelectLayer,
-  onActivateWord,
-  onToggleVisible,
-  onShowAll,
   onLayerPatch,
-  onSave,
-  onRender,
+  onSelectionStyle,
+  onSignal,
+  onCollapse,
 }: EditPanelProps) {
-  const lastRectSync = useRef(0);
+  // ⚠️ 找的是**元素**（含嵌套）：`doc.layers` 现在是**图层**，元素在 `Layer.elements` 里。
+  const node = findElement(layout.doc, selectedLayer);
+  /** 选中的是不是**图层本身**（那样面板显示"这张面"的属性，而不是元素的） */
+  const layer = findLayer(layout.doc, selectedLayer);
+  // ⚠️ 面板里**只放「不透明度」**：显示/锁定已经摆在图层行上（像 PS 那样），
+  //    再在属性页里放一遍会让人以为"有两处开关"。字段表里之所以保留它们，
+  //    是因为编辑器的 `patch` 要靠 `findLayerField('visible'|'locked')` 拿到 setter。
+  const layerFields = layer ? fieldsForLayer().filter((f) => f.path !== 'visible' && f.path !== 'locked') : [];
+  /**
+   * **当前图层被锁定了吗** —— 用来把"新增"入口**提前置灰**。
+   * ⚠️ 与 `selectedLayer` 不是一回事：选中的可能是元素，当前图层是另一层。
+   * ⚠️ 不看它的话就是"点了没反应"（编辑器 `addElement` 会拒绝写入）—— 静默失败。
+   */
+  const currentLayerLocked = findLayer(layout.doc, currentLayerId)?.locked === true;
+  /** 缩略图 iframe 的基础样式 + @font-face（从主文档 HTML 里取，避免服务端再发一次） */
+  const baseCss = useMemo(() => baseCssOf(layout.html), [layout.html]);
+  /** 历史行的右键菜单（x/y = 屏幕坐标；index = 哪一步） */
+  const [historyMenu, setHistoryMenu] = useState<{ x: number; y: number; index: number } | null>(null);
+  /**
+   * 图层页的展开状态（**纯 UI**，不持久化；刷新恢复全收起）。
+   * 图层由右键菜单“元素列表”展开；组由**点击组行**展开。
+   */
+  const [expandedLayers, setExpandedLayers] = useState<Set<string>>(() => new Set());
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
+  const [rowMenu, setRowMenu] = useState<{ x: number; y: number; id: string; kind: 'layer' | 'element' } | null>(null);
+  /** 正在行内改名的节点（图层/元素/组） */
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
 
-  // 选中后面板内容(清单 ↔ 检查器)
-  const [mode, setMode] = useState<'list' | 'inspect'>(selectedLayer ? 'inspect' : 'list');
+  const toggleLayer = (id: string) =>
+    setExpandedLayers((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const toggleGroup = (id: string) =>
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  /** 开始行内改名；输入框初值是当前 `name`（空 = 显示 id） */
+  const beginRename = (id: string, kind: 'layer' | 'element') => {
+    const target =
+      kind === 'layer' ? layout.doc.layers.find((l) => l.id === id) : findElement(layout.doc, id);
+    if (!target) return;
+    setRenamingId(id);
+    setRenameValue(target.name ?? '');
+    setRowMenu(null);
+  };
+  /** 提交：空串也交给字段 setter —— 它会把 `name` 删掉，UI 回退显示 id */
+  const commitRename = () => {
+    if (!renamingId) return;
+    const id = renamingId;
+    setRenamingId(null);
+    onLayerPatch(id, 'name', renameValue.trim());
+  };
+  const cancelRename = () => setRenamingId(null);
+
+  const renameInput = () => (
+    <input
+      className="ui-rename-input"
+      autoFocus
+      value={renameValue}
+      placeholder="显示名（空 = 用 id）"
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => setRenameValue(e.target.value)}
+      onBlur={commitRename}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commitRename();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          cancelRename();
+        }
+      }}
+    />
+  );
+
+  /** 选中元素时**自动展开**它所在的图层和沿途的组，把它露出来；之后保持直到手动收起 */
   useEffect(() => {
-    setMode(selectedLayer ? 'inspect' : 'list');
+    if (!selectedLayer) return;
+    const path = pathOfElement(layout.doc, selectedLayer);
+    if (!path) return;
+    // ⚠️ 选中**图层本身**只选中、不展开 —— 元素列表只由右键“元素列表”打开。
+    //    只有选中图层里的**元素/组**时才自动展开，把它露出来。
+    if (path.layerId === selectedLayer) return;
+    setExpandedLayers((prev) => (prev.has(path.layerId) ? prev : new Set(prev).add(path.layerId)));
+    if (path.groupIds.length) {
+      setExpandedGroups((prev) => {
+        let next: Set<string> | null = null;
+        for (const id of path.groupIds) {
+          if (!prev.has(id)) {
+            if (!next) next = new Set(prev);
+            next.add(id);
+          }
+        }
+        return next ?? prev;
+      });
+    }
   }, [selectedLayer]);
+  /** 历史里**当前所在那一步** = 最后一个没被撤销的条目（第 0 条 = 初始状态） */
+  const currentStep = history.reduce((cur, h) => (h.undone ? cur : h.index), 0);
+  const allFields = node ? fieldsFor(node, layout.doc.canvas) : [];
+  const shown = fieldsOfTool(allFields, tool);
+  const toolDef = TOOLS.find((t) => t.id === tool);
 
-  const layer = selectedLayer ? layout.spec.layers.find((x) => x.id === selectedLayer) : undefined;
-  const al =
-    (selectedLayer ? layout.appearance.layers?.[selectedLayer] : undefined) ?? {};
+  /** 这一页里再按 `group` 归拢（保持 `fieldsFor` 给的顺序）—— 页内的小节标题 */
+  const groups: Array<{ title: string; fields: Field[] }> = [];
+  for (const f of shown) {
+    let g = groups.find((x) => x.title === f.group);
+    if (!g) {
+      g = { title: f.group, fields: [] };
+      groups.push(g);
+    }
+    g.fields.push(f);
+  }
+
+  /** ⭐ 唯一取值入口：一律问字段自己（它知道单位、知道片段在哪个数组里） */
+  const valueOf = (f: Field): unknown => (node ? f.get(node) : undefined);
+
+  const commit = (f: Field, value: unknown) => {
+    if (!node) return;
+    onLayerPatch(node.id, f.path, value);
+  };
+
+  /** 图层动作按钮：图标 + tooltip，点的时候别把"选中这一行"也触发了 */
+  const layerAction = (title: string, icon: ReactNode, run: () => void) => (
+    <Button
+      variant="ghost"
+      className="sq tiny"
+      disabled={busy}
+      title={title}
+      onClick={(e) => {
+        e.stopPropagation();
+        run();
+      }}
+    >
+      {icon}
+    </Button>
+  );
+
+  /**
+   * **递归摊开一个容器里的元素**（组里还能是组）。缩进按深度算。
+   *
+   * ⚠️ 倒序：数组后面的画在上面 ⇒ 清单顶部 = 最上层（和图层行一致）。
+   * ⚠️ 只是**面板**展开；画布上"点空白选中某个组"仍只认直接待在图层里的组
+   *    （内层组靠点它的成员来选，走 `outermostGroupOf`）。
+   * ⚠️ 组默认收起；**点组行**才展开它自己的子元素（图层是右键“元素列表”展开）。
+   * ⚠️ 元素/组右键 → “重命名”，和图层行同一套行内输入。
+   */
+  const elementRows = (els: ElementNode[], depth: number): ReactNode =>
+    [...els].reverse().map((e) => {
+      const isGroup = e.type === 'group';
+      const open = isGroup && expandedGroups.has(e.id);
+      return (
+        <div key={e.id}>
+          <ListItem
+            active={selectedLayer === e.id}
+            onClick={() => {
+              onSelectLayer(e.id);
+              if (isGroup) toggleGroup(e.id);
+            }}
+            onContextMenu={(ev) => {
+              ev.preventDefault();
+              setRowMenu({ x: ev.clientX, y: ev.clientY, id: e.id, kind: 'element' });
+            }}
+          >
+            <span className="layer-name layer-name-el" style={{ paddingLeft: 12 + depth * 12 }}>
+              {isGroup ? <span className={`ui-group-caret${open ? ' open' : ''}`}>▸</span> : null}
+              {renamingId === e.id ? (
+                renameInput()
+              ) : (
+                <>
+                  {TYPE_NAMES[e.type] ?? e.type} · {e.name ?? e.id}
+                </>
+              )}
+            </span>
+            {isGroup ? <span className="ui-layer-count">{e.elements.length}</span> : null}
+            <span className="ui-layer-actions">
+              {layerAction('上移一个', <IconUp />, () => onSignal({ type: 'up', id: e.id }))}
+              {layerAction('下移一个', <IconDown />, () => onSignal({ type: 'down', id: e.id }))}
+              {layerAction('删除', <IconTrash />, () => onSignal({ type: 'remove', id: e.id }))}
+            </span>
+          </ListItem>
+          {e.type === 'group' && open ? elementRows(e.elements, depth + 1) : null}
+        </div>
+      );
+    });
 
   return (
     <Panel>
       <PanelHeader
         title="版式编辑"
         subtitle={
-          // 图层信息排在前：窄栏（默认 320px）里会截断，版式名可以让位
-          layer ? (
-            <>
-              <b>{layer.id}</b> <span className="ui-hint">({layer.type})</span>
-              {' · '}
-              {layout.name}
-            </>
-          ) : (
-            layout.name
-          )
+          node
+            ? `${TYPE_NAMES[node.type] ?? node.type} · ${node.name ?? node.id}`
+            : layer
+              ? `图层 · ${layer.name ?? layer.id}`
+              : toolDef?.label
         }
         actions={
-          <>
-            <Button disabled={busy} onClick={onSave}>
-              {busy ? '…' : '💾 保存'}
-            </Button>
-            <Button disabled={busy} onClick={onRender}>
-              {busy ? '…' : '⟳ 重渲'}
-            </Button>
-          </>
+          onCollapse ? (
+            <button
+              type="button"
+              className="panel-collapse-btn"
+              onClick={onCollapse}
+              title="收起版式编辑"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <rect x="1.5" y="2.5" width="13" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
+                <line x1="10.5" y1="4" x2="10.5" y2="12" stroke="currentColor" strokeWidth="1.5" />
+              </svg>
+            </button>
+          ) : undefined
         }
       />
-      <PanelBody>
-        {mode === 'list' || !layer ? (
-          <>
-            <Hint>
-              图层({layout.spec.layers.length})——点击选中,图上直接拖拽/改字
-              {hiddenLayers.size > 0
-                ? `;已隐藏 ${hiddenLayers.size}(Alt+点眼睛 = 只看这一层)`
-                : ''}
-            </Hint>
-            {hiddenLayers.size > 0 && <Button onClick={onShowAll}>全部显示</Button>}
-            {layout.spec.layers.map((l) => {
-              const hidden = hiddenLayers.has(l.id);
-              return (
-                <ListItem
-                  key={l.id}
-                  active={l.id === selectedLayer}
-                  className={hidden ? 'layer-hidden' : undefined}
-                  onClick={() => onSelectLayer(l.id)}
+      <PanelBody className={tool === 'layers' ? 'ui-panel-body--fill' : undefined}>
+        {/* ⭐ 画面上选了字 ⇒ 最上面先摆"选中的字"。
+            它是**片段级**样式（只改那几个字），与下面的**节点级**表单是两回事，
+            所以独立一块、置顶、带强调色 —— 免得让人以为下面那些框也改的是这几个字。 */}
+        <SelectionStylePanel selection={selection ?? null} onStyle={onSelectionStyle} />
+
+        {/* 这一页能"新增"什么（新增入口跟着工具走，工具栏就不必塞 7 个按钮） */}
+        {toolDef?.adds?.length ? (
+          <Section title="新增" icon={toolDef.icon} collapsible={false}>
+            <Row>
+              {toolDef.adds.map((a) => (
+                <Button
+                  key={a.signal}
+                  disabled={busy || currentLayerLocked}
+                  title={
+                    currentLayerLocked
+                      ? `当前图层「${currentLayerId ?? ''}」已锁定 —— 先在图层面板解锁`
+                      : `新增${a.label}`
+                  }
+                  onClick={() => onSignal({ type: a.signal })}
                 >
-                  <button
-                    type="button"
-                    className={`layer-eye${hidden ? ' off' : ''}`}
-                    aria-pressed={hidden}
-                    title={
-                      hidden
-                        ? '显示该图层（Alt+点击：只看这一层）'
-                        : '隐藏该图层（Alt+点击：只看这一层）'
-                    }
-                    onClick={(e) => {
-                      // 点眼睛只切可视性,不该顺带把这一行选中(否则面板会跳进检查器)
-                      e.stopPropagation();
-                      onToggleVisible(l.id, e.altKey);
+                  {a.icon} {a.label}
+                </Button>
+              ))}
+            </Row>
+          </Section>
+        ) : null}
+
+        {/* ⭐ **形状页：先选种类**（与工具栏右键菜单改的是同一个 state）。
+            ⚠️ 这一行不是"元素的字段"，所以不进下面的字段网格 —— 它是**创建时**用的参数。 */}
+        {tool === 'shape' ? (
+          <Section
+            title={`形状 · 当前：${SHAPE_KINDS.find((k) => k.id === shapeKind)?.label ?? ''}`}
+            icon={<IconFrame />}
+            collapsible={false}
+          >
+            <Row>
+              {SHAPE_KINDS.map((k) => (
+                <Button key={k.id} disabled={busy} title={`画${k.label}`} onClick={() => onShapeKind(k.id)}>
+                  {k.id === shapeKind ? `● ${k.label}` : k.label}
+                </Button>
+              ))}
+            </Row>
+            {currentLayerLocked ? (
+              <Hint>
+                当前图层「{currentLayerId ?? ''}」已锁定 ⇒ 画布上拖不出东西。先在图层面板点亮 🔒 解锁。
+              </Hint>
+            ) : null}
+            {/* ⚠️ 这里**不再有「新增」按钮**（2026-10-17 用户定）：形状一律**拖画**出来。
+                那个按钮用的是写死坐标（当年给 900×600 试的），在别的画布尺寸下位置都不对，
+                而且和拖画是**两条做同一件事的路** ⇒ 删掉。 */}
+          </Section>
+        ) : null}
+
+        {/* ⭐ **历史页**（PS「历史记录」）：列出每一步，点任意一条跳过去。
+            `undone` 的（= 已经撤销掉的）灰掉 —— 点它们就等于重做回去 ✓ */}
+        {tool === 'history' ? (
+          <Section title="历史记录" icon={<IconHistory />} count={history.length} collapsible={false}>
+            <div className="ui-layer-list">
+              {history.map((h) => (
+                <ListItem key={h.index} active={h.index === currentStep} onClick={() => onGotoStep(h.index)}>
+                  <span
+                    className={`layer-name${h.undone ? ' is-undone' : ''}`}
+                    // ⭐ 右键 ⇒ 删除这条历史（PS 历史记录里的 Delete）
+                    // ⚠️ 第 0 条是初始状态，不是 command，不能删
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      if (h.index === 0) return;
+                      setHistoryMenu({ x: e.clientX, y: e.clientY, index: h.index });
                     }}
+                    title={h.index === 0 ? '初始状态（不可删除）' : '右键：删除这条历史'}
                   >
-                    <EyeIcon hidden={hidden} />
-                  </button>
-                  <span className="layer-name">
-                    <b>{l.id}</b> <span className="ui-hint">{l.type}</span>
+                    {h.index}. {h.label}
                   </span>
                 </ListItem>
-              );
-            })}
-          </>
-        ) : (
-          <>
-            <Button variant="ghost" onClick={() => setMode('list')}>
-              « 图层清单
-            </Button>
-            <LayerInspector
-              layer={layer}
-              appearance={al}
-              activeWord={activeWord}
-              onActivateWord={onActivateWord}
-              palette={
-                typeof layout.appearance.palette === 'object' && layout.appearance.palette
-                  ? (layout.appearance.palette as Record<string, string>)
-                  : {}
-              }
-              onPatch={(patch) => {
-                // 抑制高频重复(rect 拖拽同步),30ms 内只发一次同 id patch
-                const now = Date.now();
-                if (now - lastRectSync.current < 30 && 'rect' in patch) return;
-                lastRectSync.current = now;
-                onLayerPatch(layer.id, patch);
-              }}
-            />
-          </>
-        )}
+              ))}
+            </div>
+            {historyMenu ? (
+              <ContextMenu
+                x={historyMenu.x}
+                y={historyMenu.y}
+                items={[
+                  {
+                    key: 'del',
+                    label: `删除这条历史（第 ${historyMenu.index} 步）`,
+                    onPick: () => {
+                      onRemoveHistoryStep(historyMenu.index);
+                      setHistoryMenu(null);
+                    },
+                  },
+                ]}
+                onClose={() => setHistoryMenu(null)}
+              />
+            ) : null}
+            {history.length <= 1 ? (
+              <Hint>还没有任何编辑 —— 改点东西就会出现在这里（第 0 条是打开时的初始状态）。</Hint>
+            ) : (
+              <Hint>灰掉的是已撤销的步骤，点一下就能重做回去；第 0 条是初始状态，可点、不可删。</Hint>
+            )}
+          </Section>
+        ) : null}
+
+        {/* ── 图层页：**两级**清单（图层 ▸ 元素）。────────────────────────
+             结构是「画布 → 图层 → 元素」（见 `vocabulary.ts` 文件头）：`doc.layers` 是**图层**，
+             元素在 `Layer.elements` 里。倒序 = 最上层在顶部。
+             ⚠️ 组里的元素（组内元素）这一版还不在清单里 —— 那要递归展开，属第二步。 */}
+        {tool === 'layers' ? (
+          <div className="ui-layer-page">
+          <Section title="图层" icon={<IconLayers />} count={layout.doc.layers.length} collapsible={false}>
+            {/* ⭐ 新建图层：追加到最上层并选中它。
+                ⚠️ 这建的是**图层**（画布的孩子）；"新增元素"在各自的工具页里（进第一个图层）。 */}
+            <Row>
+              <Button disabled={busy} title="新建一个空图层（追加到最上层）" onClick={() => onSignal({ type: 'new-layer' })}>
+                ＋ 新建图层
+              </Button>
+            </Row>
+            <div className="ui-layer-list">
+              {[...layout.doc.layers].reverse().map((L) => (
+                <div key={L.id} className={`ui-layer-block${L.id === currentLayerId ? ' is-current' : ''}`}>
+                  <ListItem
+                    className="ui-layer-row"
+                    active={selectedLayer === L.id}
+                    onClick={() => onSelectLayer(L.id)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setRowMenu({ x: e.clientX, y: e.clientY, id: L.id, kind: 'layer' });
+                    }}
+                  >
+                    <LayerThumb layer={L} doc={layout.doc} assets={layout.assets} baseCss={baseCss} />
+                    {renamingId === L.id ? (
+                      renameInput()
+                    ) : (
+                      <span className="layer-name layer-name-layer">图层 · {L.name ?? L.id}</span>
+                    )}
+                    <span className="ui-layer-count">{L.elements.length}</span>
+                    <span className="ui-layer-actions">
+                      {/* ⭐ **显示 / 锁定 就摆在这一行**（像 PS 的图层行），不藏在属性页里 */}
+                      {layerAction(
+                        L.visible === false ? '显示这个图层' : '隐藏这个图层',
+                        L.visible === false ? <IconEyeOff /> : <IconEye />,
+                        () => onLayerPatch(L.id, 'visible', L.visible === false),
+                      )}
+                      {layerAction(L.locked ? '解锁' : '锁定（锁住的图层里元素不能改）', L.locked ? <IconLock /> : <IconUnlock />, () =>
+                        onLayerPatch(L.id, 'locked', !L.locked),
+                      )}
+                      {layerAction('上移一层', <IconUp />, () => onSignal({ type: 'up', id: L.id }))}
+                      {layerAction('下移一层', <IconDown />, () => onSignal({ type: 'down', id: L.id }))}
+                      {layerAction('删除', <IconTrash />, () => onSignal({ type: 'remove', id: L.id }))}
+                    </span>
+                  </ListItem>
+                  {/* ⭐ 图层默认**不展开**；右键“元素列表”才把这一层的元素放出来。
+                      组再各自点开（见 `elementRows` 的 `expandedGroups`）。 */}
+                  {expandedLayers.has(L.id) ? elementRows(L.elements, 1) : null}
+                </div>
+              ))}
+            </div>
+            {rowMenu ? (
+              <ContextMenu
+                x={rowMenu.x}
+                y={rowMenu.y}
+                items={
+                  rowMenu.kind === 'layer'
+                    ? [
+                        {
+                          key: 'elements',
+                          label: expandedLayers.has(rowMenu.id) ? '收起元素列表' : '元素列表',
+                          onPick: () => {
+                            toggleLayer(rowMenu.id);
+                            setRowMenu(null);
+                          },
+                        },
+                        {
+                          key: 'rename',
+                          label: '重命名',
+                          onPick: () => beginRename(rowMenu.id, 'layer'),
+                        },
+                      ]
+                    : [
+                        {
+                          key: 'rename',
+                          label: '重命名',
+                          onPick: () => beginRename(rowMenu.id, 'element'),
+                        },
+                      ]
+                }
+                onClose={() => setRowMenu(null)}
+              />
+            ) : null}
+          </Section>
+          </div>
+        ) : null}
+
+        {/* ── 这一页的字段（页内小节不折叠 —— 页本身就是"一次只看一类"）── */}
+        {tool !== 'layers' ? (
+          // ⭐ 选中的是**图层** ⇒ 显示"这张面"自己的属性（底色 / 旋转 / 不透明度）。
+          //    图层的字段表在 `inspector.fieldsForLayer()`，控件与元素**共用** `FieldControl`。
+          layer ? (
+            <Section title="图层" icon={<IconLayers />} count={layerFields.length} collapsible={false}>
+              <FieldGrid>
+                {layerFields.map((f) => (
+                  <FieldRow
+                    key={f.path}
+                    label={f.label}
+                    className={`${isWideKind(f.kind) ? 'wide' : ''}${isCheckKind(f.kind) ? ' check' : ''}`.trim()}
+                  >
+                    <FieldControl
+                      kind={f.kind}
+                      value={f.get(layer)}
+                      disabled={busy}
+                      onCommit={(v) => onLayerPatch(layer.id, f.path, v)}
+                    />
+                  </FieldRow>
+                ))}
+              </FieldGrid>
+            </Section>
+          ) : node ? (
+            shown.length ? (
+              groups.map((g) => (
+                <Section key={g.title} title={g.title} icon={GROUP_ICON[g.title]} count={g.fields.length} collapsible={false}>
+                  <FieldGrid>
+                    {g.fields.map((f) => (
+                      <FieldRow
+                        key={f.path}
+                        label={f.label}
+                        className={`${isWideKind(f.kind) ? 'wide' : ''}${isCheckKind(f.kind) ? ' check' : ''}`.trim()}
+                      >
+                        <FieldControl kind={f.kind} value={valueOf(f)} disabled={busy} onCommit={(v) => commit(f, v)} />
+                      </FieldRow>
+                    ))}
+                  </FieldGrid>
+                </Section>
+              ))
+            ) : (
+              <Hint>
+                「{toolDef?.label}」这一页里没有这个元素的字段 —— {toolDef?.hint}
+              </Hint>
+            )
+          ) : (
+            <Hint>点画布或「图层」页，选中一个元素</Hint>
+          )
+        ) : null}
       </PanelBody>
     </Panel>
   );
