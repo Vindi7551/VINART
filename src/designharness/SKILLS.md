@@ -5,25 +5,29 @@
 > + `skills/types.ts`（类型）+ `skills/skill-tool.ts`（模型加载工具）。
 > **消费方**：`src/server/index.ts` 的 `buildSystemNote()` 注入目录；`session/chat-store.ts` 挂 `skill` 工具。
 
-## 0. 语义：skill = 「指令文档 + 附属资产 + 工具面声明」的可插拔领域包
+## 0. 语义：skill = 领域知识包；工具面归宿主
+
+**两类 skill，边界不同：**
+
+- **capability skill（bundled）**：产品能力手册，可以写工具名、字段名、占位符、模型限制、文件约定；随代码发布，版本与工具一起走。
+- **domain skill（project / user）**：领域知识，**必须工具无关**——只写设计判断与流程阶段，不写工具名、宿主字段名、资源名。判断标准：换一个宿主，这句话还成立吗？
 
 与 chat 工具（`AgentTool`）的分工：
 
 - **工具 = 能力（手）**：模型调用的函数，宿主执行，返回产物。
-- **skill = 知识（脑）**：模型加载的领域指令，读后自己组织**既有工具**完成任务。
+- **skill = 知识（脑）**：模型加载的领域指令；**工具选择由宿主/模型按 tool description 完成**，domain skill 不替宿主做路由。
 
-skill **不注册**新的模型工具 schema——它授权/编排工具表里已有的工具。这决定了它的存在形态：
-**一份 markdown 指令**，而不是一段代码逻辑。
+skill **不注册**新的模型工具 schema——它不改变工具表。capability skill 可以说明工具怎么用；domain skill 只说明这个领域怎么做。
 
 ## 1. 三层来源
 
 skill 从三个地方来，合并后暴露给模型：
 
-| 来源 | 位置 | 全局可用 | 载体 | 谁维护 |
-|---|---|---|---|---|
-| `bundled` | `<repo>/src/designharness/skills/bundled/<name>/SKILL.md` | ✅ | 文件（随代码发布） | 产品开发者 |
-| `project` | `<workDir>/skills/<name>/SKILL.md` | ❌ 按工作目录隔离 | 文件 | 用户（某项目） |
-| `user` | `~/.vinart/skills/<name>/SKILL.md` | ✅ | 文件 | 用户（全局） |
+| 来源 | 位置 | 全局可用 | 载体 | 谁维护 | 允许知道工具吗 |
+|---|---|---|---|---|---|
+| `bundled` | `<repo>/src/designharness/skills/bundled/<name>/SKILL.md` | ✅ | 文件（随代码发布） | 产品开发者 | ✅ 可以（能力手册） |
+| `project` | `<workDir>/skills/<name>/SKILL.md` | ❌ 按工作目录隔离 | 文件 | 用户（某项目） | ❌ 不可以（领域知识） |
+| `user` | `~/.vinart/skills/<name>/SKILL.md` | ✅ | 文件 | 用户（全局） | ❌ 不可以（领域知识） |
 
 ```
 src/designharness/skills/bundled/<name>/SKILL.md   产品级——随代码发布（用户改不到）
@@ -49,9 +53,13 @@ user     ── 最低，全局兜底
 - **`bundled` 最高 = 只读锁定层。** `bundled` 装的是**产品能力说明书**（如渲染工具怎么用），
   这类内容是「**产品事实**」，用户拿一份写错的版本覆盖它只会误导模型 → 锁定不可覆盖。
   代价：内置技能永远改不了（想定制只能换名，代价是目录里并存两个）。
-  此代价实际很小——内置只放少量说明书、名字独特（如 `vinart-render-guide`），几乎不撞名。
+  此代价实际很小——内置只放少量说明书、名字独特（如 `layout-planning`），几乎不撞名。
 - **`project > user` = 就近优先。** 越靠近当前任务（具体项目）越优先，符合「我专门为这个项目
   写的就该生效」；`user` 是全局兜底，同名时让位给更具体的 `project`。
+
+> **耦合边界（2026-10-22）：** `bundled` 是产品能力手册，可以知道工具；`project` / `user`
+> 是领域知识，**不得出现工具名、宿主字段名、资源名**。否则 skill 会绑死在某个宿主的工具表上，
+> 工具一改就漂移——这类内容应放 `bundled` 或 tool description，不能放用户/项目 skill。
 
 ## 3. 加载链路（目录 + 按需，正文不常驻上下文）
 
@@ -80,7 +88,7 @@ listSkills(workDir)                 ← 三层合并（同名取高优先级）
 ```markdown
 ---
 name: amazon-listing
-description: 亚马逊 listing 套图全流程：产品照+五点描述 → 结构化分析 → … → spawn 出草案
+description: 亚马逊 listing 套图全流程：产品照+五点描述 → 结构化分析 → … → 输出内容方案
 whenToUse: 用户要为亚马逊产品设计 listing 套图、提到五点描述/主图/副图/套图时
 ---
 
@@ -120,6 +128,19 @@ whenToUse: 用户要为亚马逊产品设计 listing 套图、提到五点描述
 
 > 领域知识（Amazon listing / eBay / Etsy 方法论）应走**用户全局层**，不进 `bundled`——
 > `bundled` 的正当用途是「产品自身能力说明书」，把业务领域知识塞进去是层次混淆。
+
+**纯净规则（project / user）：**
+
+- 不写工具名（如 `sketch_plan` / `patch_doc` / `generate_assets` / `get_design`）；
+- 不写宿主字段名（如字号比例、画布底色、裁切方式等 schema 字段）；
+- 不写宿主资源名（字体 family、占位符、素材文件约定、模型名、像素下限）；
+- 用阶段语言：「落版 / 调外观 / 素材阶段」；具体用哪个工具由宿主决定。
+- **探针**：`scripts/_probe-skill-purity.mjs` 会扫描 `skills/**/*.md` 的 denylist，命中即失败；
+  `_probe-skill-links.mjs` 校验所有相对引用文件存在。
+
+**不要手维护两份副本：** 同一个 skill 若同时在 `<workDir>/skills/` 与 `~/.vinart/skills/`
+存在，`project` 会遮蔽 `user`——改一份，另一份不会变。以仓库的 `skills/` 为源，
+用安装/同步流程复制到用户层；不要在两边分别手改。
 
 ## 7. 已知缺口
 

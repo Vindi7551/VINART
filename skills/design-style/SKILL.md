@@ -9,7 +9,7 @@ whenToUse: 用户说"做成杂志感 / 高级感 / 复古 / 街头 / 自然 / �
 **风格 = 一小组视觉决定的一致性**，不是一套固定参数。
 
 本 skill 只给**倾向、边界、反模式**：
-不锁死 hex、不锁死 `fontFamily`、不锁死坐标。  
+不锁死 hex、不锁死字体、不锁死坐标。
 同一个风格，换产品、换内容，应该长得不一样。
 
 ### 和其他 skill 的分工
@@ -23,7 +23,7 @@ whenToUse: 用户说"做成杂志感 / 高级感 / 复古 / 街头 / 自然 / �
 
 ```
 定风格（本 skill）→ 风格 brief → design-direction 列内容清单 / 选结构
-→ sketch_plan → generate_assets / patch_doc
+→ 版式阶段 → 素材 / 外观阶段
 ```
 
 ---
@@ -51,11 +51,7 @@ whenToUse: 用户说"做成杂志感 / 高级感 / 复古 / 街头 / 自然 / �
 | `styles/retro.md` | 复古：年代配色、颗粒、徽章、粗衬线 | 怀旧、食品、活动、联名 |
 | `styles/tech.md` | 科技：深底、冷色、网格、等宽字 | 数码、SaaS、未来感 |
 
-读法：
-
-```
-skill({ name: 'design-style', file: 'styles/editorial.md' })
-```
+读法：直接打开 `styles/editorial.md` 这样的对应文件。
 
 **一次只读当前主风格**；有调味风格再读第二份。
 
@@ -67,9 +63,7 @@ skill({ name: 'design-style', file: 'styles/editorial.md' })
 当用户点名 **Bauhaus / Art Deco / Swiss / Constructivist / Memphis / Y2K** 等，
 或当代方向需要历史依据时，读：
 
-```
-skill({ name: 'design-style', file: 'references/history.md' })
-```
+`references/history.md`
 
 规则：
 
@@ -85,9 +79,9 @@ skill({ name: 'design-style', file: 'references/history.md' })
 风格：editorial（70%）+ organic（30%）
 关键词：克制、纸张感、晨光
 色彩：暖白底 / 近黑墨 / 赭石强调 / 灰褐弱化（给角色，不锁死 hex）
-字体性格：高对比衬线标题 + 中性黑体正文（候选：Noto Serif SC / Noto Sans SC）
+字体性格：高对比衬线标题 + 中性黑体正文（具体字体从可用字体里选）
 构图：密度中低，留白约 30%，12 栏，文字右下
-图像/材质：纸张纹理、侧窗光、轻微颗粒（写进生图提示词）
+图像/材质：纸张纹理、侧窗光、轻微颗粒（交给素材阶段）
 装饰：细线 + 小标签，不用卡片阴影
 禁止：纯白底、荧光色、居中对称、四种以上颜色
 允许偏离：主标题可以故意压出网格半格
@@ -95,19 +89,16 @@ skill({ name: 'design-style', file: 'references/history.md' })
 
 **brief 是给后续步骤看的约束，不是最终文案。**
 
-### 第 4 步 · 落到当前 doc
+### 第 4 步 · 交接
 
-| 要落的东西 | 用什么 |
+| 要交接的东西 | 交给 |
 |---|---|
-| 背景 / 墨色 / 强调 / 弱化 | `patch_doc` 的 `fill` |
-| 字体性格 | `patch_doc` 的 `fontFamily` / `weight` / `letterSpacing`（只用【字体库】里的 family） |
-| 结构 / 构图 | `design-direction` 的结构 |
-| 纹理 / 光线 / 场景 | `generate_assets` 的生图提示词 |
-| 装饰线 / 框 / 圆点 | `shape`（rect / ellipse） |
-| 旋转 / 透明度 | `patch_doc` 的 `rotate` / `opacity` |
+| 色彩 / 字体 / 密度 / 材质 | style brief |
+| 结构 / 构图 | `design-direction` |
+| 素材 / 光线 / 场景 | 素材阶段 |
+| 装饰 / 旋转 / 透明度 | 外观阶段（按当前阶段能力处理） |
 
-⚠️ 当前**做不了**：阴影、圆角、混合模式、文字旋转、网格渐变。
-不要为了“风格”承诺这些字段——写了也不会生效。
+**风格 skill 只输出方向与 brief，不直接改版式。**
 
 ### 反模式（出现任意一条就不合格）
 

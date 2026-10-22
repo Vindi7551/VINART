@@ -30,7 +30,8 @@ text:  { type:'text', name, rect:{x,y,w}, align?, fontScale?, wrap?, placeholder
 
 image: { type:'image', name, rect:{x,y,w,h}, asset?, fit? }
        asset 缺省 @placeholder；素材生成后用 patch_doc 指向文件名；
-       fit: cover（默认，铺满裁切）| contain（完整放入）| fill（拉伸）。
+       fit: cover（写真实素材时默认，铺满裁切）| contain（完整放入）| fill（拉伸）。
+       ⚠️ 占位图默认完整放入（contain）；换成真实素材后想铺满，要显式确认裁切方式。
 
 svg:   { type:'svg', name, rect:{x,y,w,h}, asset? }
        线框图标用；fill 用来染色（SVG 内部用 currentColor）。
@@ -64,7 +65,7 @@ shape: { type:'shape', kind:'rect'|'ellipse', name, rect:{x,y,w,h} }
 plan 允许没有 `image`：
 
 - **0 图**：全 `text` + `shape`（纯字体海报 / 引言 / 展览信息）；
-- **1 图**：`split-panel`（左文右图）或 `hero-overlay`；
+- **1 图**：`split`（左文右图）或 `full-bleed`（满幅图 + 压暗）；
 - **几何 / 图形**：`shape` + `svg` 也能当主视觉，不必硬塞照片。
 
 > 不要为了“画面不空”硬加一张照片；先问这张图承担什么任务。
@@ -88,3 +89,7 @@ plan 允许没有 `image`：
   都用它，**不要假设 active 已经切过去**。
 - plan 落成的是草稿：颜色、字体、素材后续用 `patch_doc` 改；
   换素材不要重跑 `sketch_plan`。
+
+## 完整示例
+
+7 套骨架的完整 plan 示例见 `examples.md`；字段名与约束以本文件为准。

@@ -1,11 +1,15 @@
 /**
  * Skill 类型 —— 对齐 claude-code / harness 的 Agent Skills 概念：
- * skill = 「指令文档 + 附属资产 + 工具面声明」的可插拔领域包。
+ * skill = 「领域知识 + 附属资产」的可插拔领域包。
+ *
+ * 两类边界（2026-10-22 决策 A）：
+ * - **capability skill（bundled）**：产品能力手册，可以写工具名 / 字段 / 限制；
+ * - **domain skill（project / user）**：领域知识，必须工具无关，不点名宿主工具。
  *
  * 与 chat 工具（AgentTool）的分工：
  * - 工具 = 能力（手）：模型调用的函数，宿主执行，返回产物
- * - skill = 知识（脑）：模型加载的领域指令，读后自己组织既有工具完成任务
- * skill 不注册新的模型工具 schema——它授权/编排工具表里已有的工具。
+ * - skill = 知识（脑）：模型加载的领域指令；工具选择由宿主/模型按 tool description 完成
+ * skill 不注册新的模型工具 schema——它不改变工具表。
  */
 
 /** 目录摘要（模型路由用：判断任务是否匹配某 skill） */
