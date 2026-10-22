@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Markdown } from './Markdown';
 import {
   ComposerInput,
@@ -8,6 +8,8 @@ import {
 } from './ComposerInput';
 import type { Message, ThinkingLevel } from './types';
 import { ThinkingControl } from './ThinkingControl';
+import { ToolGroup } from './ToolParts';
+import type { TurnPart, TurnToolPart } from '../designharness/session/turn-parts';
 
 /**
  * 右栏对话面板 —— 消息流 + **单卡片式输入区**。
@@ -126,6 +128,45 @@ function ReasoningBlock({ text, streaming }: { text: string; streaming?: boolean
   );
 }
 
+/**
+ * 有序 parts：文本段 / 每轮思考 / 连续工具组按发生顺序渲染。
+ * 连续 tool part 合并成一个 `ToolGroup`；文本段之间不再拆成多条消息。
+ */
+function AssistantParts({ parts, streaming }: { parts: TurnPart[]; streaming?: boolean }) {
+  const nodes: ReactNode[] = [];
+  let tools: TurnToolPart[] = [];
+  const flush = () => {
+    if (!tools.length) return;
+    nodes.push(<ToolGroup key={`tools-${nodes.length}`} tools={tools} />);
+    tools = [];
+  };
+
+  parts.forEach((p, i) => {
+    if (p.type === 'tool') {
+      tools.push(p);
+      return;
+    }
+    flush();
+    if (p.type === 'reasoning') {
+      nodes.push(
+        <ReasoningBlock
+          key={`reasoning-${i}`}
+          text={p.text}
+          streaming={streaming === true && i === parts.length - 1}
+        />,
+      );
+    } else if (p.type === 'text' && p.text.trim()) {
+      nodes.push(
+        <div key={`text-${i}`} className="chat-part-text">
+          <Markdown text={p.text} />
+        </div>,
+      );
+    }
+  });
+  flush();
+  return <>{nodes}</>;
+}
+
 export function ConversationPanel({
   messages,
   isGenerating,
@@ -192,21 +233,29 @@ export function ConversationPanel({
                 ))}
               </div>
             )}
-            {/* 思考块：仅助手消息（日志/用户不渲染思考）。默认折叠，见 ReasoningBlock */}
-            {msg.role === 'assistant' && msg.kind !== 'log' && (
-              <ReasoningBlock text={msg.reasoning ?? ''} streaming={msg.streaming} />
-            )}
-            {/* 纯委派卡片消息（text 空）：不渲染气泡，只渲染 delegation-list */}
-            {(msg.text || !msg.delegations || msg.delegations.length === 0) && (
-              <div className="chat-bubble">
-                {/* 助手的普通消息按 Markdown 渲染；用户输入与管线日志保持原样
-                    （理由见 Markdown.tsx 头注释） */}
-                {msg.role === 'assistant' && msg.kind !== 'log' ? (
-                  <Markdown text={msg.text} />
-                ) : (
-                  msg.text
-                )}
+            {msg.role === 'assistant' && msg.kind !== 'log' && msg.parts && msg.parts.length > 0 ? (
+              <div className="chat-bubble chat-bubble-parts">
+                <AssistantParts parts={msg.parts} streaming={msg.streaming} />
               </div>
+            ) : (
+              <>
+                {/* 旧格式兜底：没有 parts 时，思考块仍放顶部 */}
+                {msg.role === 'assistant' && msg.kind !== 'log' && (
+                  <ReasoningBlock text={msg.reasoning ?? ''} streaming={msg.streaming} />
+                )}
+                {/* 纯委派卡片消息（text 空）：不渲染气泡，只渲染 delegation-list */}
+                {(msg.text || !msg.delegations || msg.delegations.length === 0) && (
+                  <div className="chat-bubble">
+                    {/* 助手的普通消息按 Markdown 渲染；用户输入与管线日志保持原样
+                        （理由见 Markdown.tsx 头注释） */}
+                    {msg.role === 'assistant' && msg.kind !== 'log' ? (
+                      <Markdown text={msg.text} />
+                    ) : (
+                      msg.text
+                    )}
+                  </div>
+                )}
+              </>
             )}
             {msg.delegations && msg.delegations.length > 0 && (
               <div className="delegation-list" style={{ marginTop: msg.text ? 6 : 0 }}>

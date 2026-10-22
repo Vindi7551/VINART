@@ -1415,6 +1415,149 @@ html, body, #root {
   border: 1px solid var(--border-light);
 }
 
+/* ===== 有序 parts：文本 / 思考 / 工具 ===== */
+.chat-bubble-parts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-part-text + .chat-part-text {
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-light);
+}
+
+.tool-group {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+.tool-group-head {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.tool-row {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+.tool-group .tool-row {
+  border: 0;
+  border-radius: 0;
+  border-top: 1px solid var(--border-light);
+}
+
+.tool-group .tool-row:first-of-type {
+  border-top: 0;
+}
+
+.tool-row summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  list-style: none;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.tool-row summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-row summary:hover {
+  background: var(--bg-hover);
+}
+
+.tool-state {
+  width: 12px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 11px;
+}
+
+.tool-state.running {
+  color: var(--accent);
+  animation: composer-spin 1.1s linear infinite;
+}
+
+.tool-state.done {
+  color: #2f9e63;
+}
+
+.tool-state.failed {
+  color: #d9534f;
+}
+
+.tool-name {
+  flex-shrink: 0;
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+}
+
+.tool-brief {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+}
+
+.tool-ms {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-body {
+  padding: 0 8px 8px 26px;
+}
+
+.tool-label {
+  margin: 4px 0 2px;
+  font-size: 9px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tool-body pre {
+  margin: 0;
+  padding: 6px;
+  max-height: 200px;
+  overflow: auto;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-running {
+  padding-top: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
 /* ===== 助手消息里的 Markdown（.md 由 Markdown.tsx 产出）=====
    气泡本体只管外框；这里把 Markdown 的块级元素收进气泡的排版里。
    首尾外边距清零——否则气泡上下会各多出一条空白。 */

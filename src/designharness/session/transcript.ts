@@ -33,6 +33,7 @@ import { dirname, join, resolve } from 'node:path';
 import type { ChatMessage, ContentPart } from '../gateway/type/chat';
 import { fileToDataUrl, isSupportedImagePath } from '../gateway/util/data-url';
 import { withAttachmentPaths } from '../context/chat-context';
+import type { TurnPart } from './turn-parts';
 
 /** 会话在工作目录内的落点：<工作目录>/.vinart/sessions/ */
 const SESSIONS_SUBDIR = join('.vinart', 'sessions');
@@ -78,6 +79,11 @@ export type SessionEvent =
        * （烧 token / 可能自我强化）。只在显式需要审计时由服务端开关写入。
        */
       reasoning?: string;
+      /**
+       * ⭐ 助手一轮回复的有序 parts（文本 / 思考 / 工具）。
+       * 有它时前端按 parts 渲染；`text` 仍是纯文本拼接（兼容 / 复制 / 旧逻辑）。
+       */
+      parts?: TurnPart[];
     }
   | {
       seq?: number;

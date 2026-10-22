@@ -15,6 +15,13 @@ import { iterElements } from '../document/vocabulary';
 import { fieldsFor, type SelectionSnapshot } from '../editor/inspector';
 import { findElement, findLayer, type DesignDocument } from '../document/vocabulary';
 import { createEditorStack, historyEntries, type EditorStack } from '../editor/editor-stack';
+import {
+  appendReasoningPart,
+  appendTextPart,
+  finishToolPart,
+  startToolPart,
+  type TurnPart,
+} from '../designharness/session/turn-parts';
 
 // ══════════════════════════════════════════════════════════
 // ⚠️ Agent 层已清空，等待重新设计
@@ -74,16 +81,6 @@ function rememberedWorkDirs(): string[] {
   } catch {
     return [];
   }
-}
-
-/** 工具调用账本事件 → 一行摘要（实时 SSE 与刷新重放共用同一格式，前后一致） */
-function formatToolLine(d: { name?: unknown; ok?: unknown; ms?: unknown; result?: unknown }): string {
-  const name = String(d.name ?? '?');
-  const mark = d.ok ? '✓' : '✗';
-  const ms = typeof d.ms === 'number' ? ` ${d.ms >= 1000 ? (d.ms / 1000).toFixed(1) + 's' : d.ms + 'ms'}` : '';
-  const res = String(d.result ?? '');
-  const brief = res ? ' → ' + res.slice(0, 120) + (res.length > 120 ? '…' : '') : '';
-  return `🔧 ${name} ${mark}${ms}${brief}`;
 }
 
 /**
@@ -201,6 +198,8 @@ export function App() {
           detail?: Record<string, unknown>;
           /** 助手消息的整轮耗时（含工具）；老数据无此字段 → 不渲染计时 */
           durationMs?: number;
+          /** 新格式：助手一轮的有序 parts（文本/思考/工具） */
+          parts?: TurnPart[];
         }>;
         /** 服务端 session meta 记录的当前版式（set-active / 上一轮 chat） */
         activeLayout?: string | null;
@@ -220,6 +219,7 @@ export function App() {
             text: e.text ?? '',
             // 历史回放复原耗时（用户要求刷新/切会话后仍显示「用时 X s」）
             ...(typeof e.durationMs === 'number' ? { durationMs: e.durationMs } : {}),
+            ...(e.parts?.length ? { parts: e.parts } : {}),
           });
         } else if (e.kind === 'action' && e.action === 'agent-spawn') {
           flush();
@@ -259,16 +259,8 @@ export function App() {
               delegations: [rec],
             };
           }
-        } else if (e.kind === 'action' && e.action === 'tool-call') {
-          // 主 AI 工具循环的中间轮：一行 log 摘要（与实时 SSE 'tool' 同格式）
-          flush();
-          out.push({
-            id: `tool_${crypto.randomUUID()}`,
-            role: 'assistant',
-            kind: 'log',
-            text: formatToolLine(e.detail ?? {}),
-          });
         }
+        // tool-call 审计事件不再单独渲染：新格式 assistant message 自带 parts。
         // 其他 action（open-layout/save-spec/render/pipeline-*）历史不进对话流
       }
       flush();
@@ -1197,11 +1189,17 @@ export function App() {
       // startedAt 用于生成中的实时计时；流结束由 'done' 事件的 durationMs 定格
       setMessages((prev) => [
         ...prev,
-        { id: replyId, role: 'assistant', text: '', reasoning: '', startedAt: Date.now(), streaming: true },
+        { id: replyId, role: 'assistant', text: '', reasoning: '', parts: [], startedAt: Date.now(), streaming: true },
       ]);
       setIsGenerating(true);
-      const setReply = (fn: (t: string) => string) =>
-        setMessages((prev) => prev.map((m) => (m.id === replyId ? { ...m, text: fn(m.text) } : m)));
+      const addReplyText = (text: string) =>
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === replyId
+              ? { ...m, text: m.text + text, parts: appendTextPart(m.parts ?? [], text) }
+              : m,
+          ),
+        );
       // 委派进度卡片：SSE 'agent' 事件（子 agent spawn/result）实时更新本条回复的 delegations
       const applyAgentEvent = (data: {
         kind?: string;
@@ -1285,16 +1283,26 @@ export function App() {
               message?: string;
               full?: boolean;
               durationMs?: number;
+              callId?: string;
+              name?: string;
+              args?: string;
+              ok?: boolean;
+              result?: string;
+              ms?: number;
             };
-            if (ev === 'chunk' && data.content) setReply((t) => t + data.content);
-            // 思考链：流式期逐段追加；终章（full=true）整段覆盖成权威全文
+            if (ev === 'chunk' && data.content) addReplyText(data.content);
+            // 思考链：逐轮进入 parts；终章 full 只更新兼容字段，不再当正文追加
             if (ev === 'reasoning' && data.content) {
               const text = data.content;
               const isFull = data.full === true;
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === replyId
-                    ? { ...m, reasoning: isFull ? text : (m.reasoning ?? '') + text }
+                    ? {
+                        ...m,
+                        reasoning: isFull ? text : (m.reasoning ?? '') + text,
+                        ...(isFull ? {} : { parts: appendReasoningPart(m.parts ?? [], text) }),
+                      }
                     : m,
                 ),
               );
@@ -1310,17 +1318,40 @@ export function App() {
               );
             }
             if (ev === 'agent') applyAgentEvent(data as Parameters<typeof applyAgentEvent>[0]);
-            // 主 AI 工具调用中间轮：实时插一行 log 摘要（刷新后由账本重放同格式）
+            // 工具调用：start 先摆一行 running，end 用同一 callId 更新
+            if (ev === 'tool-start') {
+              const callId = String(data.callId ?? crypto.randomUUID());
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === replyId
+                    ? {
+                        ...m,
+                        parts: startToolPart(m.parts ?? [], {
+                          callId,
+                          name: String(data.name ?? 'tool'),
+                          ...(typeof data.args === 'string' ? { args: data.args } : {}),
+                        }),
+                      }
+                    : m,
+                ),
+              );
+            }
             if (ev === 'tool') {
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: `tool_${crypto.randomUUID()}`,
-                  role: 'assistant',
-                  kind: 'log',
-                  text: formatToolLine(data as Record<string, unknown>),
-                },
-              ]);
+              const callId = String(data.callId ?? '');
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === replyId
+                    ? {
+                        ...m,
+                        parts: finishToolPart(m.parts ?? [], callId, {
+                          status: data.ok === false ? 'failed' : 'done',
+                          ...(typeof data.result === 'string' ? { result: data.result } : {}),
+                          ...(typeof data.ms === 'number' ? { ms: data.ms } : {}),
+                        }),
+                      }
+                    : m,
+                ),
+              );
             }
             // 素材生成逐张进度（generate_assets 的 ctx.onEvent）
             if (ev === 'asset-progress') {
@@ -1355,7 +1386,22 @@ export function App() {
         void refreshSessions(); // 标题可能已随首条消息更新
         setGalleryKey((k) => k + 1); // 兜底：流结束后无论如何刷一次（事件丢失也不漏图）
       } catch (e) {
-        setReply((t) => t + `\n\n✗ ${(e as Error).message}`);
+        addReplyText(`\n\n✗ ${(e as Error).message}`);
+        // 连接中断时，正在跑的工具不能永远转圈：标成失败
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === replyId
+              ? {
+                  ...m,
+                  parts: (m.parts ?? []).map((p) =>
+                    p.type === 'tool' && p.status === 'running'
+                      ? { ...p, status: 'failed' as const, result: p.result ?? '连接中断' }
+                      : p,
+                  ),
+                }
+              : m,
+          ),
+        );
         setGalleryKey((k) => k + 1); // 异常收尾同样兜底（工具可能已落了部分产物）
         // 异常路径下 'done' 不会来 → 计时器必须手动停表，否则永远走表
         setMessages((prev) =>

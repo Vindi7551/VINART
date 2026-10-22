@@ -32,6 +32,14 @@ import {
 import { iterElements, type DesignDocument } from '../document/vocabulary';
 // 草图里的内置占位图 id（`planToIntent` 用同一个常量）
 import { PLACEHOLDER_ASSET } from '../schema/plan';
+import {
+  appendReasoningPart,
+  appendTextPart,
+  finishToolPart,
+  partsText,
+  startToolPart,
+  type TurnPart,
+} from '../designharness/session/turn-parts';
 
 const PORT = Number(process.env.PORT) || 8787;
 
@@ -695,8 +703,10 @@ async function handleSessions(
       // 整轮耗时计时起点：用户消息已落盘之后、模型请求之前。
       // 口径 = 含工具执行的整轮（用户明确要求），不是首字节延迟。
       const roundStart = Date.now();
-      // 本轮思考链：流式片段先拼（前端要边想边显示），终章 chunk 再给出权威全文覆盖
+      // 本轮思考链：终章 full chunk 只用于审计，不再发给前端（前端按轮次拼 parts）
       let reasoningFull = '';
+      /** 本轮的有序 parts：文本 / 思考 / 工具；整轮结束随 assistant message 落盘 */
+      let parts: TurnPart[] = [];
 
       // tool-call 落账 promise 收集：流结束先等账本落齐再发 done——
       // 否则「对话刚结束就刷新会话」可能与写盘竞态，账本读到不完整
@@ -706,33 +716,55 @@ async function handleSessions(
         activeLayout: body.activeLayout as string | undefined,
         reasoningEffort: thinking as 'off' | 'low' | 'high' | 'max' | undefined,
         // 进度事件分流：子 agent spawn/result → 'agent'（委派卡片）；
-        // kind:'tool-call'（主 AI 工具循环中间轮）→ 落转录账本 + 'tool' 实时推——
-        // 不落账的话刷新会话后「AI 调过工具」完全蒸发；不进模型上下文，纯审计
+        // kind:'tool-call'（主 AI 工具循环中间轮）→ start/end 两个事件，
+        // 前端按 callId 更新同一行工具条；end 仍落审计账本
         // kind:'artifacts'（工具产出新图）→ 'artifacts'（前端实时刷 gallery）
         onEvent: (evt) => {
           if (evt.kind === 'tool-call') {
-            pendingWrites.push(
-              transcript.appendEvent(sessionId, {
-                ts: new Date().toISOString(),
-                kind: 'action',
-                action: 'tool-call',
-                detail: evt,
-              } as Parameters<typeof transcript.appendEvent>[1]),
-            );
-            send('tool', evt);
+            const callId = String(evt.callId ?? `${String(evt.name ?? 'tool')}_${crypto.randomUUID()}`);
+            const name = String(evt.name ?? 'tool');
+            const args = typeof evt.args === 'string' ? evt.args : undefined;
+            if (evt.phase === 'start') {
+              parts = startToolPart(parts, { callId, name, ...(args ? { args } : {}) });
+              send('tool-start', { ...evt, callId, name });
+            } else {
+              const ok = evt.ok !== false;
+              const result = typeof evt.result === 'string' ? evt.result : undefined;
+              const ms = typeof evt.ms === 'number' ? evt.ms : undefined;
+              parts = finishToolPart(parts, callId, {
+                status: ok ? 'done' : 'failed',
+                ...(result !== undefined ? { result } : {}),
+                ...(ms !== undefined ? { ms } : {}),
+              });
+              send('tool', { ...evt, callId, name });
+              pendingWrites.push(
+                transcript.appendEvent(sessionId, {
+                  ts: new Date().toISOString(),
+                  kind: 'action',
+                  action: 'tool-call',
+                  detail: evt,
+                } as Parameters<typeof transcript.appendEvent>[1]),
+              );
+            }
           } else if (evt.kind === 'artifacts') send('artifacts', evt);
           else if (evt.kind === 'doc-patch') send('doc-patch', evt);
           else send('agent', evt);
         },
       })) {
-        if (chunk.content) send('chunk', { content: chunk.content });
-        // 思考链：与 chunk 平行的独立事件——前端单独渲染成可折叠块。
-        // 终章 chunk 带的是**整轮权威全文**（finishReason 'stop' 且 content 为空那个），
-        // 用 full 标志区分：`full` 事件让前端**覆盖**而非追加（流式期是分段拼的）。
+        // 中止时 ChatSession 会把 fullContent 再 yield 一次（finishReason=error）——
+        // 流式期已经逐段发过，不能再当增量追加，否则前端文本翻倍。
+        if (chunk.content && chunk.finishReason !== 'error') {
+          parts = appendTextPart(parts, chunk.content);
+          send('chunk', { content: chunk.content });
+        }
+        // 思考链：逐轮增量发；终章 / 中止时的 full 只用于审计，不发（否则会变成一个末尾大思考块）
         if (chunk.reasoningContent) {
-          const isFull = chunk.finishReason === 'stop' && !chunk.content;
-          if (isFull) reasoningFull = chunk.reasoningContent;
-          send('reasoning', { content: chunk.reasoningContent, full: isFull });
+          const isFinal = chunk.finishReason === 'stop' || chunk.finishReason === 'error';
+          if (isFinal) reasoningFull = chunk.reasoningContent;
+          else {
+            parts = appendReasoningPart(parts, chunk.reasoningContent);
+            send('reasoning', { content: chunk.reasoningContent, full: false });
+          }
         }
       }
       await Promise.all(pendingWrites);
@@ -744,20 +776,31 @@ async function handleSessions(
         last && last.role === 'assistant' && typeof last.content === 'string'
           ? last.content
           : '';
+      const assistantText = partsText(parts) || full;
       const durationMs = Date.now() - roundStart;
-      if (full) {
+      if (parts.length > 0) {
+        await transcript.appendEvent(sessionId, {
+          ts: new Date().toISOString(),
+          kind: 'message',
+          id: `msg_${crypto.randomUUID().slice(0, 8)}`,
+          role: 'assistant',
+          text: assistantText,
+          parts,
+          // 耗时随消息落盘——历史回放靠它复原「用时 X s」（只在前端算的话刷新即丢）
+          durationMs,
+        });
+      } else if (full) {
         await transcript.appendEvent(sessionId, {
           ts: new Date().toISOString(),
           kind: 'message',
           id: `msg_${crypto.randomUUID().slice(0, 8)}`,
           role: 'assistant',
           text: full,
-          // 耗时随消息落盘——历史回放靠它复原「用时 X s」（只在前端算的话刷新即丢）
           durationMs,
         });
       }
       // 思考链**默认不落盘**（体积 + 不进模型：见 SessionEvent 注释）。
-      // 若确需审计，把 REASONING_PERSIST 环境变量置 1 即写入事件（离线分析用）。
+      // 若确需审计，把 VINART_PERSIST_REASONING 环境变量置 1 即写入事件（离线分析用）。
       if (reasoningFull && process.env.VINART_PERSIST_REASONING === '1') {
         await transcript.appendEvent(sessionId, {
           ts: new Date().toISOString(),
@@ -766,7 +809,7 @@ async function handleSessions(
           detail: { text: reasoningFull },
         } as Parameters<typeof transcript.appendEvent>[1]);
       }
-      send('done', { ok: true, durationMs: full ? durationMs : 0 });
+      send('done', { ok: true, durationMs: parts.length ? durationMs : 0 });
       res.end();
     } catch (e) {
       send('error', { message: String((e as Error).message ?? e) });
