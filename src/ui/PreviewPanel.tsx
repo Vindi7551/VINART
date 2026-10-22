@@ -4,6 +4,9 @@ import { setFontFamilyOptions, type SelectionSnapshot } from '../editor/inspecto
 import { emitElementHtml, emitLayerHtml } from '../render/vocabulary/emit';
 import { findElement, findLayer, type ElementNode, type Rect } from '../document/vocabulary';
 import { createEditorStack, type EditorStack } from '../editor/editor-stack';
+import { GridOverlay } from './GridOverlay';
+import { GridControl } from './GridControl';
+import { readGrid, writeGrid, type GridConfig } from './grid';
 import type { PreviewData, HostSignal } from './types';
 
 interface PreviewPanelProps {
@@ -173,6 +176,23 @@ export function PreviewPanel({
   const [editingText, setEditingText] = useState(false);
   const dragStart = useRef({ x: 0, y: 0, px: 0, py: 0 });
   const [canvasSize, setCanvasSize] = useState({ w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT });
+
+  /**
+   * 网格是**视图状态**，不进 doc。
+   * 按 layout 分键存 localStorage；`gridFor` 防止切版式时把旧配置写到新键上。
+   */
+  const gridLayout = layoutData?.name ?? null;
+  const [grid, setGrid] = useState<GridConfig>(() => readGrid(gridLayout));
+  const [gridFor, setGridFor] = useState<string | null>(gridLayout);
+  useEffect(() => {
+    if (gridFor === gridLayout) return;
+    setGrid(readGrid(gridLayout));
+    setGridFor(gridLayout);
+  }, [gridLayout, gridFor]);
+  useEffect(() => {
+    if (gridFor !== gridLayout) return;
+    writeGrid(gridLayout, grid);
+  }, [grid, gridFor, gridLayout]);
 
   // ── 编辑器读取的一切都走 ref ──
   // 目的：`bind()` 保持**稳定**，只在 srcdoc 变化时重挂；否则每次 props 变
@@ -935,6 +955,8 @@ export function PreviewPanel({
                 pointerEvents: editingText ? 'auto' : 'none',
               }}
             />
+            {/* 网格：纯视图层，挂在 wrapper 里天然跟 zoom/pan 对齐 */}
+            <GridOverlay width={canvasSize.w} height={canvasSize.h} config={grid} />
             {/* ⭐ **形状绘制层**（只在「形状」工具下挂载）：拖一个框就画出来。
                 ⚠️ 它会挡住选元素/拖元素 —— 故意的（PS 同款），避免画形状时误触。 */}
             {drawMode ? (
@@ -996,6 +1018,7 @@ export function PreviewPanel({
             <button className="zoom-btn zoom-fit" onClick={fitToCanvas} title="适应窗口">
               ⊡
             </button>
+            <GridControl config={grid} onChange={setGrid} />
           </div>
         )}
       </div>
