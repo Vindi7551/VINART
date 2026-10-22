@@ -118,12 +118,16 @@ function ReasoningBlock({ text, streaming }: { text: string; streaming?: boolean
   const [open, setOpen] = useState(false);
   if (!text.trim() && !streaming) return null;
   return (
-    <div className={`reasoning-block${open ? ' open' : ''}`}>
+    <div className={`reasoning-block${open ? ' open' : ''}${streaming ? ' streaming' : ''}`}>
       <button className="reasoning-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
         <span className="reasoning-caret">{open ? '▾' : '▸'}</span>
         <span className="reasoning-label">{streaming ? '正在思考…' : '已完成思考'}</span>
       </button>
-      {open && <div className="reasoning-body">{text}</div>}
+      <div className={`reasoning-collapse${open ? ' open' : ''}`}>
+        <div className="reasoning-collapse-inner">
+          <div className="reasoning-body">{text}</div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -157,7 +161,10 @@ function AssistantParts({ parts, streaming }: { parts: TurnPart[]; streaming?: b
       );
     } else if (p.type === 'text' && p.text.trim()) {
       nodes.push(
-        <div key={`text-${i}`} className="chat-part-text">
+        <div
+          key={`text-${i}`}
+          className={`chat-part-text${streaming === true && i === parts.length - 1 ? ' streaming' : ''}`}
+        >
           <Markdown text={p.text} />
         </div>,
       );
