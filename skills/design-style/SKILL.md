@@ -1,6 +1,6 @@
 ---
 name: design-style
-description: 通用视觉风格/气质（杂志编辑、极简、瑞士网格、奢华、粗野、自然手作、复古、科技）：先定风格方向与边界，再交给 design-direction 做槽位与构图。含历史流派参照；不锁死字体、色值与坐标。
+description: 通用视觉风格/气质（杂志编辑、极简、瑞士网格、奢华、粗野、自然手作、复古、科技）：先定风格方向与边界，再交给 design-direction 做内容清单与构图。含历史流派参照；不锁死字体、色值与坐标。
 whenToUse: 用户说"做成杂志感 / 高级感 / 复古 / 街头 / 自然 / 科技 / 瑞士风 / Bauhaus / Art Deco / Y2K"，或要求先确定视觉方向时
 ---
 
@@ -17,12 +17,12 @@ whenToUse: 用户说"做成杂志感 / 高级感 / 复古 / 街头 / 自然 / �
 | skill | 管什么 |
 |---|---|
 | `design-style` | 气质、色彩倾向、字体性格、密度、材质/光线、装饰系统 |
-| `design-direction` | 槽位、recipe、层级、间距、构图 |
+| `design-direction` | 内容清单、结构、层级、间距、构图 |
 
 流程：
 
 ```
-定风格（本 skill）→ 风格 brief → design-direction 选槽位/recipe
+定风格（本 skill）→ 风格 brief → design-direction 列内容清单 / 选结构
 → sketch_plan → generate_assets / patch_doc
 ```
 
@@ -79,7 +79,7 @@ skill({ name: 'design-style', file: 'references/history.md' })
 
 ### 第 3 步 · 输出 style brief
 
-在选槽位/recipe 之前，先在对话里写一份 brief：
+在选结构之前，先在对话里写一份 brief：
 
 ```
 风格：editorial（70%）+ organic（30%）
@@ -101,7 +101,7 @@ skill({ name: 'design-style', file: 'references/history.md' })
 |---|---|
 | 背景 / 墨色 / 强调 / 弱化 | `patch_doc` 的 `fill` |
 | 字体性格 | `patch_doc` 的 `fontFamily` / `weight` / `letterSpacing`（只用【字体库】里的 family） |
-| 结构 / 槽位 / 构图 | `design-direction` 的 recipe |
+| 结构 / 构图 | `design-direction` 的结构 |
 | 纹理 / 光线 / 场景 | `generate_assets` 的生图提示词 |
 | 装饰线 / 框 / 圆点 | `shape`（rect / ellipse） |
 | 旋转 / 透明度 | `patch_doc` 的 `rotate` / `opacity` |
