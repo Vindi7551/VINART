@@ -28,12 +28,13 @@ function ok(cond, msg) {
  * - 宿主字体 / 生图模型 / 像素下限
  */
 const DENY =
-  /sketch_plan|patch_doc|generate_assets|get_design|spawn_design_agents|render_design|compile_appearance|skill\s*\(|assistant-system|fontScale|fontFamily|fontSizePx|canvas\.background|@placeholder|doc\.json|assets\.json|\b(?:fit|asset|rect|layers|canvas|type)\s*:|type-led|full-bleed|two-up|bleed-inset|three-up|\bsplit\b|\bgrid\b|Noto(?:\s+(?:Serif|Sans))?|Bitter|Arvo|Alfa\s+Slab|seedream|3,686,400|viewBox|currentColor/i;
+  /sketch_plan|patch_doc|generate_assets|get_design|spawn_design_agents|render_design|compile_appearance|skill\s*\(|assistant-system|fontScale|fontFamily|fontSizePx|canvas\.background|@placeholder|doc\.json|assets\.json|\b(?:fit|asset|rect|layers|canvas|type)\s*:|type-led|full-bleed|two-up|bleed-inset|three-up|\bsplit\b|\bgrid\b|素材要求|素材生成|素材命名|排版指令|主体\s*\+\s*视角|消耗素材|文件命名|生成参数|提示词|prompt|Noto(?:\s+(?:Serif|Sans))?|Bitter|Arvo|Alfa\s+Slab|seedream|3,686,400|viewBox|currentColor/i;
 
 // 反向验证：denylist 本身要能命中已知坏词，也不能误伤正常设计词
 ok(DENY.test('patch_doc'), 'denylist 能命中工具名');
 ok(DENY.test('asset: @placeholder'), 'denylist 能命中占位符 / schema');
 ok(DENY.test('type-led'), 'denylist 能命中旧结构名');
+ok(DENY.test('排版指令 / 主体 + 视角'), 'denylist 能命中制作说明');
 ok(!DENY.test('落版 / 调外观 / 素材阶段'), 'denylist 不误伤阶段语言');
 
 ok(existsSync(ROOT), `skills 根目录存在：${ROOT}`);
