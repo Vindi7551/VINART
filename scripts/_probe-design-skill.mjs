@@ -34,9 +34,9 @@ ok(skill.source === 'user' || skill.source === 'project', `source=${skill.source
 
 const refs = [
   ['references/01-内容清单.md', '内容清单'],
-  ['references/02-构图recipe.md', '构图结构'],
-  ['references/03-排版思想.md', '视线怎么走'],
-  ['references/04-杠杆点.md', '六个杠杆'],
+  ['references/02-排版思想.md', '视线怎么走'],
+  ['references/03-杠杆点.md', '六个杠杆'],
+  ['references/04-构图推导.md', '构图意图'],
   ['references/05-运动感.md', '方向性'],
   ['references/06-外观与对比.md', '四个颜色角色'],
   ['references/07-自检与反模式.md', '反模式'],

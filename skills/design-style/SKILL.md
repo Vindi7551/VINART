@@ -17,12 +17,12 @@ whenToUse: 用户说"做成杂志感 / 高级感 / 复古 / 街头 / 自然 / �
 | skill | 管什么 |
 |---|---|
 | `design-style` | 气质、色彩倾向、字体性格、密度、材质/光线、装饰系统 |
-| `design-direction` | 内容清单、结构、层级、间距、构图 |
+| `design-direction` | 内容清单、构图推导、层级、间距 |
 
 流程：
 
 ```
-定风格（本 skill）→ 风格 brief → design-direction 列内容清单 / 选结构
+定风格（本 skill）→ 风格 brief → design-direction 列内容清单 / 推导构图
 → 版式阶段 → 素材 / 外观阶段
 ```
 
@@ -73,7 +73,7 @@ whenToUse: 用户说"做成杂志感 / 高级感 / 复古 / 街头 / 自然 / �
 
 ### 第 3 步 · 输出 style brief
 
-在选结构之前，先在对话里写一份 brief：
+在推导构图之前，先在对话里写一份 brief：
 
 ```
 风格：editorial（70%）+ organic（30%）
@@ -94,7 +94,7 @@ whenToUse: 用户说"做成杂志感 / 高级感 / 复古 / 街头 / 自然 / �
 | 要交接的东西 | 交给 |
 |---|---|
 | 色彩 / 字体 / 密度 / 材质 | style brief |
-| 结构 / 构图 | `design-direction` |
+| 构图关系 / 骨架 | `design-direction` |
 | 素材 / 光线 / 场景 | 素材阶段 |
 | 装饰 / 旋转 / 透明度 | 外观阶段（按当前阶段能力处理） |
 

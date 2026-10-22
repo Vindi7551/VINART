@@ -132,6 +132,7 @@ whenToUse: 用户要为亚马逊产品设计 listing 套图、提到五点描述
 **纯净规则（project / user）：**
 
 - 不写工具名（如 `sketch_plan` / `patch_doc` / `generate_assets` / `get_design`）；
+- 不写固定结构名 / 模板名（如 `type-led` / `full-bleed` / `split` / `grid`）——结构由内容推导，不枚举；
 - 不写宿主字段名（如字号比例、画布底色、裁切方式等 schema 字段）；
 - 不写宿主资源名（字体 family、占位符、素材文件约定、模型名、像素下限）；
 - 用阶段语言：「落版 / 调外观 / 素材阶段」；具体用哪个工具由宿主决定。

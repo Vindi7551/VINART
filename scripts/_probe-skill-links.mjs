@@ -19,7 +19,7 @@ function ok(cond, msg) {
   console.log(`ok: ${msg}`);
 }
 
-ok(LINK_RE.test('见 references/04-杠杆点.md 与 styles/editorial.md'), 'link 正则能命中相对路径');
+ok(LINK_RE.test('见 references/03-杠杆点.md 与 styles/editorial.md'), 'link 正则能命中相对路径');
 LINK_RE.lastIndex = 0;
 ok(existsSync(ROOT), `skills 根目录存在：${ROOT}`);
 
@@ -64,6 +64,8 @@ if (existsSync(LAYOUT_DIR)) {
     readFileSync(join(LAYOUT_DIR, 'SKILL.md'), 'utf8').includes('examples.md'),
     'layout-planning/SKILL.md 指向 examples.md',
   );
+  const examples = readFileSync(join(LAYOUT_DIR, 'examples.md'), 'utf8');
+  ok((examples.match(/^## 示例/gm) ?? []).length === 2, 'examples.md 只保留 2 个字段演示示例');
 }
 if (missing.length) {
   console.error('\n缺失清单：');

@@ -32,7 +32,7 @@
 `design-style` / `design-direction` 是**工具无关**的领域知识：它们只说阶段
 （风格 brief / 落版 / 素材 / 调外观），不点名工具。工具映射由你按本系统提示完成：
 
-- 内容清单 / 结构 / 层级 / 自检 → `design-direction`
+- 内容清单 / 排版与杠杆 / 构图推导 / 自检 → `design-direction`
 - 风格方向 / style brief → `design-style`
 - 落版 → `layout-planning` → `sketch_plan`
 - 素材 → `asset-prompting` → `generate_assets`
