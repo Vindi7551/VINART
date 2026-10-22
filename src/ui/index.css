@@ -1412,6 +1412,55 @@ html, body, #root {
   gap: 14px;
 }
 
+.chat-stream-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.chat-stream-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 100%;
+}
+
+.chat-jump-bottom {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  z-index: 5;
+  animation: jump-in 0.12s ease-out;
+}
+
+.chat-jump-bottom:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+@keyframes jump-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
 /* 对话栏展开时，右上角有「收起」按钮：给消息流让出顶部空间，避免第一条消息被压住 */
 .right-col:not(.collapsed) .chat-stream {
   padding-top: 44px;

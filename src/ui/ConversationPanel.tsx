@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Markdown } from './Markdown';
 import {
   ComposerInput,
@@ -189,8 +189,82 @@ export function ConversationPanel({
 }: ConversationPanelProps) {
   const composerRef = useRef<ComposerInputHandle>(null);
   const streamRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
+  /** 用户是否在底部：只有粘底时才自动跟随 */
+  const atBottomRef = useRef(true);
+  const [atBottom, setAtBottom] = useState(true);
+  const [hasNew, setHasNew] = useState(false);
+  /** 用户点了工具行等手动操作后，短时间内不要因为高度变化把人拽回底部 */
+  const suspendUntilRef = useRef(0);
+  /** 切会话时 first id 会变：强制跳到底部 */
+  const firstIdRef = useRef<string | null>(null);
   const [dirInputOpen, setDirInputOpen] = useState(false);
   const [dirDraft, setDirDraft] = useState('');
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    const el = streamRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior });
+    atBottomRef.current = true;
+    setAtBottom(true);
+    setHasNew(false);
+  }, []);
+
+  const handleStreamScroll = () => {
+    const el = streamRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const bottom = distance < 32;
+    atBottomRef.current = bottom;
+    setAtBottom(bottom);
+    if (bottom) setHasNew(false);
+  };
+
+  /** 工具行展开/收起后高度变了，但不会触发 scroll；手动操作结束后重算一次 */
+  const refreshAtBottomLater = () => {
+    window.setTimeout(() => {
+      const el = streamRef.current;
+      if (!el) return;
+      const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
+      atBottomRef.current = bottom;
+      setAtBottom(bottom);
+      if (bottom) setHasNew(false);
+    }, 450);
+  };
+
+  // 内容/工具行变化后：只在用户本来就在底部时跟随
+  useLayoutEffect(() => {
+    const first = messages[0]?.id ?? null;
+    const switched = first !== null && first !== firstIdRef.current;
+    firstIdRef.current = first;
+
+    if (switched) {
+      scrollToBottom('auto');
+      return;
+    }
+    if (!atBottomRef.current) {
+      setHasNew(true);
+      return;
+    }
+    if (Date.now() < suspendUntilRef.current) return;
+    scrollToBottom('auto');
+  }, [messages, scrollToBottom]);
+
+  // 图片加载 / 工具行展开 / 面板换行：内容高度变了也要跟住
+  useEffect(() => {
+    const inner = innerRef.current;
+    if (!inner || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      if (!atBottomRef.current) {
+        setHasNew(true);
+        return;
+      }
+      if (Date.now() < suspendUntilRef.current) return;
+      scrollToBottom('auto');
+    });
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, [scrollToBottom]);
 
   /** 没选目录 = 没有产物的家，聊天被门禁挡住（与后端 400 同一条规则） */
   const noWorkDir = !workDir;
@@ -203,7 +277,8 @@ export function ConversationPanel({
   ) => {
     onSend(text, files, references);
     requestAnimationFrame(() => {
-      streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight, behavior: 'smooth' });
+      suspendUntilRef.current = 0;
+      scrollToBottom('smooth');
     });
   };
 
@@ -216,13 +291,24 @@ export function ConversationPanel({
 
   return (
     <aside className="conversation-panel">
-      <div className="chat-stream" ref={streamRef}>
-        {messages.length === 0 && (
-          <div className="chat-empty">
-            {noWorkDir ? '先选一个工作目录——会话与产物都跟着它走' : '描述你的设计需求，开始创作'}
-          </div>
-        )}
-        {messages.map((msg) => (
+      <div className="chat-stream-wrap">
+        <div
+          className="chat-stream"
+          ref={streamRef}
+          onScroll={handleStreamScroll}
+          onPointerDown={() => {
+            // 手动展开工具行 / 选文字时，短时间内不要被高度变化拽回底部
+            suspendUntilRef.current = Date.now() + 400;
+          }}
+          onPointerUp={refreshAtBottomLater}
+        >
+          <div className="chat-stream-inner" ref={innerRef}>
+            {messages.length === 0 && (
+              <div className="chat-empty">
+                {noWorkDir ? '先选一个工作目录——会话与产物都跟着它走' : '描述你的设计需求，开始创作'}
+              </div>
+            )}
+            {messages.map((msg) => (
           <div key={msg.id} className={`chat-msg ${msg.role}${msg.kind === 'log' ? ' log' : ''}`}>
             {msg.attachments && msg.attachments.length > 0 && (
               <div className="chat-attachments">
@@ -290,6 +376,20 @@ export function ConversationPanel({
             )}
           </div>
         ))}
+          </div>
+        </div>
+        {!atBottom ? (
+          <button
+            type="button"
+            className="chat-jump-bottom"
+            onClick={() => {
+              suspendUntilRef.current = 0;
+              scrollToBottom('smooth');
+            }}
+          >
+            ↓ {hasNew ? '新消息' : '回到底部'}
+          </button>
+        ) : null}
       </div>
 
       <div className="input-area">
