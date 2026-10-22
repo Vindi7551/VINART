@@ -6,8 +6,9 @@ import { computeGrid, type GridConfig } from './grid';
  *
  * 视觉：
  * - 列 = 竖线（列边界）
- * - 行 = 细虚线
- * - margin > 0 时补一圈版心虚线
+ * - 行 = 横线
+ * - 线型 / 线宽由配置统一控制
+ * - margin > 0 时补一圈版心线
  *
  * ⚠️ 只画线，不填色带：颜色只作用于参考线，不会改画布底色。
  * ⚠️ `pointer-events:none` 由 CSS 保证，绝不能抢选中/拖拽。
@@ -46,6 +47,15 @@ export function GridOverlay({
   const y1 = grid.marginBox?.y ?? 0;
   const y2 = y1 + (grid.marginBox?.h ?? height);
 
+  const lineWidth = config.lineWidth;
+  const dash =
+    config.lineStyle === 'dashed'
+      ? `${Math.max(3, lineWidth * 3)} ${Math.max(3, lineWidth * 2)}`
+      : config.lineStyle === 'dotted'
+        ? `0 ${Math.max(3, lineWidth * 2)}`
+        : undefined;
+  const lineCap = config.lineStyle === 'dotted' ? 'round' : 'butt';
+
   return (
     <svg
       className="grid-overlay"
@@ -63,8 +73,10 @@ export function GridOverlay({
             height={grid.marginBox.h}
             fill="none"
             stroke={color}
+            strokeWidth={lineWidth}
             strokeOpacity="0.55"
-            strokeDasharray="6 6"
+            strokeDasharray={dash}
+            strokeLinecap={lineCap}
             vectorEffect="non-scaling-stroke"
           />
         ) : null}
@@ -77,7 +89,10 @@ export function GridOverlay({
             x2={x}
             y2={y2}
             stroke={color}
+            strokeWidth={lineWidth}
             strokeOpacity="0.55"
+            strokeDasharray={dash}
+            strokeLinecap={lineCap}
             vectorEffect="non-scaling-stroke"
           />
         ))}
@@ -90,8 +105,10 @@ export function GridOverlay({
             x2={x2}
             y2={y}
             stroke={color}
+            strokeWidth={lineWidth}
             strokeOpacity="0.55"
-            strokeDasharray="3 5"
+            strokeDasharray={dash}
+            strokeLinecap={lineCap}
             vectorEffect="non-scaling-stroke"
           />
         ))}

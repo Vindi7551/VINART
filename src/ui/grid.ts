@@ -5,6 +5,8 @@
  * 网格本身由 `GridOverlay` 画在 `.canvas-wrapper` 里，随 zoom 自动对齐。
  */
 
+export type GridLineStyle = 'solid' | 'dashed' | 'dotted';
+
 export interface GridConfig {
   enabled: boolean;
   columns: number;
@@ -15,6 +17,9 @@ export interface GridConfig {
   gutter: number;
   color: string;
   opacity: number;
+  /** 线宽：屏幕 px（`vector-effect` 下不随 zoom 变粗） */
+  lineWidth: number;
+  lineStyle: GridLineStyle;
 }
 
 export interface GridColumn {
@@ -41,6 +46,8 @@ export const DEFAULT_GRID: GridConfig = {
   gutter: 0,
   color: '#6c5ce7',
   opacity: 0.14,
+  lineWidth: 1,
+  lineStyle: 'solid',
 };
 
 const KEY_PREFIX = 'vinart.grid.';
@@ -64,6 +71,10 @@ export function normalizeGrid(raw: unknown): GridConfig {
   const color = typeof o.color === 'string' && /^#[0-9a-f]{6}$/i.test(o.color)
     ? o.color
     : DEFAULT_GRID.color;
+  const lineStyle: GridLineStyle =
+    o.lineStyle === 'dashed' || o.lineStyle === 'dotted' || o.lineStyle === 'solid'
+      ? o.lineStyle
+      : DEFAULT_GRID.lineStyle;
   return {
     enabled: o.enabled === true,
     columns: clamp(Math.round(num(o.columns, DEFAULT_GRID.columns)), 0, 24),
@@ -72,6 +83,8 @@ export function normalizeGrid(raw: unknown): GridConfig {
     gutter: clamp(Math.round(num(o.gutter, DEFAULT_GRID.gutter)), 0, 400),
     color,
     opacity: clamp(num(o.opacity, DEFAULT_GRID.opacity), 0, 1),
+    lineWidth: clamp(Math.round(num(o.lineWidth, DEFAULT_GRID.lineWidth)), 1, 6),
+    lineStyle,
   };
 }
 

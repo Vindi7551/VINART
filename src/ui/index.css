@@ -554,6 +554,38 @@ html, body, #root {
   border-color: var(--accent);
 }
 
+.grid-seg {
+  display: flex;
+  gap: 2px;
+  height: 26px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.grid-seg button {
+  flex: 1;
+  min-width: 0;
+  padding: 0 3px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.grid-seg button:hover {
+  color: var(--text-primary);
+}
+
+.grid-seg button.active {
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
 .grid-row {
   display: flex;
   align-items: center;

@@ -71,6 +71,8 @@ describe('normalizeGrid', () => {
       gutter: 99999,
       opacity: 9,
       color: 'red',
+      lineWidth: 99,
+      lineStyle: 'wavy',
     });
     expect(g.columns).toBe(24);
     expect(g.rows).toBe(0);
@@ -78,9 +80,17 @@ describe('normalizeGrid', () => {
     expect(g.gutter).toBe(400);
     expect(g.opacity).toBe(1);
     expect(g.color).toBe(DEFAULT_GRID.color);
+    expect(g.lineWidth).toBe(6);
+    expect(g.lineStyle).toBe('solid');
   });
 
   it('非对象输入回默认', () => {
     expect(normalizeGrid(null)).toEqual(DEFAULT_GRID);
+  });
+
+  it('保留合法线型与线宽', () => {
+    const g = normalizeGrid({ lineStyle: 'dotted', lineWidth: 3 });
+    expect(g.lineStyle).toBe('dotted');
+    expect(g.lineWidth).toBe(3);
   });
 });

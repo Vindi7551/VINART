@@ -1,10 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { IconGrid } from './icons';
-import { DEFAULT_GRID, type GridConfig } from './grid';
+import { DEFAULT_GRID, type GridConfig, type GridLineStyle } from './grid';
 
 function clamp(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n));
 }
+
+const LINE_STYLES: { id: GridLineStyle; label: string }[] = [
+  { id: 'solid', label: '实线' },
+  { id: 'dashed', label: '虚线' },
+  { id: 'dotted', label: '点线' },
+];
 
 /**
  * 网格开关 + 参数卡。
@@ -39,9 +45,16 @@ export function GridControl({
   }, [open]);
 
   const patch = (part: Partial<GridConfig>) => onChange({ ...config, ...part });
-  const setInt = (key: 'columns' | 'rows' | 'margin' | 'gutter', v: number) => {
-    const max = key === 'columns' || key === 'rows' ? 24 : key === 'margin' ? 1000 : 400;
-    patch({ [key]: clamp(Math.round(v || 0), 0, max) });
+  const setInt = (key: 'columns' | 'rows' | 'margin' | 'gutter' | 'lineWidth', v: number) => {
+    const max =
+      key === 'columns' || key === 'rows'
+        ? 24
+        : key === 'lineWidth'
+          ? 6
+          : key === 'margin'
+            ? 1000
+            : 400;
+    patch({ [key]: clamp(Math.round(v || 0), key === 'lineWidth' ? 1 : 0, max) });
   };
 
   return (
@@ -135,6 +148,37 @@ export function GridControl({
                 onChange={(e) => setInt('gutter', Number(e.target.value))}
               />
             </label>
+          </div>
+
+          <div className="grid-pair">
+            <label className="grid-field">
+              线宽 px
+              <input
+                className="grid-num"
+                type="number"
+                min={1}
+                max={6}
+                step={1}
+                value={config.lineWidth}
+                onChange={(e) => setInt('lineWidth', Number(e.target.value))}
+              />
+            </label>
+            <div className="grid-field">
+              线型
+              <div className="grid-seg" role="group" aria-label="网格线型">
+                {LINE_STYLES.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    className={config.lineStyle === s.id ? 'active' : ''}
+                    aria-pressed={config.lineStyle === s.id}
+                    onClick={() => patch({ lineStyle: s.id })}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
           <div className="grid-row">
