@@ -4,6 +4,7 @@ import { PreviewPanel } from './PreviewPanel';
 import { ConversationPanel } from './ConversationPanel';
 import { ArtifactGallery, artifactDataUrl } from './ArtifactGallery';
 import { applyPatches, type DocPatch } from '../document/patch';
+import { applyStructure } from '../document/structure';
 import { SessionListPanel } from './SessionListPanel';
 import { DirectoryBrowser } from './DirectoryBrowser';
 import { EditPanel } from './EditPanel';
@@ -14,7 +15,7 @@ import type { PreviewData, HostSignal, SessionItem, ThinkingLevel } from './type
 import { iterElements } from '../document/vocabulary';
 import { fieldsFor, type SelectionSnapshot } from '../editor/inspector';
 import { findElement, findLayer, type DesignDocument } from '../document/vocabulary';
-import { createEditorStack, historyEntries, type EditorStack } from '../editor/editor-stack';
+import { createEditorStack, historyEntries, pushCommand, type EditorStack } from '../editor/editor-stack';
 import {
   appendReasoningPart,
   appendTextPart,
@@ -543,6 +544,7 @@ export function App() {
     layout?: unknown;
     doc?: unknown;
     patches?: unknown;
+    structure?: unknown;
     assets?: unknown;
   }) {
     const name = typeof data.layout === 'string' ? data.layout : '';
@@ -550,6 +552,7 @@ export function App() {
     if (!cur || cur.name !== name) return;
 
     let nextDoc: PreviewData['doc'] | null = null;
+    let structural = false;
     if (Array.isArray(data.patches)) {
       const r = applyPatches(cur.doc, data.patches as DocPatch[]);
       if (r.errors.length) {
@@ -557,10 +560,24 @@ export function App() {
         return;
       }
       nextDoc = r.doc;
+    } else if (Array.isArray(data.structure)) {
+      const r = applyStructure(cur.doc, data.structure);
+      if (r.errors.length) {
+        console.warn('[doc-structure] 应用失败', r.errors);
+        return;
+      }
+      nextDoc = r.doc;
+      structural = true;
     } else if (data.doc && typeof data.doc === 'object') {
       nextDoc = data.doc as PreviewData['doc'];
     }
     if (!nextDoc) return;
+
+    // AI 结构变更也进统一撤销栈：删除/增层之后用户还能 Ctrl+Z
+    if (structural) {
+      pushCommand(getStack(name, cur.doc), nextDoc, 'AI 结构编辑');
+      setHistTick((n) => n + 1);
+    }
 
     // 新引用素材的 URL（generate_assets 刚生成的文件）——合并进当前 assets，
     // 否则 PreviewPanel 就地重发图层时拿不到文件地址（刷新 /data 后才对）。

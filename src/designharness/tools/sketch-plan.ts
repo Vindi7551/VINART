@@ -82,7 +82,7 @@ export function writeSketchPlan(workDir: string, layout: string, plan: SketchPla
       ok: false,
       layout,
       issues,
-      error: `版式已存在：${layout}。换一个新名字新建，或用 patch_doc 改现有版式。`,
+      error: `版式已存在：${layout}。换一个新名字新建，或用 patch_doc / edit_structure 改现有版式。`,
     };
   }
 
@@ -131,7 +131,7 @@ export function writeSketchPlan(workDir: string, layout: string, plan: SketchPla
  * 主 AI 的草图工具 —— **只新建版式**。
  *
  * `layout` 必填（新名字）；已存在 → 报错，不写盘。
- * 改现有版式（位置 / 尺寸 / 颜色 / 素材）走 `patch_doc`，不再用 sketch_plan 整份重写。
+ * 改现有版式字段走 `patch_doc`；增删元素/图层走 `edit_structure`，不再用 sketch_plan 整份重写。
  */
 export function createSketchTool(config: { sessionId: string }): AgentTool {
   return {
@@ -139,7 +139,7 @@ export function createSketchTool(config: { sessionId: string }): AgentTool {
     description:
       '**只新建**版式的 doc.json（草稿），不修改已有版式、不写当前 active。' +
       '必须传 layout（新名字，如 coffee-brand-poster）；名字已存在会报错——' +
-      '改现有版式的位置/尺寸/颜色/素材请用 patch_doc，不要重跑本工具。' +
+      '改现有版式的字段请用 patch_doc，增删元素/图层用 edit_structure，不要重跑本工具。' +
       'plan 只决定结构/位置/占位图，不要写 px 样式。',
     parameters: {
       type: 'object',
@@ -162,7 +162,7 @@ export function createSketchTool(config: { sessionId: string }): AgentTool {
         return {
           content:
             'ERROR: 必须传 layout（一个新的版式名，如 coffee-brand-poster-02）。' +
-            '本工具只新建；改现有版式请用 patch_doc。',
+            '本工具只新建；改字段用 patch_doc，增删结构用 edit_structure。',
           isError: true,
         };
       }

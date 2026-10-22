@@ -13,6 +13,7 @@ import { createSkillTool } from '../skills/skill-tool';
 import { createSketchTool } from '../tools/sketch-plan';
 import { createGetDesignTool } from '../tools/get-design';
 import { createPatchDocTool } from '../tools/patch-doc';
+import { createEditStructureTool } from '../tools/edit-structure';
 import { createGenerateAssetsTool } from '../tools/generate-assets';
 import type { ChatSession } from './types';
 import { readFileSync } from 'node:fs';
@@ -61,6 +62,7 @@ export function getChatSession(sessionId: string): ChatSession {
      * 现在留：`skill`（技能加载）+ `sketch_plan`（**只新建**版式）
      * + `get_design`（当前 doc 语义视图，含 frame01/rect01）
      * + `patch_doc`（move/size/rotate/opacity + 颜色/字体/asset/text）
+     * + `edit_structure`（增删元素/图层、跨层移动、图层排序）
      * + `generate_assets`（生图/线框 SVG 落盘，不改 doc）。
      */
     tools: [
@@ -68,6 +70,7 @@ export function getChatSession(sessionId: string): ChatSession {
       createSketchTool({ sessionId }),
       createGetDesignTool({ sessionId }),
       createPatchDocTool({ sessionId }),
+      createEditStructureTool({ sessionId }),
       createGenerateAssetsTool({ sessionId }),
     ],
   });
