@@ -37,7 +37,7 @@ export interface Message {
    * 有 parts 时 UI 优先按它渲染；`text` / `reasoning` 仍保留兼容与复制。
    */
   parts?: TurnPart[];
-  /** 委派记录：哪个子 agent 被调用、结果如何（spawn_design_agents 进度卡片） */
+  /** 委派记录：哪个子 agent 被调用、结果如何（spawn_agents 进度卡片 / 旧格式回退） */
   delegations?: DelegationRecord[];
   /**
    * 思考链（reasoning_content）。assistant 消息专用。

@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   appendReasoningPart,
   appendTextPart,
+  finishDelegationPart,
   finishToolPart,
   partsReasoning,
   partsText,
+  startDelegationPart,
   startToolPart,
   type TurnPart,
 } from '../src/designharness/session/turn-parts';
@@ -57,5 +59,14 @@ describe('turn parts', () => {
     const parts = finishToolPart([], 'missing', { status: 'failed', result: 'boom' });
     expect(parts).toHaveLength(1);
     expect(parts[0]).toMatchObject({ type: 'tool', callId: 'missing', status: 'failed', result: 'boom' });
+  });
+
+  it('delegation 按 runId 更新，不重复 push', () => {
+    let parts: TurnPart[] = [];
+    parts = startDelegationPart(parts, { runId: 'r1', label: '审查产品', task: '只看不改' });
+    parts = startDelegationPart(parts, { runId: 'r1', label: '审查产品', task: '只看不改' });
+    expect(parts).toHaveLength(1);
+    parts = finishDelegationPart(parts, 'r1', { status: 'done', summary: '哑光黑，logo 左上' });
+    expect(parts[0]).toMatchObject({ type: 'delegation', runId: 'r1', status: 'done' });
   });
 });

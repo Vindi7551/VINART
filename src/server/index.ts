@@ -35,8 +35,10 @@ import { PLACEHOLDER_ASSET } from '../schema/plan';
 import {
   appendReasoningPart,
   appendTextPart,
+  finishDelegationPart,
   finishToolPart,
   partsText,
+  startDelegationPart,
   startToolPart,
   type TurnPart,
 } from '../designharness/session/turn-parts';
@@ -748,7 +750,28 @@ async function handleSessions(
             }
           } else if (evt.kind === 'artifacts') send('artifacts', evt);
           else if (evt.kind === 'doc-patch') send('doc-patch', evt);
-          else send('agent', evt);
+          else {
+            if (evt.kind === 'agent-spawn') {
+              parts = startDelegationPart(parts, {
+                runId: String(evt.runId ?? ''),
+                label: String(evt.label ?? '子 agent'),
+                ...(typeof evt.name === 'string' && evt.name ? { name: evt.name } : {}),
+                ...(typeof evt.brief === 'string' && evt.brief ? { task: evt.brief } : {}),
+              });
+            } else if (evt.kind === 'agent-result') {
+              const ok = evt.stopReason === 'completed';
+              parts = finishDelegationPart(parts, String(evt.runId ?? ''), {
+                status: ok ? 'done' : 'failed',
+                ...(typeof evt.summary === 'string' && evt.summary
+                  ? { summary: evt.summary }
+                  : typeof evt.diagnostic === 'string' && evt.diagnostic
+                    ? { summary: evt.diagnostic }
+                    : { summary: ok ? '完成' : '失败' }),
+                ...(Array.isArray(evt.artifacts) ? { artifacts: evt.artifacts.map(String) } : {}),
+              });
+            }
+            send('agent', evt);
+          }
         },
       })) {
         // 中止时 ChatSession 会把 fullContent 再 yield 一次（finishReason=error）——

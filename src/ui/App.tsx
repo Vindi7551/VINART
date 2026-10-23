@@ -10,7 +10,7 @@ import { DirectoryBrowser } from './DirectoryBrowser';
 import { EditPanel } from './EditPanel';
 import { ToolBar } from './ToolBar';
 import { shouldFollowSelection, toolForLayer, type ToolId } from './tools';
-import type { Message, DelegationRecord, ChatReference, MentionItem } from './types';
+import type { Message, ChatReference, MentionItem } from './types';
 import type { PreviewData, HostSignal, SessionItem, ThinkingLevel } from './types';
 import { iterElements } from '../document/vocabulary';
 import { fieldsFor, type SelectionSnapshot } from '../editor/inspector';
@@ -19,7 +19,9 @@ import { createEditorStack, historyEntries, pushCommand, type EditorStack } from
 import {
   appendReasoningPart,
   appendTextPart,
+  finishDelegationPart,
   finishToolPart,
+  startDelegationPart,
   startToolPart,
   type TurnPart,
 } from '../designharness/session/turn-parts';
@@ -206,14 +208,8 @@ export function App() {
         activeLayout?: string | null;
       };
       const out: Message[] = [];
-      let card: Message | null = null;
-      const flush = () => {
-        if (card) out.push(card);
-        card = null;
-      };
       for (const e of data.events) {
         if (e.kind === 'message') {
-          flush();
           out.push({
             id: e.id ?? crypto.randomUUID(),
             role: (e.role as 'user' | 'assistant') ?? 'assistant',
@@ -222,49 +218,11 @@ export function App() {
             ...(typeof e.durationMs === 'number' ? { durationMs: e.durationMs } : {}),
             ...(e.parts?.length ? { parts: e.parts } : {}),
           });
-        } else if (e.kind === 'action' && e.action === 'agent-spawn') {
-          flush();
-          const d = e.detail ?? {};
-          card = {
-            id: `delegation_${String(d.runId ?? crypto.randomUUID())}`,
-            role: 'assistant',
-            text: '',
-            delegations: [{
-              name: (d.name as string) ?? undefined,
-              agent: String(d.label ?? '子 agent'),
-              task: String(d.brief ?? ''),
-              status: 'running',
-            }],
-          };
-        } else if (e.kind === 'action' && e.action === 'agent-result') {
-          const d = e.detail ?? {};
-          const rec: DelegationRecord = {
-            name: (d.name as string) ?? undefined,
-            agent: String(d.label ?? '子 agent'),
-            task: '',
-            status: d.stopReason === 'completed' ? 'done' : 'failed',
-            result:
-              d.stopReason === 'completed'
-                ? String(d.summary ?? '完成')
-                : String(d.diagnostic ?? d.stopReason ?? '失败'),
-          };
-          if (card) {
-            const i = card.delegations!.findIndex((x) => x.agent === rec.agent && x.status === 'running');
-            if (i >= 0) card.delegations![i] = rec;
-            else card.delegations!.push(rec);
-          } else {
-            card = {
-              id: `delegation_${String(d.runId ?? crypto.randomUUID())}`,
-              role: 'assistant',
-              text: '',
-              delegations: [rec],
-            };
-          }
         }
-        // tool-call 审计事件不再单独渲染：新格式 assistant message 自带 parts。
+        // agent-spawn / agent-result / tool-call 审计事件不再单独渲染：
+        // 新格式 assistant message 自带 parts（含 delegation）。
         // 其他 action（open-layout/save-spec/render/pipeline-*）历史不进对话流
       }
-      flush();
       setMessages(out);
       // 恢复服务端记录的 active：有就打开；没有就空预览（不自动开最近/唯一）
       const active = data.activeLayout;
@@ -1217,45 +1175,48 @@ export function App() {
               : m,
           ),
         );
-      // 委派进度卡片：SSE 'agent' 事件（子 agent spawn/result）实时更新本条回复的 delegations
+      // 子 agent 进度：SSE 'agent' 事件更新当前回复的 delegation parts
       const applyAgentEvent = (data: {
         kind?: string;
+        runId?: string;
         label?: string;
         name?: string;
         brief?: string;
         stopReason?: string;
         summary?: string | null;
         diagnostic?: string | null;
+        artifacts?: string[];
       }) => {
+        const runId = String(data.runId ?? '');
         setMessages((prev) =>
           prev.map((m) => {
             if (m.id !== replyId) return m;
-            const delegations = [...(m.delegations ?? [])];
             if (data.kind === 'agent-spawn') {
-              delegations.push({
-                name: data.name,
-                agent: data.label ?? '子 agent',
-                task: data.brief ?? '',
-                status: 'running',
-              });
-            } else if (data.kind === 'agent-result') {
-              const rec: DelegationRecord = {
-                name: data.name,
-                agent: data.label ?? '子 agent',
-                task: delegations.find((d) => d.agent === data.label && d.status === 'running')?.task ?? '',
-                status: data.stopReason === 'completed' ? 'done' : 'failed',
-                result:
-                  data.stopReason === 'completed'
-                    ? data.summary ?? '完成'
-                    : data.diagnostic ?? data.stopReason ?? '失败',
+              return {
+                ...m,
+                parts: startDelegationPart(m.parts ?? [], {
+                  runId,
+                  label: data.label ?? '子 agent',
+                  ...(data.name ? { name: data.name } : {}),
+                  ...(data.brief ? { task: data.brief } : {}),
+                }),
               };
-              const i = delegations.findIndex((d) => d.agent === rec.agent && d.status === 'running');
-              if (i >= 0) delegations[i] = rec;
-              else delegations.push(rec);
             }
-            return { ...m, delegations };
+            if (data.kind === 'agent-result') {
+              const ok = data.stopReason === 'completed';
+              return {
+                ...m,
+                parts: finishDelegationPart(m.parts ?? [], runId, {
+                  status: ok ? 'done' : 'failed',
+                  summary: data.summary ?? data.diagnostic ?? (ok ? '完成' : '失败'),
+                  ...(data.artifacts ? { artifacts: data.artifacts } : {}),
+                }),
+              };
+            }
+            return m;
           }),
         );
+        if (data.kind === 'agent-result') setGalleryKey((k) => k + 1);
       };
       try {
         // 图片压缩后转 dataURL——与后端 chat 端点的 images 契约对应

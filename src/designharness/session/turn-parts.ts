@@ -26,7 +26,18 @@ export interface TurnToolPart {
   ms?: number;
 }
 
-export type TurnPart = TurnTextPart | TurnReasoningPart | TurnToolPart;
+export interface TurnDelegationPart {
+  type: 'delegation';
+  runId: string;
+  label: string;
+  name?: string;
+  task?: string;
+  status: 'running' | 'done' | 'failed';
+  summary?: string;
+  artifacts?: string[];
+}
+
+export type TurnPart = TurnTextPart | TurnReasoningPart | TurnToolPart | TurnDelegationPart;
 
 /** 追加文本；如果末尾已经是文本段就合并，避免一段话被切碎 */
 export function appendTextPart(parts: TurnPart[], text: string): TurnPart[] {
@@ -78,6 +89,45 @@ export function finishToolPart(
       status: patch.status,
       ...(patch.result !== undefined ? { result: patch.result } : {}),
       ...(patch.ms !== undefined ? { ms: patch.ms } : {}),
+    },
+  ];
+}
+
+/** 开始一条子 agent 委派 */
+export function startDelegationPart(
+  parts: TurnPart[],
+  d: Omit<TurnDelegationPart, 'type' | 'status'>,
+): TurnPart[] {
+  if (parts.some((p) => p.type === 'delegation' && p.runId === d.runId)) return parts;
+  return [...parts, { type: 'delegation', ...d, status: 'running' }];
+}
+
+/** 结束一条委派：按 runId 更新；找不到就补一条完成态 */
+export function finishDelegationPart(
+  parts: TurnPart[],
+  runId: string,
+  patch: {
+    status: 'done' | 'failed';
+    summary?: string;
+    artifacts?: string[];
+  },
+): TurnPart[] {
+  let found = false;
+  const next = parts.map((p) => {
+    if (p.type !== 'delegation' || p.runId !== runId) return p;
+    found = true;
+    return { ...p, ...patch };
+  });
+  if (found) return next;
+  return [
+    ...next,
+    {
+      type: 'delegation',
+      runId,
+      label: '子 agent',
+      status: patch.status,
+      ...(patch.summary !== undefined ? { summary: patch.summary } : {}),
+      ...(patch.artifacts !== undefined ? { artifacts: patch.artifacts } : {}),
     },
   ];
 }

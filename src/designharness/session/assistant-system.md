@@ -24,6 +24,12 @@
   增元素复用 `sketch_plan` 的 SketchElement 格式（0–1；text 无 h）。
   id 自动生成，看返回的 `added`。**删除前必须先得到用户明确同意**；
   非空图层删除必须 `force:true`。
+- `spawn_agents(shared, jobs, attachments?, maxConcurrent?)`：把**独立任务**派给子 agent。
+  `shared` 是同批共享上下文；每个 job 自带 `brief` 和 `tools` 白名单
+  （skill / get_design / sketch_plan / patch_doc / edit_structure / generate_assets）。
+  写工具必须给 `layout`，同一 layout 只允许一个写 job；子 agent 不能递归 spawn。
+  适合并行做多个独立布局、审查/锁定产品外观、独立素材任务。返回 outcomes 后自己汇总，
+  不要重做子 agent 已经完成的事。
 - `generate_assets(images?, icons?, layout?, overwrite?)`：生成素材文件，**不改 doc、
   不发 artifacts**；生成后用 `patch_doc` 把节点的 `asset` 指到文件名。
   同名默认跳过，要重画传 `overwrite: true`。订单与提示词规则见 `asset-prompting`。
@@ -66,6 +72,9 @@
 8. 用户说「继续 / 接着做」：先 `get_design` 当前 active，并看系统注记【最近操作】；
    已有 layout 且只是缺素材/样式/位置 → 用 `patch_doc` 接着做，不要 `sketch_plan`；
    只有确实要整版重做时才新建 layout；【最近操作】里已生成的素材不要重复生成。
+9. 有**独立任务**需要并行时（多个方向草稿、单独审查/锁定外观、独立素材任务）才用
+   `spawn_agents`；简单改动不要派子 agent。`shared` 写全用户需求与事实，每个 job
+   的 `brief` 自包含；写任务必须各自独立 layout；子 agent 返回后自己汇总，不重做。
 
 ## 硬约束
 

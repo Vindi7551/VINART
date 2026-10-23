@@ -184,6 +184,7 @@ export function createChatSession(config: SessionConfig): ChatSession {
                 signal: controller.signal,
                 onEvent: opts?.onEvent,
                 activeLayout: opts?.activeLayout,
+                ...(attachments?.length ? { attachments: attachments.map((a) => a.name) } : {}),
               });
               resultContent = (result.isError ? 'ERROR: ' : '') + result.content;
             } catch (e) {

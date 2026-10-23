@@ -9,6 +9,7 @@ import {
 import type { Message, ThinkingLevel } from './types';
 import { ThinkingControl } from './ThinkingControl';
 import { ToolGroup } from './ToolParts';
+import { DelegationRow } from './DelegationParts';
 import type { TurnPart, TurnToolPart } from '../designharness/session/turn-parts';
 
 /**
@@ -151,6 +152,10 @@ function AssistantParts({ parts, streaming }: { parts: TurnPart[]; streaming?: b
       return;
     }
     flush();
+    if (p.type === 'delegation') {
+      nodes.push(<DelegationRow key={`agent-${p.runId}`} part={p} />);
+      return;
+    }
     if (p.type === 'reasoning') {
       nodes.push(
         <ReasoningBlock
@@ -350,7 +355,7 @@ export function ConversationPanel({
                 )}
               </>
             )}
-            {msg.delegations && msg.delegations.length > 0 && (
+            {!msg.parts?.length && msg.delegations && msg.delegations.length > 0 && (
               <div className="delegation-list" style={{ marginTop: msg.text ? 6 : 0 }}>
                 {msg.delegations.map((d, i) => (
                   <div key={i} className={`delegation-item ${d.status}`}>
