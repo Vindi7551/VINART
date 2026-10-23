@@ -53,6 +53,19 @@ ok(skill.content.includes('三个检查点'), 'SKILL.md 有「三个检查点」
 ok(skill.content.includes('硬门'), 'SKILL.md 有内容清单硬门');
 ok(skill.content.includes('落版'), 'SKILL.md 用阶段语言「落版」');
 
+const expanded = [
+  ['references/02-排版思想.md', ['字体排印', '中文排版', '网格']],
+  ['references/03-杠杆点.md', ['格式塔']],
+  ['references/04-构图推导.md', ['视觉修辞']],
+  ['references/06-外观与对比.md', ['配色方案', '深色模式']],
+  ['references/07-自检与反模式.md', ['可访问性硬指标', '10 项评分']],
+];
+for (const [rel, needles] of expanded) {
+  const r = readSkillFile(skill, rel);
+  ok(r.ok, `${rel} 可读（扩写检查）`);
+  for (const n of needles) ok(r.content.includes(n), `${rel} 含新增内容「${n}」`);
+}
+
 const banned = ['sketch_plan', 'patch_doc', 'generate_assets', 'get_design', '@placeholder'];
 for (const token of banned) {
   ok(!skill.content.includes(token), `SKILL.md 不含宿主工具名「${token}」`);
