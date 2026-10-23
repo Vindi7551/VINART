@@ -18,7 +18,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 // 字体库（服务端读盘 → @font-face CSS；浏览器只拿到 URL）
 import {
@@ -30,6 +30,8 @@ import {
 } from '../fonts/registry';
 // 文档模型（`buildLayoutNote` 要把"当前打开的版式"讲给 LLM 听 —— 结构见 `vocabulary.ts` 文件头）
 import { iterElements, type DesignDocument } from '../document/vocabulary';
+// 出图参数归一化（纯函数，单独一个文件便于直测）
+import { normalizeRenderOptions } from './render-options';
 // 草图里的内置占位图 id（`planToIntent` 用同一个常量）
 import { PLACEHOLDER_ASSET } from '../schema/plan';
 import {
@@ -51,9 +53,10 @@ const PNG_PRIORITY = ['final.png'];
 
 /**
  * 版式编辑数据链路(前端逐元素编辑的持久层):
- *   GET  /api/layout/<name>/data   → { name, doc, html }（html = emitDocument 现场生成）
+ *   GET  /api/layout/<name>/data   → { name, dir, doc, html }（html = emitDocument 现场生成）
  *   POST /api/layout/<name>/save   → body { doc } 写 doc.json
- *   POST /api/layout/<name>/render → emitDocument + blink 渲染 final.png
+ *   POST /api/layout/<name>/render → body 可选 { deviceScaleFactor, format, quality, outputDir, filename }
+ *                                    emitDocument + blink 渲染工作区 final.png，并另存导出副本
  * name 只允许字母数字横线下划线,防路径穿越。
  *
  * ⚠️ **三个动作都必须带 `?session=`**（render 必须有会话，save/data 建议带）。
@@ -263,6 +266,8 @@ async function handleLayout(
     return res.end(
       JSON.stringify({
         name,
+        // 版式目录的绝对路径：出图弹窗拿它当「保存到」的默认值与占位提示。
+        dir,
         doc,
         html,
         assets,
@@ -311,7 +316,12 @@ async function handleLayout(
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end(`no doc: ${name}`);
     }
-    console.log(`[render] ${name} → final`);
+    // 出图参数：body 可省；省 = 2x PNG，导出到版式目录的 final.png。
+    const opts = normalizeRenderOptions(await readJsonBody(req).catch(() => ({})));
+    console.log(
+      `[render] ${name} → final (${opts.deviceScaleFactor}x, ${opts.format}` +
+        `${opts.format === 'jpeg' ? ` q${opts.quality}` : ''})`,
+    );
     running = { stepId: `render:${name}` };
     try {
       // ⭐ 新链：emitDocument（词汇 → HTML）+ blink 渲染 PNG。
@@ -331,29 +341,92 @@ async function handleLayout(
       });
       const fontChecks = usedFontChecks(doc);
       const { html } = emitDocument(doc, { assets, faceCss });
+
+      // 输出尺寸保护：4× 只对小画布安全。超过 ~80MP / 单边 16000px 时
+      // Chromium 的 surface 会吃几百 MB，甚至直接失败；宁可提前报清楚。
+      const outW = Math.round(doc.canvas.width * opts.deviceScaleFactor);
+      const outH = Math.round(doc.canvas.height * opts.deviceScaleFactor);
+      if (outW * outH > 80_000_000 || outW > 16_000 || outH > 16_000) {
+        throw new Error(
+          `输出尺寸过大：${outW}×${outH}（约 ${(outW * outH / 1_000_000).toFixed(0)} MP）。` +
+            '请降低倍率；大幅面建议用 2×。',
+        );
+      }
+
       const { createBlinkRenderer } = await import('../render/rasterize/blink-renderer');
       const renderer = await createBlinkRenderer();
       try {
+        // ⭐ canonical：工作区始终保留一份 `final.png` —— 画廊/预览/缩略图只认它。
         const out = await renderer.render(
           { html },
           dir,
           {
             width: doc.canvas.width,
             height: doc.canvas.height,
-            deviceScaleFactor: 2,
+            deviceScaleFactor: opts.deviceScaleFactor,
             format: 'png',
             filename: 'final',
             fontChecks,
           },
         );
+
+        // 导出副本：默认仍是版式目录；选了别处就写别处。
+        //  - PNG 且同倍率 ⇒ 直接 copy canonical（不重渲、逐字节一致）
+        //  - JPEG ⇒ 用同一份 HTML 再渲一次（Chromium 的 PNG/JPEG 编码不同，
+        //    没有现成转码器；宁可多渲一次，也不引入 sharp 这类原生依赖）
+        const targetDir = opts.outputDir ? resolve(opts.outputDir) : dir;
+        if (existsSync(targetDir) && !statSync(targetDir).isDirectory()) {
+          throw new Error(`保存位置不是目录：${targetDir}`);
+        }
+        mkdirSync(targetDir, { recursive: true });
+        const ext = opts.format === 'jpeg' ? 'jpg' : 'png';
+        const targetPath = join(targetDir, `${opts.filename}.${ext}`);
+        let savedTo = out.imagePath;
+        let size = out.size;
+        if (targetPath !== out.imagePath) {
+          if (opts.format === 'png') {
+            copyFileSync(out.imagePath, targetPath);
+          } else {
+            const exported = await renderer.render(
+              { html },
+              targetDir,
+              {
+                width: doc.canvas.width,
+                height: doc.canvas.height,
+                deviceScaleFactor: opts.deviceScaleFactor,
+                format: 'jpeg',
+                quality: opts.quality,
+                filename: opts.filename,
+                fontChecks,
+              },
+            );
+            size = exported.size;
+          }
+          savedTo = targetPath;
+        }
+
+        // ⚠️ 先放锁再回响应：`dispose()`（~1.5s）在 finally 里，若等它结束才放锁，
+        //    用户刚看到"出图完成"就再点一次，会立刻吃到 409「已有任务在跑」（实测）。
+        //    放锁提前到响应前；旧 renderer 的 dispose 与新任务并存一小会儿没关系。
+        running = null;
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ ok: true, png: out.imagePath }));
+        res.end(
+          JSON.stringify({
+            ok: true,
+            png: out.imagePath,
+            savedTo,
+            width: out.width,
+            height: out.height,
+            size,
+          }),
+        );
         // ⭐ 出完图**推一次**：画廊据此重拉清单。
         //    原来这个事件只有"对话链产出"才会推（见 `/chat` 里 `evt.kind === 'artifacts'`）——
         //    直接调本端点出图，前端永远不知道 ⇒ 只能手动 F5。
         pushSessionEvent(sessionId, 'artifacts', { layout: name, png: out.imagePath });
       } finally {
-        await renderer.dispose();
+        // 响应已经发出去了；dispose 失败不能再走外层 catch 写 500（headers 已发）
+        await renderer.dispose().catch(() => {});
       }
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });

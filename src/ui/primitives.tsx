@@ -371,6 +371,7 @@ export function Dialog({
   footer,
   width = 560,
   maxHeight,
+  closable = true,
   children,
 }: {
   open: boolean;
@@ -384,11 +385,17 @@ export function Dialog({
   width?: number;
   /** 卡片最大高度（px）——内容会内部滚动 */
   maxHeight?: number;
+  /**
+   * 是否允许关闭（遮罩点击 / 右上角 ✕）。
+   * `false` 用于"任务进行中，不能把它关掉"（出图进度条）。
+   * 底部按钮仍由调用方自己控制。
+   */
+  closable?: boolean;
   children: ReactNode;
 }) {
   if (!open) return null;
   return (
-    <div className="ui-overlay" onClick={onClose}>
+    <div className="ui-overlay" onClick={closable ? onClose : undefined}>
       <div
         className="ui-dialog"
         style={{ width, ...(maxHeight ? { maxHeight } : {}) }}
@@ -397,9 +404,11 @@ export function Dialog({
         <div className="ui-dialog-head">
           <div className="ui-dialog-title-row">
             <strong className="ui-dialog-title">{title}</strong>
-            <Button variant="icon" className="ui-dialog-close" onClick={onClose} title="关闭">
-              ✕
-            </Button>
+            {closable ? (
+              <Button variant="icon" className="ui-dialog-close" onClick={onClose} title="关闭">
+                ✕
+              </Button>
+            ) : null}
           </div>
           {subtitle ? <div className="ui-dialog-sub">{subtitle}</div> : null}
         </div>

@@ -8,7 +8,9 @@ import { applyStructure } from '../document/structure';
 import { SessionListPanel } from './SessionListPanel';
 import { DirectoryBrowser } from './DirectoryBrowser';
 import { EditPanel } from './EditPanel';
+import { RenderDialog } from './RenderDialog';
 import { ToolBar } from './ToolBar';
+import type { RenderJobOptions, RenderJobResult } from '../render/options';
 import { shouldFollowSelection, toolForLayer, type ToolId } from './tools';
 import type { Message, ChatReference, MentionItem } from './types';
 import type { PreviewData, HostSignal, SessionItem, ThinkingLevel } from './types';
@@ -398,6 +400,8 @@ export function App() {
   // ── 版式编辑状态(产物点击 → 加载 → 逐元素修改 → 保存/重渲)──
   const [layout, setLayout] = useState<PreviewData | null>(null);
   const [layoutBusy, setLayoutBusy] = useState(false);
+  /** 出图设置弹窗（工具栏「出图」不再是"点一下就走"） */
+  const [renderDialogOpen, setRenderDialogOpen] = useState(false);
   /** 选中的图层(检查器与 iframe 双向同步) */
   const [selectedLayer, setSelectedLayer] = useState<string | null>(null);
   /**
@@ -1055,45 +1059,46 @@ export function App() {
     }
   }, [sessionId]);
 
-  /** 触发 final 重渲(几秒,零 API),完成后刷新画廊与 PNG 预览 */
-  const handleRenderLayoutLive = useCallback(async () => {
-    const cur = layoutRef.current;
-    if (!cur) return;
-    setLayoutBusy(true);
-    setMessages((prev) => [
-      ...prev,
-      { id: crypto.randomUUID(), role: 'assistant', text: `⟳ 重渲 ${cur.name} → final…` },
-    ]);
-    try {
-      const resp = await fetch(layoutApiUrl(cur, 'render', sessionId), { method: 'POST' });
-      const result = (await resp.json()) as { ok: boolean; log?: string };
-      if (result.ok) {
-        setGalleryKey((k) => k + 1);
-        logSessionAction('render', { layout: cur.name });
-        setMessages((prev) => [
-          ...prev,
-          { id: crypto.randomUUID(), role: 'assistant', text: '✓ 重渲完成,成品已更新' },
-        ]);
-      } else {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            kind: 'log',
-            text: `✗ 重渲失败\n${result.log ?? ''}`,
-          },
-        ]);
+  /**
+   * 触发 final 出图（几秒，零模型调用）。
+   *
+   * ⚠️ **不往对话区写任何消息**：进度、成功、失败全在 `RenderDialog` 里显示；
+   * 这里只负责请求、刷新画廊、记一条 session action，并把结果原样返回给弹窗。
+   */
+  const handleRenderLayoutLive = useCallback(
+    async (opts?: RenderJobOptions): Promise<RenderJobResult> => {
+      const cur = layoutRef.current;
+      if (!cur) return { ok: false, log: '没有打开的版式' };
+      setLayoutBusy(true);
+      try {
+        const resp = await fetch(layoutApiUrl(cur, 'render', sessionId), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(opts ?? {}),
+        });
+        // 服务端失败时可能回的是纯文本（409/404），直接 `resp.json()` 会抛
+        // "Unexpected token" 把真正原因吃掉 —— 先读文本再尝试解析。
+        const raw = await resp.text();
+        let result: RenderJobResult;
+        try {
+          result = JSON.parse(raw) as RenderJobResult;
+        } catch {
+          result = { ok: false, log: raw };
+        }
+        if (resp.ok && result.ok) {
+          setGalleryKey((k) => k + 1);
+          logSessionAction('render', { layout: cur.name, ...(opts ?? {}) });
+          return result;
+        }
+        return { ok: false, log: result.log || `HTTP ${resp.status}` };
+      } catch (e) {
+        return { ok: false, log: (e as Error).message };
+      } finally {
+        setLayoutBusy(false);
       }
-    } catch (e) {
-      setMessages((prev) => [
-        ...prev,
-        { id: crypto.randomUUID(), role: 'assistant', text: `✗ 重渲请求失败:${(e as Error).message}` },
-      ]);
-    } finally {
-      setLayoutBusy(false);
-    }
-  }, [layout, sessionId]);
+    },
+    [sessionId, logSessionAction],
+  );
 
   /** 发消息:走会话层 LLM 对话(SSE 流式),消息持久化在服务端转录里 */
   /**
@@ -1415,12 +1420,13 @@ export function App() {
           tool={tool}
           onTool={setTool}
           busy={layoutBusy}
+          canRender={!!layout}
           onSignal={(sig) => {
             seqRef.current += 1;
             setHostSignal({ seq: seqRef.current, ...sig });
           }}
           onSave={handleSaveLayoutLive}
-          onRender={handleRenderLayoutLive}
+          onRender={() => setRenderDialogOpen(true)}
           shapeKind={shapeKind}
           onShapeKind={setShapeKind}
         />
@@ -1565,6 +1571,17 @@ export function App() {
             onPick={handleDirPicked}
             onClose={() => setDirBrowserOpen(false)}
           />
+          {layout ? (
+            <RenderDialog
+              open={renderDialogOpen}
+              layoutName={layout.name}
+              canvasWidth={layout.doc.canvas.width}
+              canvasHeight={layout.doc.canvas.height}
+              defaultDir={layout.dir}
+              onClose={() => setRenderDialogOpen(false)}
+              onRender={handleRenderLayoutLive}
+            />
+          ) : null}
           <ConversationPanel
             messages={messages}
             isGenerating={isGenerating}

@@ -13,7 +13,8 @@ import type { HostSignal } from './types';
  * ## 两段，一条分隔线（PS 的分组感）
  *
  * - **上面 6 个 = 工具**：单选、有高亮态。选谁，右边检查器就整块换成谁那一页。
- * - **下面 4 个 = 动作**：撤销 / 重做 / 保存 / 出图。点一下就走，**不留高亮**。
+ * - **下面 4 个 = 动作**：撤销 / 重做 / 保存 / 出图。前三个点一下就走；出图会先开
+ *   **设置弹窗**（倍率 / 格式 / 保存位置），确认后才请求。动作**不留高亮**。
  *
  * ⚠️ 动作**只有这一处入口** —— 原来它们挂在检查器栏表头，工具栏一建就会变成
  *    同一个动作两个地方能点。搬过来之后检查器表头只剩标题。
@@ -26,6 +27,7 @@ export function ToolBar({
   tool,
   onTool,
   busy,
+  canRender,
   onSignal,
   onSave,
   onRender,
@@ -35,6 +37,8 @@ export function ToolBar({
   tool: ToolId;
   onTool: (t: ToolId) => void;
   busy: boolean;
+  /** 没有打开的版式时禁用「出图」（弹窗没有可出的 doc） */
+  canRender: boolean;
   onSignal: (sig: Omit<HostSignal, 'seq'>) => void;
   onSave: () => void;
   onRender: () => void;
@@ -109,7 +113,13 @@ export function ToolBar({
         <button type="button" className="tool-btn" disabled={busy} onClick={onSave} title="保存（写回 doc.json）">
           <IconSave />
         </button>
-        <button type="button" className="tool-btn" disabled={busy} onClick={onRender} title="出图（渲染 PNG）">
+        <button
+          type="button"
+          className="tool-btn"
+          disabled={busy || !canRender}
+          onClick={onRender}
+          title={canRender ? '出图…（设置倍率 / 格式 / 保存位置）' : '出图（先打开一个版式）'}
+        >
           <IconRender />
         </button>
       </div>

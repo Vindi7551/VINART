@@ -98,6 +98,8 @@ export interface SessionItem {
  */
 export interface PreviewData {
   name: string;
+  /** 版式目录的绝对路径（服务端 `/data` 下发；出图弹窗的默认保存位置） */
+  dir?: string;
   /** 词汇表文档 —— 编辑器的输入，也是保存落盘的单位 */
   doc: DesignDocument;
   /** 服务端 `emitDocument` 现场生成的渲染 HTML（srcdoc 用；素材 URL 已解析） */
