@@ -16,6 +16,7 @@ import { createPatchDocTool } from '../tools/patch-doc';
 import { createEditStructureTool } from '../tools/edit-structure';
 import { createGenerateAssetsTool } from '../tools/generate-assets';
 import { createSpawnAgentsTool } from '../tools/spawn-agents';
+import { createAskUserTool } from '../tools/ask-user';
 import type { ChatSession } from './types';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -66,7 +67,8 @@ export function getChatSession(sessionId: string): ChatSession {
      * + `patch_doc`（move/size/rotate/opacity + 颜色/字体/asset/text）
      * + `edit_structure`（增删元素/图层、跨层移动、图层排序）
      * + `generate_assets`（生图/线框 SVG 落盘，不改 doc）
-     * + `spawn_agents`（向子 agent 派通用任务；每个 job 自带 tools 白名单）。
+     * + `spawn_agents`（向子 agent 派通用任务；每个 job 自带 tools 白名单）
+     * + `ask_user`（结构化提问，阻塞当前 turn 等用户回答）。
      */
     tools: [
       createSkillTool({ sessionId }),
@@ -76,6 +78,7 @@ export function getChatSession(sessionId: string): ChatSession {
       createEditStructureTool({ sessionId }),
       createGenerateAssetsTool({ sessionId }),
       createSpawnAgentsTool({ sessionId }),
+      createAskUserTool({ sessionId }),
     ],
   });
   chatSessions.set(sessionId, session);

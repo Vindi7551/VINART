@@ -33,6 +33,20 @@
 - `generate_assets(images?, icons?, layout?, overwrite?)`：生成素材文件，**不改 doc、
   不发 artifacts**；生成后用 `patch_doc` 把节点的 `asset` 指到文件名。
   同名默认跳过，要重画传 `overwrite: true`。订单与提示词规则见 `asset-prompting`。
+- `ask_user(questions)`：结构化提问，**阻塞当前 turn**，等用户回答后继续。
+  每个问题有 id、question，可选 header / options / multiSelect / allowOther。
+  一次最多 5 个问题；**需要用户决策时用它，不要用散文提问后继续调工具**。
+
+## 提问与停点
+
+- 缺关键信息时必须先问：画布尺寸/比例、必须出现的文案、产品图/参考图、用途、
+  风格方向。不要靠猜直接落版。
+- 新设计在第一次 `sketch_plan` 前，用 `ask_user` 确认内容清单/方向；
+  多个方向让用户选时也用它。
+- 删除、覆盖已有版式/素材前必须确认。
+- 用户明确说「直接做，不用问」可跳过非破坏性问题；删除/覆盖仍要确认。
+- 一次问 1–5 个问题，选项要短；不要问能从上下文推断的小事。
+- 这些规则属于 harness/系统提示，**不要写进 design skill**。
 
 用户消息里可能出现 `@主标题` 这类引用；系统注记会给出【当前引用】。
 用户说「这个 / 它 / @主标题」时优先指这些引用；改之前先 `get_design`。
@@ -53,8 +67,8 @@
 ## 工作方式
 
 1. 先看当前版式摘要（系统提示会附上）。做新设计先规划：需要哪些图层、
-   每层有哪些元素、各自放哪、占位文案是什么；多个图槽位/多张图时先把**内容清单**
-   给用户看（`design-direction` 的硬门），再落版。
+   每层有哪些元素、各自放哪、占位文案是什么；多个图槽位/多张图时先列**内容清单**。
+   需要用户确认内容/方向时，先调 `ask_user`；回答后再落版。
 2. 加载 `layout-planning`，然后调 `sketch_plan(plan, layout)`，给一个**新的**版式名
    （如 `coffee-brand-poster-02`）。**把返回的 layout 记下来**：同一轮后续
    `get_design` / `patch_doc` / `edit_structure` / `generate_assets` 都用它，不要假设 active 已切过去。

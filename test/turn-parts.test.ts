@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   appendReasoningPart,
   appendTextPart,
+  answerQuestionPart,
+  cancelQuestionPart,
   finishDelegationPart,
   finishToolPart,
   partsReasoning,
   partsText,
   startDelegationPart,
+  startQuestionPart,
   startToolPart,
   type TurnPart,
 } from '../src/designharness/session/turn-parts';
@@ -68,5 +71,18 @@ describe('turn parts', () => {
     expect(parts).toHaveLength(1);
     parts = finishDelegationPart(parts, 'r1', { status: 'done', summary: '哑光黑，logo 左上' });
     expect(parts[0]).toMatchObject({ type: 'delegation', runId: 'r1', status: 'done' });
+  });
+
+  it('question 按 questionId 回答 / 取消', () => {
+    let parts: TurnPart[] = [];
+    parts = startQuestionPart(parts, {
+      questionId: 'q1',
+      questions: [{ id: 'size', question: '多大？' }],
+    });
+    expect(parts[0]).toMatchObject({ type: 'question', status: 'pending' });
+    parts = answerQuestionPart(parts, 'q1', { size: '4:5' });
+    expect(parts[0]).toMatchObject({ type: 'question', status: 'answered', answers: { size: '4:5' } });
+    parts = cancelQuestionPart(parts, 'q1');
+    expect(parts[0]).toMatchObject({ type: 'question', status: 'cancelled' });
   });
 });

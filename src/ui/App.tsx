@@ -21,10 +21,14 @@ import { createEditorStack, historyEntries, pushCommand, type EditorStack } from
 import {
   appendReasoningPart,
   appendTextPart,
+  answerQuestionPart,
+  cancelQuestionPart,
   finishDelegationPart,
   finishToolPart,
   startDelegationPart,
+  startQuestionPart,
   startToolPart,
+  type AskQuestion,
   type TurnPart,
 } from '../designharness/session/turn-parts';
 
@@ -1137,6 +1141,15 @@ export function App() {
     return raw;
   }, []);
 
+  const handleStop = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      await fetch(`/api/sessions/${sessionId}/abort`, { method: 'POST' });
+    } catch {
+      /* 流结束会兜底 */
+    }
+  }, [sessionId]);
+
   const handleSend = useCallback(
     async (text: string, files?: File[], references?: ChatReference[]) => {
       if (!text.trim() && !files?.length) return;
@@ -1272,6 +1285,9 @@ export function App() {
               ok?: boolean;
               result?: string;
               ms?: number;
+              questionId?: string;
+              questions?: AskQuestion[];
+              answers?: Record<string, string | string[]>;
             };
             if (ev === 'chunk' && data.content) addReplyText(data.content);
             // 思考链：逐轮进入 parts；终章 full 只更新兼容字段，不再当正文追加
@@ -1296,6 +1312,45 @@ export function App() {
                 prev.map((m) =>
                   m.id === replyId
                     ? { ...m, streaming: false, durationMs: data.durationMs ?? (Date.now() - (m.startedAt ?? Date.now())) }
+                    : m,
+                ),
+              );
+            }
+            if (ev === 'question') {
+              const questionId = String(data.questionId ?? '');
+              if (questionId) {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === replyId
+                      ? {
+                          ...m,
+                          parts: startQuestionPart(m.parts ?? [], {
+                            questionId,
+                            questions: data.questions ?? [],
+                          }),
+                        }
+                      : m,
+                  ),
+                );
+              }
+            }
+            if (ev === 'question-answered' && data.questionId) {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === replyId
+                    ? {
+                        ...m,
+                        parts: answerQuestionPart(m.parts ?? [], data.questionId!, data.answers ?? {}),
+                      }
+                    : m,
+                ),
+              );
+            }
+            if (ev === 'question-cancelled' && data.questionId) {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === replyId
+                    ? { ...m, parts: cancelQuestionPart(m.parts ?? [], data.questionId!) }
                     : m,
                 ),
               );
@@ -1586,6 +1641,8 @@ export function App() {
             messages={messages}
             isGenerating={isGenerating}
             onSend={handleSend}
+            onStop={handleStop}
+            sessionId={sessionId}
             mentions={mentionItems}
             workDir={workDir}
             dirLocked={sessionId !== null}

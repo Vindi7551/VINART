@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Markdown } from './Markdown';
 import {
   ComposerInput,
@@ -10,6 +10,7 @@ import type { Message, ThinkingLevel } from './types';
 import { ThinkingControl } from './ThinkingControl';
 import { ToolGroup } from './ToolParts';
 import { DelegationRow } from './DelegationParts';
+import { QuestionCard } from './QuestionCard';
 import type { TurnPart, TurnToolPart } from '../designharness/session/turn-parts';
 
 /**
@@ -34,6 +35,10 @@ interface ConversationPanelProps {
   messages: Message[];
   isGenerating: boolean;
   onSend: (text: string, files?: File[], references?: ChatReference[]) => void;
+  /** 停止当前生成（abort 模型流 / 长工具 / 待回答问题） */
+  onStop?: () => void;
+  /** 当前会话 id；问题卡提交答案要用 */
+  sessionId?: string | null;
   /** 当前版式的元素，供输入框 `@` 引用 */
   mentions: MentionItem[];
   /** 当前会话的工作目录(📂 设置;null=未选,此时不允许发消息——会话跟着目录走) */
@@ -137,7 +142,17 @@ function ReasoningBlock({ text, streaming }: { text: string; streaming?: boolean
  * 有序 parts：文本段 / 每轮思考 / 连续工具组按发生顺序渲染。
  * 连续 tool part 合并成一个 `ToolGroup`；文本段之间不再拆成多条消息。
  */
-function AssistantParts({ parts, streaming }: { parts: TurnPart[]; streaming?: boolean }) {
+function AssistantParts({
+  parts,
+  streaming,
+  sessionId,
+  onStop,
+}: {
+  parts: TurnPart[];
+  streaming?: boolean;
+  sessionId?: string | null;
+  onStop?: () => void;
+}) {
   const nodes: ReactNode[] = [];
   let tools: TurnToolPart[] = [];
   const flush = () => {
@@ -154,6 +169,10 @@ function AssistantParts({ parts, streaming }: { parts: TurnPart[]; streaming?: b
     flush();
     if (p.type === 'delegation') {
       nodes.push(<DelegationRow key={`agent-${p.runId}`} part={p} />);
+      return;
+    }
+    if (p.type === 'question') {
+      nodes.push(<QuestionCard key={`question-${p.questionId}`} part={p} sessionId={sessionId} onStop={onStop} />);
       return;
     }
     if (p.type === 'reasoning') {
@@ -179,10 +198,113 @@ function AssistantParts({ parts, streaming }: { parts: TurnPart[]; streaming?: b
   return <>{nodes}</>;
 }
 
+/**
+ * 单条消息 —— **按 `msg` 引用记忆化**，这是聊天区性能的关键。
+ *
+ * `App` 的流式更新是 `prev.map(m => m.id === replyId ? { ...m, ... } : m)`
+ * （见 `handleSend` 里的 `addReplyText`）⇒ **只给正在变的那一条换新对象**，
+ * 其余消息的引用保持不变。`memo` 默认做浅比较，于是：
+ *
+ * - 流式 chunk 到达时：只有正在接收的那一条重算 `AssistantParts` / `Markdown`；
+ * - 画布打字、选字、拖面板等**与消息无关**的 App state 变化：整列消息全部跳过。
+ *
+ * 为什么值得单独抽一层：`react-markdown` 每次 render 都会完整重新解析一遍
+ * （实测 60 条消息约 66 ms；纯文本只要 0.6 ms）。不记忆化的话，聊天越长，
+ * 每次流式/编辑都按**全部历史**重算，主线程会被吃满。
+ *
+ * ⚠️ 这条优化依赖「未变化的消息保持同一对象引用」。将来若某处改成
+ *    `prev.map(m => ({ ...m }))`（无条件浅拷贝），这里会全部 cache miss、卡顿回归。
+ */
+const MessageRow = memo(function MessageRow({
+  msg,
+  sessionId,
+  onStop,
+}: {
+  msg: Message;
+  sessionId?: string | null;
+  onStop?: () => void;
+}) {
+  return (
+    <div className={`chat-msg ${msg.role}${msg.kind === 'log' ? ' log' : ''}`}>
+      {msg.attachments && msg.attachments.length > 0 && (
+        <div className="chat-attachments">
+          {msg.attachments.map((url, i) => (
+            <img key={i} className="chat-attachment" src={url} alt={`素材 ${i + 1}`} />
+          ))}
+        </div>
+      )}
+      {msg.references && msg.references.length > 0 && (
+        <div className="chat-references">
+          {msg.references.map((r, i) => (
+            <span key={`${r.layout}:${r.id}:${i}`} className="chat-ref-chip">
+              @{r.name}
+            </span>
+          ))}
+        </div>
+      )}
+      {msg.role === 'assistant' && msg.kind !== 'log' && msg.parts && msg.parts.length > 0 ? (
+        <div className="chat-bubble chat-bubble-parts">
+          <AssistantParts
+            parts={msg.parts}
+            streaming={msg.streaming}
+            sessionId={sessionId}
+            onStop={onStop}
+          />
+        </div>
+      ) : (
+        <>
+          {/* 旧格式兜底：没有 parts 时，思考块仍放顶部 */}
+          {msg.role === 'assistant' && msg.kind !== 'log' && (
+            <ReasoningBlock text={msg.reasoning ?? ''} streaming={msg.streaming} />
+          )}
+          {/* 纯委派卡片消息（text 空）：不渲染气泡，只渲染 delegation-list */}
+          {(msg.text || !msg.delegations || msg.delegations.length === 0) && (
+            <div className="chat-bubble">
+              {/* 助手的普通消息按 Markdown 渲染；用户输入与管线日志保持原样
+                  （理由见 Markdown.tsx 头注释） */}
+              {msg.role === 'assistant' && msg.kind !== 'log' ? (
+                <Markdown text={msg.text} />
+              ) : (
+                msg.text
+              )}
+            </div>
+          )}
+        </>
+      )}
+      {!msg.parts?.length && msg.delegations && msg.delegations.length > 0 && (
+        <div className="delegation-list" style={{ marginTop: msg.text ? 6 : 0 }}>
+          {msg.delegations.map((d, i) => (
+            <div key={i} className={`delegation-item ${d.status}`}>
+              <span className="delegation-icon">
+                {d.status === 'running' ? '⏳' : d.status === 'failed' ? '⚠️' : '✅'}
+              </span>
+              <span className="delegation-agent">
+                @{d.agent}
+                {d.name && d.name !== d.agent ? `（${d.name}）` : ''}
+              </span>
+              <span className="delegation-task">
+                {(d.result ?? d.task).slice(0, 80)}{(d.result ?? d.task).length > 80 ? '…' : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {/* 耗时：所有助手消息都带（委派卡片是独立消息，故放在最外层而不是气泡内） */}
+      {msg.role === 'assistant' && msg.kind !== 'log' && (
+        <div className="msg-footer">
+          <ElapsedTimer startedAt={msg.startedAt} durationMs={msg.durationMs} streaming={msg.streaming} />
+        </div>
+      )}
+    </div>
+  );
+});
+
 export function ConversationPanel({
   messages,
   isGenerating,
   onSend,
+  onStop,
+  sessionId,
   mentions,
   workDir,
   dirLocked = false,
@@ -314,73 +436,8 @@ export function ConversationPanel({
               </div>
             )}
             {messages.map((msg) => (
-          <div key={msg.id} className={`chat-msg ${msg.role}${msg.kind === 'log' ? ' log' : ''}`}>
-            {msg.attachments && msg.attachments.length > 0 && (
-              <div className="chat-attachments">
-                {msg.attachments.map((url, i) => (
-                  <img key={i} className="chat-attachment" src={url} alt={`素材 ${i + 1}`} />
-                ))}
-              </div>
-            )}
-            {msg.references && msg.references.length > 0 && (
-              <div className="chat-references">
-                {msg.references.map((r, i) => (
-                  <span key={`${r.layout}:${r.id}:${i}`} className="chat-ref-chip">
-                    @{r.name}
-                  </span>
-                ))}
-              </div>
-            )}
-            {msg.role === 'assistant' && msg.kind !== 'log' && msg.parts && msg.parts.length > 0 ? (
-              <div className="chat-bubble chat-bubble-parts">
-                <AssistantParts parts={msg.parts} streaming={msg.streaming} />
-              </div>
-            ) : (
-              <>
-                {/* 旧格式兜底：没有 parts 时，思考块仍放顶部 */}
-                {msg.role === 'assistant' && msg.kind !== 'log' && (
-                  <ReasoningBlock text={msg.reasoning ?? ''} streaming={msg.streaming} />
-                )}
-                {/* 纯委派卡片消息（text 空）：不渲染气泡，只渲染 delegation-list */}
-                {(msg.text || !msg.delegations || msg.delegations.length === 0) && (
-                  <div className="chat-bubble">
-                    {/* 助手的普通消息按 Markdown 渲染；用户输入与管线日志保持原样
-                        （理由见 Markdown.tsx 头注释） */}
-                    {msg.role === 'assistant' && msg.kind !== 'log' ? (
-                      <Markdown text={msg.text} />
-                    ) : (
-                      msg.text
-                    )}
-                  </div>
-                )}
-              </>
-            )}
-            {!msg.parts?.length && msg.delegations && msg.delegations.length > 0 && (
-              <div className="delegation-list" style={{ marginTop: msg.text ? 6 : 0 }}>
-                {msg.delegations.map((d, i) => (
-                  <div key={i} className={`delegation-item ${d.status}`}>
-                    <span className="delegation-icon">
-                      {d.status === 'running' ? '⏳' : d.status === 'failed' ? '⚠️' : '✅'}
-                    </span>
-                    <span className="delegation-agent">
-                      @{d.agent}
-                      {d.name && d.name !== d.agent ? `（${d.name}）` : ''}
-                    </span>
-                    <span className="delegation-task">
-                      {(d.result ?? d.task).slice(0, 80)}{(d.result ?? d.task).length > 80 ? '…' : ''}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {/* 耗时：所有助手消息都带（委派卡片是独立消息，故放在最外层而不是气泡内） */}
-            {msg.role === 'assistant' && msg.kind !== 'log' && (
-              <div className="msg-footer">
-                <ElapsedTimer startedAt={msg.startedAt} durationMs={msg.durationMs} streaming={msg.streaming} />
-              </div>
-            )}
-          </div>
-        ))}
+              <MessageRow key={msg.id} msg={msg} sessionId={sessionId} onStop={onStop} />
+            ))}
           </div>
         </div>
         {!atBottom ? (
@@ -461,7 +518,13 @@ export function ConversationPanel({
 
             <div className="composer-spacer" />
 
-            {isGenerating && <span className="composer-spinner" title="生成中…" role="status" aria-label="生成中" />}
+            {isGenerating && onStop ? (
+              <button type="button" className="composer-stop" onClick={onStop} title="停止生成">
+                停止
+              </button>
+            ) : isGenerating ? (
+              <span className="composer-spinner" title="生成中…" role="status" aria-label="生成中" />
+            ) : null}
             <ThinkingControl
               modelName={modelName}
               value={thinking}

@@ -37,13 +37,18 @@ import { PLACEHOLDER_ASSET } from '../schema/plan';
 import {
   appendReasoningPart,
   appendTextPart,
+  answerQuestionPart,
+  cancelQuestionPart,
   finishDelegationPart,
   finishToolPart,
   partsText,
   startDelegationPart,
+  startQuestionPart,
   startToolPart,
+  type AskQuestion,
   type TurnPart,
 } from '../designharness/session/turn-parts';
+import { answerPending, cancelPending } from '../designharness/session/ask-registry';
 
 const PORT = Number(process.env.PORT) || 8787;
 
@@ -458,7 +463,7 @@ async function handleSessions(
 ) {
   const JSON_HDR = { 'Content-Type': 'application/json; charset=utf-8' };
   const sessionIdMatch =
-    /^\/api\/sessions\/([\w.-]+)(?:\/(events|chat|artifacts|workdir|file|stream|active)(?:\/(.*))?)?$/.exec(path);
+    /^\/api\/sessions\/([\w.-]+)(?:\/(events|chat|artifacts|workdir|file|stream|active|answer|abort)(?:\/(.*))?)?$/.exec(path);
 
   // 列表：一级分组——条目带 home（= 工作目录 = 项目根），前端按它分组
   if (path === '/api/sessions' && method === 'GET') {
@@ -623,6 +628,34 @@ async function handleSessions(
     res.writeHead(200, JSON_HDR);
     return res.end(JSON.stringify({ ok: true }));
   }
+  // 结构化提问：用户提交答案（ask_user 的 Promise 在这里 resolve）
+  if (sub === 'answer' && method === 'POST') {
+    const body = (await readJsonBody(req)) as Record<string, unknown>;
+    const questionId = typeof body.questionId === 'string' ? body.questionId : '';
+    const answers =
+      body.answers && typeof body.answers === 'object' && !Array.isArray(body.answers)
+        ? (body.answers as Record<string, string | string[]>)
+        : null;
+    if (!questionId || !answers) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('questionId / answers 不合法');
+    }
+    if (!answerPending(sessionId, questionId, answers)) {
+      res.writeHead(409, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('没有匹配的待回答问题（可能已提交或已停止）');
+    }
+    res.writeHead(200, JSON_HDR);
+    return res.end(JSON.stringify({ ok: true }));
+  }
+
+  // 停止当前生成：停模型流 / 长工具 / 待回答问题
+  if (sub === 'abort' && method === 'POST') {
+    cancelPending(sessionId);
+    getChatSession(sessionId).abort();
+    res.writeHead(200, JSON_HDR);
+    return res.end(JSON.stringify({ ok: true }));
+  }
+
   // LLM 对话(SSE 流式;完成后 user/assistant 消息落盘)
   if (sub === 'chat' && method === 'POST') {
     let body: {
@@ -823,7 +856,23 @@ async function handleSessions(
             }
           } else if (evt.kind === 'artifacts') send('artifacts', evt);
           else if (evt.kind === 'doc-patch') send('doc-patch', evt);
-          else {
+          else if (evt.kind === 'ask-user') {
+            parts = startQuestionPart(parts, {
+              questionId: String(evt.questionId ?? ''),
+              questions: (Array.isArray(evt.questions) ? evt.questions : []) as AskQuestion[],
+            });
+            send('question', evt);
+          } else if (evt.kind === 'ask-user-answered') {
+            parts = answerQuestionPart(
+              parts,
+              String(evt.questionId ?? ''),
+              (evt.answers ?? {}) as Record<string, string | string[]>,
+            );
+            send('question-answered', evt);
+          } else if (evt.kind === 'ask-user-cancelled') {
+            parts = cancelQuestionPart(parts, String(evt.questionId ?? ''));
+            send('question-cancelled', evt);
+          } else {
             if (evt.kind === 'agent-spawn') {
               parts = startDelegationPart(parts, {
                 runId: String(evt.runId ?? ''),

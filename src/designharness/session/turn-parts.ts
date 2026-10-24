@@ -37,7 +37,35 @@ export interface TurnDelegationPart {
   artifacts?: string[];
 }
 
-export type TurnPart = TurnTextPart | TurnReasoningPart | TurnToolPart | TurnDelegationPart;
+export interface AskOption {
+  label: string;
+  value: string;
+  description?: string;
+}
+
+export interface AskQuestion {
+  id: string;
+  header?: string;
+  question: string;
+  options?: AskOption[];
+  multiSelect?: boolean;
+  allowOther?: boolean;
+}
+
+export interface TurnQuestionPart {
+  type: 'question';
+  questionId: string;
+  questions: AskQuestion[];
+  answers?: Record<string, string | string[]>;
+  status: 'pending' | 'answered' | 'cancelled';
+}
+
+export type TurnPart =
+  | TurnTextPart
+  | TurnReasoningPart
+  | TurnToolPart
+  | TurnDelegationPart
+  | TurnQuestionPart;
 
 /** 追加文本；如果末尾已经是文本段就合并，避免一段话被切碎 */
 export function appendTextPart(parts: TurnPart[], text: string): TurnPart[] {
@@ -130,6 +158,35 @@ export function finishDelegationPart(
       ...(patch.artifacts !== undefined ? { artifacts: patch.artifacts } : {}),
     },
   ];
+}
+
+/** 新增一个待回答问题 */
+export function startQuestionPart(
+  parts: TurnPart[],
+  q: Omit<TurnQuestionPart, 'type' | 'status'>,
+): TurnPart[] {
+  if (parts.some((p) => p.type === 'question' && p.questionId === q.questionId)) return parts;
+  return [...parts, { type: 'question', ...q, status: 'pending' }];
+}
+
+export function answerQuestionPart(
+  parts: TurnPart[],
+  questionId: string,
+  answers: Record<string, string | string[]>,
+): TurnPart[] {
+  return parts.map((p) =>
+    p.type === 'question' && p.questionId === questionId
+      ? { ...p, answers, status: 'answered' as const }
+      : p,
+  );
+}
+
+export function cancelQuestionPart(parts: TurnPart[], questionId: string): TurnPart[] {
+  return parts.map((p) =>
+    p.type === 'question' && p.questionId === questionId
+      ? { ...p, status: 'cancelled' as const }
+      : p,
+  );
 }
 
 /** 纯文本拼接（兼容 Message.text / 老 UI / 复制） */
