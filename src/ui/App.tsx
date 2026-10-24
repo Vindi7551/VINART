@@ -887,12 +887,32 @@ export function App() {
   const [rightColCollapsed, setRightColCollapsed] = useState<boolean>(() =>
     localStorage.getItem('vinart.rightColCollapsed') === '1',
   );
+  /**
+   * 右栏收起/展开：**宽度动画**（画布连续被推），但动画期间把聊天内容
+   * `display:none`，避免长对话在每一帧重新换行；动画结束再显示内容。
+   */
+  const [rightColAnim, setRightColAnim] = useState<'in' | 'out' | null>(null);
   const toggleRightCol = useCallback(() => {
-    setRightColCollapsed((c) => {
-      localStorage.setItem('vinart.rightColCollapsed', c ? '0' : '1');
-      return !c;
-    });
-  }, []);
+    if (rightColAnim) return;
+    if (rightColCollapsed) {
+      localStorage.setItem('vinart.rightColCollapsed', '0');
+      setRightColCollapsed(false);
+      setRightColAnim('in');
+    } else {
+      localStorage.setItem('vinart.rightColCollapsed', '1');
+      setRightColAnim('out');
+    }
+  }, [rightColCollapsed, rightColAnim]);
+  const finishRightColAnim = useCallback(() => {
+    if (rightColAnim === 'out') setRightColCollapsed(true);
+    setRightColAnim(null);
+  }, [rightColAnim]);
+  // transitionend 偶发丢失（切 tab / reduced motion）时兜底
+  useEffect(() => {
+    if (!rightColAnim) return;
+    const t = window.setTimeout(finishRightColAnim, 260);
+    return () => window.clearTimeout(t);
+  }, [rightColAnim, finishRightColAnim]);
   // ── 左侧对话列表:宽度可拖拽 + 收起/展开(镜像右栏那套) ──
   const LEFT_COL_MIN = 180;
   const LEFT_COL_MAX = 480;
@@ -1614,8 +1634,13 @@ export function App() {
           </svg>
         </button>
         <div
-          className={`right-col${rightColCollapsed ? ' collapsed' : ''}`}
-          style={{ width: rightColCollapsed ? 0 : rightColWidth }}
+          className={`right-col${rightColCollapsed ? ' collapsed' : ''}${
+            rightColAnim ? ' animating' : ''
+          }`}
+          style={{ width: rightColCollapsed || rightColAnim === 'out' ? 0 : rightColWidth }}
+          onTransitionEnd={(e) => {
+            if (e.target === e.currentTarget && e.propertyName === 'width') finishRightColAnim();
+          }}
         >
           {/* 拖拽手柄:贴左缘的窄条,hover 高亮;按住左右拖调右栏宽度 */}
           {!rightColCollapsed && (

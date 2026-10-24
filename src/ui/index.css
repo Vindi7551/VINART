@@ -1101,14 +1101,39 @@ html, body, #root {
    滚动条出现在浏览器最右边（整页滚），EditPanel 的 maxHeight 百分比也失效。
    宽度由 App.tsx 内联注入（拖左缘手柄调整，localStorage 持久化，320–720px）。 */
 .right-col {
-  /* 收起/展开时 width 平滑滑动;拖拽调宽时 .main.resizing 关掉,不然发粘 */
+  /* 收起/展开：宽度动画让画布连续被推；动画期间聊天内容 display:none，
+     避免长对话在每一帧重新换行。动画结束再显示内容。 */
   transition: width 0.2s ease;
+  contain: layout paint;
   position: relative;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border);
+}
+
+.right-col.collapsed,
+.right-col.animating {
+  /* 动画期间/收起后聊天内容不参与布局：否则 width 每变一帧都要重排整段对话 */
+  pointer-events: none;
+}
+
+.right-col.collapsed {
+  border-left: none;
+}
+
+.right-col.collapsed .conversation-panel,
+.right-col.animating .conversation-panel {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .right-col {
+    transition: none;
+  }
 }
 
 /* 拖拽手柄：贴左缘的透明窄条（覆盖 border 区域），hover/拖拽时高亮 */
@@ -1397,13 +1422,15 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   background: var(--bg-surface);
-  border-left: 1px solid var(--border);
+  /* 边界线已提到 .right-col（收起动画期间聊天内容 display:none，不能让线跟着消失） */
   flex-shrink: 0;
 }
 
 .chat-stream {
   flex: 1;
   overflow-y: auto;
+  /* 宽度变化/面板开关时不让滚动条反复出现，避免二次重排 */
+  scrollbar-gutter: stable;
   /* 保底可用高度：一键表单 + 单步调试都展开时，对话区不被挤没（栏内各滚各的） */
   min-height: 120px;
   padding: 16px;
