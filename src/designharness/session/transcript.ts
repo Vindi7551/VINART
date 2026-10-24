@@ -288,7 +288,8 @@ export async function createSession(workDir: string): Promise<string> {
   await writeFile(loc.file, JSON.stringify(meta) + '\n', 'utf8');
   pending.delete(id);
   locCache.set(id, loc);
-  await touchIndex(loc, id, meta);
+  // 新建会话时账本里只有这一条 meta、索引里也还没有条目 ⇒ 直接建初始条目
+  await touchIndex(loc, id, meta, { newEntry: true });
   return id;
 }
 
@@ -323,7 +324,14 @@ async function appendEventInner(
     throw new Error(`找不到会话 ${sessionId} 的落点（未创建，或所在项目目录已被删除）`);
   }
   await mkdir(dirname(loc.file), { recursive: true });
-  if (!existsSync(loc.file)) {
+  /**
+   * 这个文件是不是**本次刚刚创建**的。
+   * `touchIndex` 用它判断「索引里没有条目」是否正常：
+   * - 新文件 ⇒ 索引还没有条目，按这条事件建初始条目；
+   * - 老文件 ⇒ 索引丢了/坏了，只能回退到一次全量重放（修复路径，不是常态）。
+   */
+  const isNewFile = !existsSync(loc.file);
+  if (isNewFile) {
     // 诞生即绑：落盘的第一行是 meta（workDir 在这里固化成事件）
     await writeFile(
       loc.file,
@@ -338,7 +346,7 @@ async function appendEventInner(
     locCache.set(sessionId, loc);
   }
   await appendFile(loc.file, JSON.stringify(event as SessionEvent) + '\n', 'utf8');
-  await touchIndex(loc, sessionId, event as SessionEvent);
+  await touchIndex(loc, sessionId, event as SessionEvent, { newEntry: isNewFile });
 }
 
 // ── 读 ──────────────────────────────────────────────────────────────────
@@ -611,10 +619,15 @@ export async function deriveMessages(
   return out;
 }
 
+/** 文本 → 列表标题（`deriveTitle` 与增量更新共用同一口径：前 20 字 + 省略号） */
+function titleFromText(text: string): string {
+  const trimmed = text.trim();
+  return (trimmed.slice(0, 20) || '新会话') + (trimmed.length > 20 ? '…' : '');
+}
+
 export function deriveTitle(events: SessionEvent[]): string {
   const first = events.find((e) => e.kind === 'message' && e.role === 'user');
-  const text = first && first.kind === 'message' ? first.text : '';
-  return (text.trim().slice(0, 20) || '新会话') + (text.trim().length > 20 ? '…' : '');
+  return titleFromText(first && first.kind === 'message' ? first.text : '');
 }
 
 // ── 环境（workDir）──────────────────────────────────────────────────────
@@ -682,24 +695,93 @@ function lastMetaField(events: SessionEvent[]): string | null {
   return null;
 }
 
-/** 索引条目 upsert:title/messageCount/workDir/home/updatedAt 以最新事件流为准 */
+/**
+ * 索引条目的**增量推进**：只拿"刚追加的这一条事件"改摘要，**不回读账本**。
+ *
+ * 与全量重放（`entryFromEvents`）必须保持同一口径：
+ * - `title` = 首条用户消息前 20 字 —— 只在 `messageCount` 从 0 变 1 时算一次；
+ * - `messageCount` = `kind === 'message'` 的事件数（user + assistant）；
+ * - `workDir` = 最后一条带 `workDir` 的 meta；
+ * - `updatedAt` = 这条事件的 `ts`。
+ *
+ * 导出是为了让纯函数单测能直接断言字段推进（`test/transcript-index.test.ts`）。
+ */
+export function advanceIndexEntry(prev: SessionIndexEntry, latest: SessionEvent): SessionIndexEntry {
+  const next: SessionIndexEntry = { ...prev, updatedAt: latest.ts };
+  if (latest.kind === 'message') {
+    const wasEmpty = prev.messageCount === 0;
+    next.messageCount = prev.messageCount + 1;
+    if (wasEmpty && latest.role === 'user') next.title = titleFromText(latest.text);
+  } else if (latest.kind === 'meta' && typeof latest.workDir === 'string') {
+    next.workDir = latest.workDir;
+  }
+  return next;
+}
+
+/** 索引里没有这条会话、但账本已经存在 ⇒ 全量重放一次补齐（修复路径，不是每次追加的常态） */
+function entryFromEvents(
+  loc: SessionLocation,
+  sessionId: string,
+  events: SessionEvent[],
+  latest: SessionEvent,
+): SessionIndexEntry {
+  return {
+    id: sessionId,
+    title: deriveTitle(events),
+    updatedAt: latest.ts,
+    messageCount: countMessages(events),
+    workDir: lastMetaField(events),
+    home: loc.root,
+  };
+}
+
+/** 新建会话 / 新账本的第一条事件 ⇒ 直接建初始条目（同样不读账本） */
+function initialIndexEntry(
+  loc: SessionLocation,
+  sessionId: string,
+  latest: SessionEvent,
+): SessionIndexEntry {
+  const isUserMessage = latest.kind === 'message' && latest.role === 'user';
+  const metaWorkDir =
+    latest.kind === 'meta' && typeof latest.workDir === 'string' ? latest.workDir : null;
+  return {
+    id: sessionId,
+    title: isUserMessage ? titleFromText(latest.text) : '新会话',
+    updatedAt: latest.ts,
+    messageCount: latest.kind === 'message' ? 1 : 0,
+    workDir: metaWorkDir ?? loc.root,
+    home: loc.root,
+  };
+}
+
+/**
+ * 索引条目 upsert —— **增量**：只读写 `index.json`（通常几百字节），不回放 `.jsonl`。
+ *
+ * ⚠️ 为什么以前是全量：旧实现把"以事件流为准"套在每个事件上，靠 `loadTranscript` 重算
+ * title/count/workDir。正确但代价是每条事件 O(账本大小)：254 KB 约 2.6 ms、470 KB 约
+ * 5.3 ms，一轮几十次工具调用就是几百毫秒，且随会话增长越来越慢（O(n²)）。
+ *
+ * 现在：事件流仍是持久层；`index.json` 仍是可重建的缓存。只有"索引里查不到条目、
+ * 但账本已存在"这种**缓存丢失**的情况才回放一次，之后继续走增量。
+ */
 async function touchIndex(
   loc: SessionLocation,
   sessionId: string,
   latest: SessionEvent,
+  opts: { newEntry?: boolean } = {},
 ): Promise<void> {
   await withIndexLock(async () => {
-    const events = await loadTranscript(sessionId);
     const list = await readIndexFile(loc.index);
-    const entry: SessionIndexEntry = {
-      id: sessionId,
-      title: deriveTitle(events),
-      updatedAt: latest.ts,
-      messageCount: countMessages(events),
-      workDir: lastMetaField(events),
-      home: loc.root,
-    };
     const idx = list.findIndex((s) => s.id === sessionId);
+    let entry: SessionIndexEntry;
+    if (idx >= 0) {
+      entry = advanceIndexEntry(list[idx]!, latest);
+    } else if (opts.newEntry) {
+      entry = initialIndexEntry(loc, sessionId, latest);
+    } else {
+      // 索引丢了/坏了，但账本早就有内容 ⇒ 回放一次补齐（下次正常追加就又走增量）
+      entry = entryFromEvents(loc, sessionId, await readEvents(loc.file), latest);
+    }
     if (idx >= 0) list[idx] = entry;
     else list.unshift(entry);
     await mkdir(dirname(loc.index), { recursive: true });

@@ -16,13 +16,15 @@ whenToUse: 用户说"做成杂志感 / 高级感 / 复古 / 街头 / 自然 / �
 
 | skill | 管什么 |
 |---|---|
+| `source-analysis` | 读原始素材/文本：事实、形式、语义、联想、氛围；输出 source brief |
 | `design-style` | 气质、色彩倾向、字体性格、密度、材质/光线、装饰系统 |
 | `design-direction` | 内容清单、构图推导、层级、间距 |
 
 流程：
 
 ```
-定风格（本 skill）→ 风格 brief → design-direction 列内容清单 / 推导构图
+有原始素材/文本 → source-analysis（source brief）
+→ 定风格（本 skill）→ 风格 brief → design-direction 列内容清单 / 推导构图
 → 版式阶段 → 素材 / 外观阶段
 ```
 
