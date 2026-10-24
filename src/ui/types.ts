@@ -1,4 +1,5 @@
 import type { DesignDocument } from '../document/vocabulary';
+import type { TurnPart } from '../designharness/session/turn-parts';
 
 /** 思考档位（与 /chat 的 thinking、gateway 的 reasoningEffort 对齐） */
 export type ThinkingLevel = 'off' | 'low' | 'high' | 'max';
@@ -31,7 +32,12 @@ export interface Message {
   references?: ChatReference[];
   /** 'log' = 管线日志流(等宽字体、终端式渲染),缺省 = 普通对话 */
   kind?: 'chat' | 'log';
-  /** 委派记录：哪个子 agent 被调用、结果如何（spawn_design_agents 进度卡片） */
+  /**
+   * ⭐ 助手一轮回复的**有序 parts**：文本 / 思考 / 工具调用按发生顺序排列。
+   * 有 parts 时 UI 优先按它渲染；`text` / `reasoning` 仍保留兼容与复制。
+   */
+  parts?: TurnPart[];
+  /** 委派记录：哪个子 agent 被调用、结果如何（spawn_agents 进度卡片 / 旧格式回退） */
   delegations?: DelegationRecord[];
   /**
    * 思考链（reasoning_content）。assistant 消息专用。
@@ -92,6 +98,8 @@ export interface SessionItem {
  */
 export interface PreviewData {
   name: string;
+  /** 版式目录的绝对路径（服务端 `/data` 下发；出图弹窗的默认保存位置） */
+  dir?: string;
   /** 词汇表文档 —— 编辑器的输入，也是保存落盘的单位 */
   doc: DesignDocument;
   /** 服务端 `emitDocument` 现场生成的渲染 HTML（srcdoc 用；素材 URL 已解析） */

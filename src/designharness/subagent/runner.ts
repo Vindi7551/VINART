@@ -78,7 +78,7 @@ export interface AgentBatchOptions {
 
 /** 批次进度事件（与父账本事件同形状；index 是 jobs 数组下标） */
 export type AgentBatchEvent =
-  | { kind: 'agent-spawn'; index: number; runId: string; label: string; name?: string }
+  | { kind: 'agent-spawn'; index: number; runId: string; label: string; name?: string; brief: string }
   | {
       kind: 'agent-result';
       index: number;
@@ -144,7 +144,7 @@ export async function runAgentBatch(opts: AgentBatchOptions): Promise<AgentBatch
         name: name ?? null,
       },
     });
-    opts.onEvent?.({ kind: 'agent-spawn', index, runId, label, name });
+    opts.onEvent?.({ kind: 'agent-spawn', index, runId, label, name, brief: job.brief });
 
     if (signal?.aborted) {
       // 已 spawn 未启动：补配对 result，账本不破对

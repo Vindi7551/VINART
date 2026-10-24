@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Markdown } from './Markdown';
 import {
   ComposerInput,
@@ -8,6 +8,10 @@ import {
 } from './ComposerInput';
 import type { Message, ThinkingLevel } from './types';
 import { ThinkingControl } from './ThinkingControl';
+import { ToolGroup } from './ToolParts';
+import { DelegationRow } from './DelegationParts';
+import { QuestionCard } from './QuestionCard';
+import type { TurnPart, TurnToolPart } from '../designharness/session/turn-parts';
 
 /**
  * 右栏对话面板 —— 消息流 + **单卡片式输入区**。
@@ -31,6 +35,10 @@ interface ConversationPanelProps {
   messages: Message[];
   isGenerating: boolean;
   onSend: (text: string, files?: File[], references?: ChatReference[]) => void;
+  /** 停止当前生成（abort 模型流 / 长工具 / 待回答问题） */
+  onStop?: () => void;
+  /** 当前会话 id；问题卡提交答案要用 */
+  sessionId?: string | null;
   /** 当前版式的元素，供输入框 `@` 引用 */
   mentions: MentionItem[];
   /** 当前会话的工作目录(📂 设置;null=未选,此时不允许发消息——会话跟着目录走) */
@@ -116,20 +124,187 @@ function ReasoningBlock({ text, streaming }: { text: string; streaming?: boolean
   const [open, setOpen] = useState(false);
   if (!text.trim() && !streaming) return null;
   return (
-    <div className={`reasoning-block${open ? ' open' : ''}`}>
+    <div className={`reasoning-block${open ? ' open' : ''}${streaming ? ' streaming' : ''}`}>
       <button className="reasoning-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
         <span className="reasoning-caret">{open ? '▾' : '▸'}</span>
         <span className="reasoning-label">{streaming ? '正在思考…' : '已完成思考'}</span>
       </button>
-      {open && <div className="reasoning-body">{text}</div>}
+      <div className={`reasoning-collapse${open ? ' open' : ''}`}>
+        <div className="reasoning-collapse-inner">
+          <div className="reasoning-body">{text}</div>
+        </div>
+      </div>
     </div>
   );
 }
+
+/**
+ * 有序 parts：文本段 / 每轮思考 / 连续工具组按发生顺序渲染。
+ * 连续 tool part 合并成一个 `ToolGroup`；文本段之间不再拆成多条消息。
+ */
+function AssistantParts({
+  parts,
+  streaming,
+  sessionId,
+  onStop,
+}: {
+  parts: TurnPart[];
+  streaming?: boolean;
+  sessionId?: string | null;
+  onStop?: () => void;
+}) {
+  const nodes: ReactNode[] = [];
+  let tools: TurnToolPart[] = [];
+  const flush = () => {
+    if (!tools.length) return;
+    nodes.push(<ToolGroup key={`tools-${nodes.length}`} tools={tools} />);
+    tools = [];
+  };
+
+  parts.forEach((p, i) => {
+    if (p.type === 'tool') {
+      tools.push(p);
+      return;
+    }
+    flush();
+    if (p.type === 'delegation') {
+      nodes.push(<DelegationRow key={`agent-${p.runId}`} part={p} />);
+      return;
+    }
+    if (p.type === 'question') {
+      nodes.push(<QuestionCard key={`question-${p.questionId}`} part={p} sessionId={sessionId} onStop={onStop} />);
+      return;
+    }
+    if (p.type === 'reasoning') {
+      nodes.push(
+        <ReasoningBlock
+          key={`reasoning-${i}`}
+          text={p.text}
+          streaming={streaming === true && i === parts.length - 1}
+        />,
+      );
+    } else if (p.type === 'text' && p.text.trim()) {
+      nodes.push(
+        <div
+          key={`text-${i}`}
+          className={`chat-part-text${streaming === true && i === parts.length - 1 ? ' streaming' : ''}`}
+        >
+          <Markdown text={p.text} />
+        </div>,
+      );
+    }
+  });
+  flush();
+  return <>{nodes}</>;
+}
+
+/**
+ * 单条消息 —— **按 `msg` 引用记忆化**，这是聊天区性能的关键。
+ *
+ * `App` 的流式更新是 `prev.map(m => m.id === replyId ? { ...m, ... } : m)`
+ * （见 `handleSend` 里的 `addReplyText`）⇒ **只给正在变的那一条换新对象**，
+ * 其余消息的引用保持不变。`memo` 默认做浅比较，于是：
+ *
+ * - 流式 chunk 到达时：只有正在接收的那一条重算 `AssistantParts` / `Markdown`；
+ * - 画布打字、选字、拖面板等**与消息无关**的 App state 变化：整列消息全部跳过。
+ *
+ * 为什么值得单独抽一层：`react-markdown` 每次 render 都会完整重新解析一遍
+ * （实测 60 条消息约 66 ms；纯文本只要 0.6 ms）。不记忆化的话，聊天越长，
+ * 每次流式/编辑都按**全部历史**重算，主线程会被吃满。
+ *
+ * ⚠️ 这条优化依赖「未变化的消息保持同一对象引用」。将来若某处改成
+ *    `prev.map(m => ({ ...m }))`（无条件浅拷贝），这里会全部 cache miss、卡顿回归。
+ */
+const MessageRow = memo(function MessageRow({
+  msg,
+  sessionId,
+  onStop,
+}: {
+  msg: Message;
+  sessionId?: string | null;
+  onStop?: () => void;
+}) {
+  return (
+    <div className={`chat-msg ${msg.role}${msg.kind === 'log' ? ' log' : ''}`}>
+      {msg.attachments && msg.attachments.length > 0 && (
+        <div className="chat-attachments">
+          {msg.attachments.map((url, i) => (
+            <img key={i} className="chat-attachment" src={url} alt={`素材 ${i + 1}`} />
+          ))}
+        </div>
+      )}
+      {msg.references && msg.references.length > 0 && (
+        <div className="chat-references">
+          {msg.references.map((r, i) => (
+            <span key={`${r.layout}:${r.id}:${i}`} className="chat-ref-chip">
+              @{r.name}
+            </span>
+          ))}
+        </div>
+      )}
+      {msg.role === 'assistant' && msg.kind !== 'log' && msg.parts && msg.parts.length > 0 ? (
+        <div className="chat-bubble chat-bubble-parts">
+          <AssistantParts
+            parts={msg.parts}
+            streaming={msg.streaming}
+            sessionId={sessionId}
+            onStop={onStop}
+          />
+        </div>
+      ) : (
+        <>
+          {/* 旧格式兜底：没有 parts 时，思考块仍放顶部 */}
+          {msg.role === 'assistant' && msg.kind !== 'log' && (
+            <ReasoningBlock text={msg.reasoning ?? ''} streaming={msg.streaming} />
+          )}
+          {/* 纯委派卡片消息（text 空）：不渲染气泡，只渲染 delegation-list */}
+          {(msg.text || !msg.delegations || msg.delegations.length === 0) && (
+            <div className="chat-bubble">
+              {/* 助手的普通消息按 Markdown 渲染；用户输入与管线日志保持原样
+                  （理由见 Markdown.tsx 头注释） */}
+              {msg.role === 'assistant' && msg.kind !== 'log' ? (
+                <Markdown text={msg.text} />
+              ) : (
+                msg.text
+              )}
+            </div>
+          )}
+        </>
+      )}
+      {!msg.parts?.length && msg.delegations && msg.delegations.length > 0 && (
+        <div className="delegation-list" style={{ marginTop: msg.text ? 6 : 0 }}>
+          {msg.delegations.map((d, i) => (
+            <div key={i} className={`delegation-item ${d.status}`}>
+              <span className="delegation-icon">
+                {d.status === 'running' ? '⏳' : d.status === 'failed' ? '⚠️' : '✅'}
+              </span>
+              <span className="delegation-agent">
+                @{d.agent}
+                {d.name && d.name !== d.agent ? `（${d.name}）` : ''}
+              </span>
+              <span className="delegation-task">
+                {(d.result ?? d.task).slice(0, 80)}{(d.result ?? d.task).length > 80 ? '…' : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {/* 耗时：所有助手消息都带（委派卡片是独立消息，故放在最外层而不是气泡内） */}
+      {msg.role === 'assistant' && msg.kind !== 'log' && (
+        <div className="msg-footer">
+          <ElapsedTimer startedAt={msg.startedAt} durationMs={msg.durationMs} streaming={msg.streaming} />
+        </div>
+      )}
+    </div>
+  );
+});
 
 export function ConversationPanel({
   messages,
   isGenerating,
   onSend,
+  onStop,
+  sessionId,
   mentions,
   workDir,
   dirLocked = false,
@@ -141,8 +316,82 @@ export function ConversationPanel({
 }: ConversationPanelProps) {
   const composerRef = useRef<ComposerInputHandle>(null);
   const streamRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
+  /** 用户是否在底部：只有粘底时才自动跟随 */
+  const atBottomRef = useRef(true);
+  const [atBottom, setAtBottom] = useState(true);
+  const [hasNew, setHasNew] = useState(false);
+  /** 用户点了工具行等手动操作后，短时间内不要因为高度变化把人拽回底部 */
+  const suspendUntilRef = useRef(0);
+  /** 切会话时 first id 会变：强制跳到底部 */
+  const firstIdRef = useRef<string | null>(null);
   const [dirInputOpen, setDirInputOpen] = useState(false);
   const [dirDraft, setDirDraft] = useState('');
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    const el = streamRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior });
+    atBottomRef.current = true;
+    setAtBottom(true);
+    setHasNew(false);
+  }, []);
+
+  const handleStreamScroll = () => {
+    const el = streamRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const bottom = distance < 32;
+    atBottomRef.current = bottom;
+    setAtBottom(bottom);
+    if (bottom) setHasNew(false);
+  };
+
+  /** 工具行展开/收起后高度变了，但不会触发 scroll；手动操作结束后重算一次 */
+  const refreshAtBottomLater = () => {
+    window.setTimeout(() => {
+      const el = streamRef.current;
+      if (!el) return;
+      const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
+      atBottomRef.current = bottom;
+      setAtBottom(bottom);
+      if (bottom) setHasNew(false);
+    }, 450);
+  };
+
+  // 内容/工具行变化后：只在用户本来就在底部时跟随
+  useLayoutEffect(() => {
+    const first = messages[0]?.id ?? null;
+    const switched = first !== null && first !== firstIdRef.current;
+    firstIdRef.current = first;
+
+    if (switched) {
+      scrollToBottom('auto');
+      return;
+    }
+    if (!atBottomRef.current) {
+      setHasNew(true);
+      return;
+    }
+    if (Date.now() < suspendUntilRef.current) return;
+    scrollToBottom('auto');
+  }, [messages, scrollToBottom]);
+
+  // 图片加载 / 工具行展开 / 面板换行：内容高度变了也要跟住
+  useEffect(() => {
+    const inner = innerRef.current;
+    if (!inner || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      if (!atBottomRef.current) {
+        setHasNew(true);
+        return;
+      }
+      if (Date.now() < suspendUntilRef.current) return;
+      scrollToBottom('auto');
+    });
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, [scrollToBottom]);
 
   /** 没选目录 = 没有产物的家，聊天被门禁挡住（与后端 400 同一条规则） */
   const noWorkDir = !workDir;
@@ -155,7 +404,8 @@ export function ConversationPanel({
   ) => {
     onSend(text, files, references);
     requestAnimationFrame(() => {
-      streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight, behavior: 'smooth' });
+      suspendUntilRef.current = 0;
+      scrollToBottom('smooth');
     });
   };
 
@@ -168,72 +418,40 @@ export function ConversationPanel({
 
   return (
     <aside className="conversation-panel">
-      <div className="chat-stream" ref={streamRef}>
-        {messages.length === 0 && (
-          <div className="chat-empty">
-            {noWorkDir ? '先选一个工作目录——会话与产物都跟着它走' : '描述你的设计需求，开始创作'}
+      <div className="chat-stream-wrap">
+        <div
+          className="chat-stream"
+          ref={streamRef}
+          onScroll={handleStreamScroll}
+          onPointerDown={() => {
+            // 手动展开工具行 / 选文字时，短时间内不要被高度变化拽回底部
+            suspendUntilRef.current = Date.now() + 400;
+          }}
+          onPointerUp={refreshAtBottomLater}
+        >
+          <div className="chat-stream-inner" ref={innerRef}>
+            {messages.length === 0 && (
+              <div className="chat-empty">
+                {noWorkDir ? '先选一个工作目录——会话与产物都跟着它走' : '描述你的设计需求，开始创作'}
+              </div>
+            )}
+            {messages.map((msg) => (
+              <MessageRow key={msg.id} msg={msg} sessionId={sessionId} onStop={onStop} />
+            ))}
           </div>
-        )}
-        {messages.map((msg) => (
-          <div key={msg.id} className={`chat-msg ${msg.role}${msg.kind === 'log' ? ' log' : ''}`}>
-            {msg.attachments && msg.attachments.length > 0 && (
-              <div className="chat-attachments">
-                {msg.attachments.map((url, i) => (
-                  <img key={i} className="chat-attachment" src={url} alt={`素材 ${i + 1}`} />
-                ))}
-              </div>
-            )}
-            {msg.references && msg.references.length > 0 && (
-              <div className="chat-references">
-                {msg.references.map((r, i) => (
-                  <span key={`${r.layout}:${r.id}:${i}`} className="chat-ref-chip">
-                    @{r.name}
-                  </span>
-                ))}
-              </div>
-            )}
-            {/* 思考块：仅助手消息（日志/用户不渲染思考）。默认折叠，见 ReasoningBlock */}
-            {msg.role === 'assistant' && msg.kind !== 'log' && (
-              <ReasoningBlock text={msg.reasoning ?? ''} streaming={msg.streaming} />
-            )}
-            {/* 纯委派卡片消息（text 空）：不渲染气泡，只渲染 delegation-list */}
-            {(msg.text || !msg.delegations || msg.delegations.length === 0) && (
-              <div className="chat-bubble">
-                {/* 助手的普通消息按 Markdown 渲染；用户输入与管线日志保持原样
-                    （理由见 Markdown.tsx 头注释） */}
-                {msg.role === 'assistant' && msg.kind !== 'log' ? (
-                  <Markdown text={msg.text} />
-                ) : (
-                  msg.text
-                )}
-              </div>
-            )}
-            {msg.delegations && msg.delegations.length > 0 && (
-              <div className="delegation-list" style={{ marginTop: msg.text ? 6 : 0 }}>
-                {msg.delegations.map((d, i) => (
-                  <div key={i} className={`delegation-item ${d.status}`}>
-                    <span className="delegation-icon">
-                      {d.status === 'running' ? '⏳' : d.status === 'failed' ? '⚠️' : '✅'}
-                    </span>
-                    <span className="delegation-agent">
-                      @{d.agent}
-                      {d.name && d.name !== d.agent ? `（${d.name}）` : ''}
-                    </span>
-                    <span className="delegation-task">
-                      {(d.result ?? d.task).slice(0, 80)}{(d.result ?? d.task).length > 80 ? '…' : ''}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {/* 耗时：所有助手消息都带（委派卡片是独立消息，故放在最外层而不是气泡内） */}
-            {msg.role === 'assistant' && msg.kind !== 'log' && (
-              <div className="msg-footer">
-                <ElapsedTimer startedAt={msg.startedAt} durationMs={msg.durationMs} streaming={msg.streaming} />
-              </div>
-            )}
-          </div>
-        ))}
+        </div>
+        {!atBottom ? (
+          <button
+            type="button"
+            className="chat-jump-bottom"
+            onClick={() => {
+              suspendUntilRef.current = 0;
+              scrollToBottom('smooth');
+            }}
+          >
+            ↓ {hasNew ? '新消息' : '回到底部'}
+          </button>
+        ) : null}
       </div>
 
       <div className="input-area">
@@ -300,7 +518,13 @@ export function ConversationPanel({
 
             <div className="composer-spacer" />
 
-            {isGenerating && <span className="composer-spinner" title="生成中…" role="status" aria-label="生成中" />}
+            {isGenerating && onStop ? (
+              <button type="button" className="composer-stop" onClick={onStop} title="停止生成">
+                停止
+              </button>
+            ) : isGenerating ? (
+              <span className="composer-spinner" title="生成中…" role="status" aria-label="生成中" />
+            ) : null}
             <ThinkingControl
               modelName={modelName}
               value={thinking}

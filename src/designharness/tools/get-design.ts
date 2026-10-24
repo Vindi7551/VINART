@@ -94,6 +94,7 @@ export function semanticView(doc: DesignDocument): unknown {
                   : {}),
               }
             : {}),
+          ...(e.type === 'shape' && e.kind === 'polygon' ? { points: e.points } : {}),
           ...(e.type === 'image'
             ? {
                 ...(e.fit !== undefined ? { fit: e.fit } : {}),

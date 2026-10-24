@@ -230,6 +230,14 @@ export const IconRender = ({ size }: IconProps) => (
   </Glyph>
 );
 
+/** 网格 —— 3×3 参考线 */
+export const IconGrid = ({ size }: IconProps) => (
+  <Glyph size={size}>
+    <rect x="2.5" y="2.5" width="11" height="11" rx="1" />
+    <path d="M6.2 2.5v11M9.8 2.5v11M2.5 6.2h11M2.5 9.8h11" />
+  </Glyph>
+);
+
 export const IconUp = ({ size }: IconProps) => (
   <Glyph size={size}>
     <path d="M4 9.8 8 5.8l4 4" />

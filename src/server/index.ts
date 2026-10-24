@@ -18,7 +18,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 // 字体库（服务端读盘 → @font-face CSS；浏览器只拿到 URL）
 import {
@@ -30,8 +30,25 @@ import {
 } from '../fonts/registry';
 // 文档模型（`buildLayoutNote` 要把"当前打开的版式"讲给 LLM 听 —— 结构见 `vocabulary.ts` 文件头）
 import { iterElements, type DesignDocument } from '../document/vocabulary';
+// 出图参数归一化（纯函数，单独一个文件便于直测）
+import { normalizeRenderOptions } from './render-options';
 // 草图里的内置占位图 id（`planToIntent` 用同一个常量）
 import { PLACEHOLDER_ASSET } from '../schema/plan';
+import {
+  appendReasoningPart,
+  appendTextPart,
+  answerQuestionPart,
+  cancelQuestionPart,
+  finishDelegationPart,
+  finishToolPart,
+  partsText,
+  startDelegationPart,
+  startQuestionPart,
+  startToolPart,
+  type AskQuestion,
+  type TurnPart,
+} from '../designharness/session/turn-parts';
+import { answerPending, cancelPending } from '../designharness/session/ask-registry';
 
 const PORT = Number(process.env.PORT) || 8787;
 
@@ -41,9 +58,10 @@ const PNG_PRIORITY = ['final.png'];
 
 /**
  * 版式编辑数据链路(前端逐元素编辑的持久层):
- *   GET  /api/layout/<name>/data   → { name, doc, html }（html = emitDocument 现场生成）
+ *   GET  /api/layout/<name>/data   → { name, dir, doc, html }（html = emitDocument 现场生成）
  *   POST /api/layout/<name>/save   → body { doc } 写 doc.json
- *   POST /api/layout/<name>/render → emitDocument + blink 渲染 final.png
+ *   POST /api/layout/<name>/render → body 可选 { deviceScaleFactor, format, quality, outputDir, filename }
+ *                                    emitDocument + blink 渲染工作区 final.png，并另存导出副本
  * name 只允许字母数字横线下划线,防路径穿越。
  *
  * ⚠️ **三个动作都必须带 `?session=`**（render 必须有会话，save/data 建议带）。
@@ -253,6 +271,8 @@ async function handleLayout(
     return res.end(
       JSON.stringify({
         name,
+        // 版式目录的绝对路径：出图弹窗拿它当「保存到」的默认值与占位提示。
+        dir,
         doc,
         html,
         assets,
@@ -301,7 +321,12 @@ async function handleLayout(
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end(`no doc: ${name}`);
     }
-    console.log(`[render] ${name} → final`);
+    // 出图参数：body 可省；省 = 2x PNG，导出到版式目录的 final.png。
+    const opts = normalizeRenderOptions(await readJsonBody(req).catch(() => ({})));
+    console.log(
+      `[render] ${name} → final (${opts.deviceScaleFactor}x, ${opts.format}` +
+        `${opts.format === 'jpeg' ? ` q${opts.quality}` : ''})`,
+    );
     running = { stepId: `render:${name}` };
     try {
       // ⭐ 新链：emitDocument（词汇 → HTML）+ blink 渲染 PNG。
@@ -321,29 +346,92 @@ async function handleLayout(
       });
       const fontChecks = usedFontChecks(doc);
       const { html } = emitDocument(doc, { assets, faceCss });
+
+      // 输出尺寸保护：4× 只对小画布安全。超过 ~80MP / 单边 16000px 时
+      // Chromium 的 surface 会吃几百 MB，甚至直接失败；宁可提前报清楚。
+      const outW = Math.round(doc.canvas.width * opts.deviceScaleFactor);
+      const outH = Math.round(doc.canvas.height * opts.deviceScaleFactor);
+      if (outW * outH > 80_000_000 || outW > 16_000 || outH > 16_000) {
+        throw new Error(
+          `输出尺寸过大：${outW}×${outH}（约 ${(outW * outH / 1_000_000).toFixed(0)} MP）。` +
+            '请降低倍率；大幅面建议用 2×。',
+        );
+      }
+
       const { createBlinkRenderer } = await import('../render/rasterize/blink-renderer');
       const renderer = await createBlinkRenderer();
       try {
+        // ⭐ canonical：工作区始终保留一份 `final.png` —— 画廊/预览/缩略图只认它。
         const out = await renderer.render(
           { html },
           dir,
           {
             width: doc.canvas.width,
             height: doc.canvas.height,
-            deviceScaleFactor: 2,
+            deviceScaleFactor: opts.deviceScaleFactor,
             format: 'png',
             filename: 'final',
             fontChecks,
           },
         );
+
+        // 导出副本：默认仍是版式目录；选了别处就写别处。
+        //  - PNG 且同倍率 ⇒ 直接 copy canonical（不重渲、逐字节一致）
+        //  - JPEG ⇒ 用同一份 HTML 再渲一次（Chromium 的 PNG/JPEG 编码不同，
+        //    没有现成转码器；宁可多渲一次，也不引入 sharp 这类原生依赖）
+        const targetDir = opts.outputDir ? resolve(opts.outputDir) : dir;
+        if (existsSync(targetDir) && !statSync(targetDir).isDirectory()) {
+          throw new Error(`保存位置不是目录：${targetDir}`);
+        }
+        mkdirSync(targetDir, { recursive: true });
+        const ext = opts.format === 'jpeg' ? 'jpg' : 'png';
+        const targetPath = join(targetDir, `${opts.filename}.${ext}`);
+        let savedTo = out.imagePath;
+        let size = out.size;
+        if (targetPath !== out.imagePath) {
+          if (opts.format === 'png') {
+            copyFileSync(out.imagePath, targetPath);
+          } else {
+            const exported = await renderer.render(
+              { html },
+              targetDir,
+              {
+                width: doc.canvas.width,
+                height: doc.canvas.height,
+                deviceScaleFactor: opts.deviceScaleFactor,
+                format: 'jpeg',
+                quality: opts.quality,
+                filename: opts.filename,
+                fontChecks,
+              },
+            );
+            size = exported.size;
+          }
+          savedTo = targetPath;
+        }
+
+        // ⚠️ 先放锁再回响应：`dispose()`（~1.5s）在 finally 里，若等它结束才放锁，
+        //    用户刚看到"出图完成"就再点一次，会立刻吃到 409「已有任务在跑」（实测）。
+        //    放锁提前到响应前；旧 renderer 的 dispose 与新任务并存一小会儿没关系。
+        running = null;
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ ok: true, png: out.imagePath }));
+        res.end(
+          JSON.stringify({
+            ok: true,
+            png: out.imagePath,
+            savedTo,
+            width: out.width,
+            height: out.height,
+            size,
+          }),
+        );
         // ⭐ 出完图**推一次**：画廊据此重拉清单。
         //    原来这个事件只有"对话链产出"才会推（见 `/chat` 里 `evt.kind === 'artifacts'`）——
         //    直接调本端点出图，前端永远不知道 ⇒ 只能手动 F5。
         pushSessionEvent(sessionId, 'artifacts', { layout: name, png: out.imagePath });
       } finally {
-        await renderer.dispose();
+        // 响应已经发出去了；dispose 失败不能再走外层 catch 写 500（headers 已发）
+        await renderer.dispose().catch(() => {});
       }
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -375,7 +463,7 @@ async function handleSessions(
 ) {
   const JSON_HDR = { 'Content-Type': 'application/json; charset=utf-8' };
   const sessionIdMatch =
-    /^\/api\/sessions\/([\w.-]+)(?:\/(events|chat|artifacts|workdir|file|stream|active)(?:\/(.*))?)?$/.exec(path);
+    /^\/api\/sessions\/([\w.-]+)(?:\/(events|chat|artifacts|workdir|file|stream|active|answer|abort)(?:\/(.*))?)?$/.exec(path);
 
   // 列表：一级分组——条目带 home（= 工作目录 = 项目根），前端按它分组
   if (path === '/api/sessions' && method === 'GET') {
@@ -540,6 +628,34 @@ async function handleSessions(
     res.writeHead(200, JSON_HDR);
     return res.end(JSON.stringify({ ok: true }));
   }
+  // 结构化提问：用户提交答案（ask_user 的 Promise 在这里 resolve）
+  if (sub === 'answer' && method === 'POST') {
+    const body = (await readJsonBody(req)) as Record<string, unknown>;
+    const questionId = typeof body.questionId === 'string' ? body.questionId : '';
+    const answers =
+      body.answers && typeof body.answers === 'object' && !Array.isArray(body.answers)
+        ? (body.answers as Record<string, string | string[]>)
+        : null;
+    if (!questionId || !answers) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('questionId / answers 不合法');
+    }
+    if (!answerPending(sessionId, questionId, answers)) {
+      res.writeHead(409, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('没有匹配的待回答问题（可能已提交或已停止）');
+    }
+    res.writeHead(200, JSON_HDR);
+    return res.end(JSON.stringify({ ok: true }));
+  }
+
+  // 停止当前生成：停模型流 / 长工具 / 待回答问题
+  if (sub === 'abort' && method === 'POST') {
+    cancelPending(sessionId);
+    getChatSession(sessionId).abort();
+    res.writeHead(200, JSON_HDR);
+    return res.end(JSON.stringify({ ok: true }));
+  }
+
   // LLM 对话(SSE 流式;完成后 user/assistant 消息落盘)
   if (sub === 'chat' && method === 'POST') {
     let body: {
@@ -695,8 +811,10 @@ async function handleSessions(
       // 整轮耗时计时起点：用户消息已落盘之后、模型请求之前。
       // 口径 = 含工具执行的整轮（用户明确要求），不是首字节延迟。
       const roundStart = Date.now();
-      // 本轮思考链：流式片段先拼（前端要边想边显示），终章 chunk 再给出权威全文覆盖
+      // 本轮思考链：终章 full chunk 只用于审计，不再发给前端（前端按轮次拼 parts）
       let reasoningFull = '';
+      /** 本轮的有序 parts：文本 / 思考 / 工具；整轮结束随 assistant message 落盘 */
+      let parts: TurnPart[] = [];
 
       // tool-call 落账 promise 收集：流结束先等账本落齐再发 done——
       // 否则「对话刚结束就刷新会话」可能与写盘竞态，账本读到不完整
@@ -706,33 +824,92 @@ async function handleSessions(
         activeLayout: body.activeLayout as string | undefined,
         reasoningEffort: thinking as 'off' | 'low' | 'high' | 'max' | undefined,
         // 进度事件分流：子 agent spawn/result → 'agent'（委派卡片）；
-        // kind:'tool-call'（主 AI 工具循环中间轮）→ 落转录账本 + 'tool' 实时推——
-        // 不落账的话刷新会话后「AI 调过工具」完全蒸发；不进模型上下文，纯审计
+        // kind:'tool-call'（主 AI 工具循环中间轮）→ start/end 两个事件，
+        // 前端按 callId 更新同一行工具条；end 仍落审计账本
         // kind:'artifacts'（工具产出新图）→ 'artifacts'（前端实时刷 gallery）
         onEvent: (evt) => {
           if (evt.kind === 'tool-call') {
-            pendingWrites.push(
-              transcript.appendEvent(sessionId, {
-                ts: new Date().toISOString(),
-                kind: 'action',
-                action: 'tool-call',
-                detail: evt,
-              } as Parameters<typeof transcript.appendEvent>[1]),
-            );
-            send('tool', evt);
+            const callId = String(evt.callId ?? `${String(evt.name ?? 'tool')}_${crypto.randomUUID()}`);
+            const name = String(evt.name ?? 'tool');
+            const args = typeof evt.args === 'string' ? evt.args : undefined;
+            if (evt.phase === 'start') {
+              parts = startToolPart(parts, { callId, name, ...(args ? { args } : {}) });
+              send('tool-start', { ...evt, callId, name });
+            } else {
+              const ok = evt.ok !== false;
+              const result = typeof evt.result === 'string' ? evt.result : undefined;
+              const ms = typeof evt.ms === 'number' ? evt.ms : undefined;
+              parts = finishToolPart(parts, callId, {
+                status: ok ? 'done' : 'failed',
+                ...(result !== undefined ? { result } : {}),
+                ...(ms !== undefined ? { ms } : {}),
+              });
+              send('tool', { ...evt, callId, name });
+              pendingWrites.push(
+                transcript.appendEvent(sessionId, {
+                  ts: new Date().toISOString(),
+                  kind: 'action',
+                  action: 'tool-call',
+                  detail: evt,
+                } as Parameters<typeof transcript.appendEvent>[1]),
+              );
+            }
           } else if (evt.kind === 'artifacts') send('artifacts', evt);
           else if (evt.kind === 'doc-patch') send('doc-patch', evt);
-          else send('agent', evt);
+          else if (evt.kind === 'ask-user') {
+            parts = startQuestionPart(parts, {
+              questionId: String(evt.questionId ?? ''),
+              questions: (Array.isArray(evt.questions) ? evt.questions : []) as AskQuestion[],
+            });
+            send('question', evt);
+          } else if (evt.kind === 'ask-user-answered') {
+            parts = answerQuestionPart(
+              parts,
+              String(evt.questionId ?? ''),
+              (evt.answers ?? {}) as Record<string, string | string[]>,
+            );
+            send('question-answered', evt);
+          } else if (evt.kind === 'ask-user-cancelled') {
+            parts = cancelQuestionPart(parts, String(evt.questionId ?? ''));
+            send('question-cancelled', evt);
+          } else {
+            if (evt.kind === 'agent-spawn') {
+              parts = startDelegationPart(parts, {
+                runId: String(evt.runId ?? ''),
+                label: String(evt.label ?? '子 agent'),
+                ...(typeof evt.name === 'string' && evt.name ? { name: evt.name } : {}),
+                ...(typeof evt.brief === 'string' && evt.brief ? { task: evt.brief } : {}),
+              });
+            } else if (evt.kind === 'agent-result') {
+              const ok = evt.stopReason === 'completed';
+              parts = finishDelegationPart(parts, String(evt.runId ?? ''), {
+                status: ok ? 'done' : 'failed',
+                ...(typeof evt.summary === 'string' && evt.summary
+                  ? { summary: evt.summary }
+                  : typeof evt.diagnostic === 'string' && evt.diagnostic
+                    ? { summary: evt.diagnostic }
+                    : { summary: ok ? '完成' : '失败' }),
+                ...(Array.isArray(evt.artifacts) ? { artifacts: evt.artifacts.map(String) } : {}),
+              });
+            }
+            send('agent', evt);
+          }
         },
       })) {
-        if (chunk.content) send('chunk', { content: chunk.content });
-        // 思考链：与 chunk 平行的独立事件——前端单独渲染成可折叠块。
-        // 终章 chunk 带的是**整轮权威全文**（finishReason 'stop' 且 content 为空那个），
-        // 用 full 标志区分：`full` 事件让前端**覆盖**而非追加（流式期是分段拼的）。
+        // 中止时 ChatSession 会把 fullContent 再 yield 一次（finishReason=error）——
+        // 流式期已经逐段发过，不能再当增量追加，否则前端文本翻倍。
+        if (chunk.content && chunk.finishReason !== 'error') {
+          parts = appendTextPart(parts, chunk.content);
+          send('chunk', { content: chunk.content });
+        }
+        // 思考链：逐轮增量发；终章 / 中止时的 full 只用于审计，不发（否则会变成一个末尾大思考块）
         if (chunk.reasoningContent) {
-          const isFull = chunk.finishReason === 'stop' && !chunk.content;
-          if (isFull) reasoningFull = chunk.reasoningContent;
-          send('reasoning', { content: chunk.reasoningContent, full: isFull });
+          const isFinal = chunk.finishReason === 'stop' || chunk.finishReason === 'error';
+          if (isFinal) reasoningFull = chunk.reasoningContent;
+          else {
+            parts = appendReasoningPart(parts, chunk.reasoningContent);
+            send('reasoning', { content: chunk.reasoningContent, full: false });
+          }
         }
       }
       await Promise.all(pendingWrites);
@@ -744,20 +921,31 @@ async function handleSessions(
         last && last.role === 'assistant' && typeof last.content === 'string'
           ? last.content
           : '';
+      const assistantText = partsText(parts) || full;
       const durationMs = Date.now() - roundStart;
-      if (full) {
+      if (parts.length > 0) {
+        await transcript.appendEvent(sessionId, {
+          ts: new Date().toISOString(),
+          kind: 'message',
+          id: `msg_${crypto.randomUUID().slice(0, 8)}`,
+          role: 'assistant',
+          text: assistantText,
+          parts,
+          // 耗时随消息落盘——历史回放靠它复原「用时 X s」（只在前端算的话刷新即丢）
+          durationMs,
+        });
+      } else if (full) {
         await transcript.appendEvent(sessionId, {
           ts: new Date().toISOString(),
           kind: 'message',
           id: `msg_${crypto.randomUUID().slice(0, 8)}`,
           role: 'assistant',
           text: full,
-          // 耗时随消息落盘——历史回放靠它复原「用时 X s」（只在前端算的话刷新即丢）
           durationMs,
         });
       }
       // 思考链**默认不落盘**（体积 + 不进模型：见 SessionEvent 注释）。
-      // 若确需审计，把 REASONING_PERSIST 环境变量置 1 即写入事件（离线分析用）。
+      // 若确需审计，把 VINART_PERSIST_REASONING 环境变量置 1 即写入事件（离线分析用）。
       if (reasoningFull && process.env.VINART_PERSIST_REASONING === '1') {
         await transcript.appendEvent(sessionId, {
           ts: new Date().toISOString(),
@@ -766,7 +954,7 @@ async function handleSessions(
           detail: { text: reasoningFull },
         } as Parameters<typeof transcript.appendEvent>[1]);
       }
-      send('done', { ok: true, durationMs: full ? durationMs : 0 });
+      send('done', { ok: true, durationMs: parts.length ? durationMs : 0 });
       res.end();
     } catch (e) {
       send('error', { message: String((e as Error).message ?? e) });

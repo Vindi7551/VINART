@@ -2,7 +2,7 @@
  * `generate_assets` 工具 —— 生成素材文件（**不改 doc**）。
  *
  * 两类：
- * - `images`：商品/场景图，走 `assetsgen` 的生图模型 → PNG；
+ * - `images`：照片 / 插画 / 场景 / 纹理，走 `assetsgen` 的生图模型 → PNG；
  * - `icons`：主 AI 直接写的**线框 SVG** → 安全检查后落盘。
  *
  * ⚠️ 只落盘，**不发 artifacts**：素材文件本身不会改变 doc；等 AI 用
@@ -162,7 +162,7 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
   return {
     name: 'generate_assets',
     description:
-      '生成素材文件，但不改 doc：images 走生图模型（商品/场景，PNG）；icons 是主 AI 直接写的线框 SVG ' +
+      '生成素材文件，但不改 doc：images 走生图模型（照片 / 插画 / 场景 / 纹理，PNG）；icons 是主 AI 直接写的线框 SVG ' +
       '（viewBox="0 0 24 24" fill="none" stroke="currentColor"）。生成后用 patch_doc 把对应 image/svg 节点的 ' +
       'asset 指到文件名。',
     parameters: {
@@ -171,7 +171,7 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
       properties: {
         images: {
           type: 'array',
-          description: '生图订单（商品/场景）',
+          description: '生图订单（照片 / 插画 / 场景 / 纹理）',
           items: {
             type: 'object',
             additionalProperties: false,
@@ -186,7 +186,7 @@ export function createGenerateAssetsTool(config: { sessionId: string }): AgentTo
               references: {
                 type: 'array',
                 description:
-                  '参考图：直接写文件名 —— 商品照写 uploads/xxx.png，' +
+                  '参考图：直接写文件名 —— 用户上传的实拍照片写 uploads/xxx.png，' +
                   '版式目录里的文件写 xxx.png（方舟最多 14 张）',
                 items: { type: 'string' },
               },

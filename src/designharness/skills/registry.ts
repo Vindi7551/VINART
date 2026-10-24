@@ -153,7 +153,7 @@ export function readSkillFile(
   rel: string,
 ): { ok: true; content: string } | { ok: false; error: string } {
   const dir = skillDirOf(skill);
-  if (!dir) return { ok: false, error: '该 skill 无目录（内置 skill 不支持读取目录内文件）' };
+  if (!dir) return { ok: false, error: '该 skill 无目录' };
   const base = resolve(dir);
   const abs = resolve(base, rel);
   if (abs !== base && !abs.startsWith(base + sep)) {

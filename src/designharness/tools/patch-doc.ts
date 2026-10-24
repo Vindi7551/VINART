@@ -40,7 +40,8 @@ export function createPatchDocTool(config: { sessionId: string }): AgentTool {
       '字体 fontFamily / fontSizePx / weight / italic / letterSpacing / lineHeight / wordSpacing / stretch；' +
       '文字 align / alignLast / textTransform / smallCaps / underline / strike / decoration / baselineShift / dropCap / writingMode / direction / curve / path（仅 text，沿路径） / wrap / text（纯文本收成单 run） / runs（整段替换，TextRun[]，至少一段；同一段多色/多字号用它）；' +
       '图片 fit / position / render；素材 asset（仅 image/svg）；name；' +
-      '全部合法才写；有任何一条错就整批不写。group 不支持 patch。先用 get_design 确认节点 id 和 rect01/frame01。',
+      '全部合法才写；有任何一条错就整批不写。group 不支持 patch。' +
+      '**增删元素 / 图层、跨层移动、图层排序请用 edit_structure**。先用 get_design 确认节点 id 和 rect01/frame01。',
     parameters: {
       type: 'object',
       additionalProperties: false,

@@ -361,7 +361,11 @@ export function createBlinkRenderer(opts: BlinkRendererOptions = {}): BlinkRende
         mkdirSync(outputDir, { recursive: true });
 
         const ext = format === 'jpeg' ? 'jpg' : 'png';
-        const safeName = nameHint ? nameHint.replace(/[^\w.-]+/g, '_') : `render-${Date.now()}`;
+        // ⚠️ 保留 Unicode 字母/数字：`\w` 只认 ASCII，会把中文文件名吃成 `_`。
+        //    路径分隔符等仍会被替换掉（这里必须防 `../`）。
+        const safeName = nameHint
+          ? nameHint.replace(/[^\p{L}\p{N}._-]+/gu, '_')
+          : `render-${Date.now()}`;
         const imagePath = join(outputDir, `${safeName}.${ext}`);
 
         // ── 截图：元素 或 视口 ──

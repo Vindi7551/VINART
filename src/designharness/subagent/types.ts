@@ -7,9 +7,8 @@
  *   进程外/ACP）的产物；这里只有一个进程内实现，协商是空转
  * - **深度恒 1**：子 agent 的工具表里没有 spawn，不存在递归委派，因此也不需要
  *   DSH 那套持久化深度预算
- * - 权限边界：子 agent 没有问用户的通道（工具全是确定性本地操作），
- *   烧钱动作（生图）天然进不来——与「spec 变更自动渲免费 / 生图须用户确认」的
- *   自动化边界咬合
+ * - 权限边界：子 agent 没有问用户的通道；工具由主 AI 按 job 显式授权
+ *   （写工具绑定 layout，生图工具也必须显式 grant）
  *
  * 缓存约定（宿主负责，见 runner）：
  *   messages = [system, ...seed, user(brief)]
@@ -38,6 +37,11 @@ export interface AgentToolContext {
    * 工具据此决定写哪个 `designs/<layout>/doc.json`，AI 不需要自己传 layout。
    */
   activeLayout?: string;
+  /**
+   * 本轮用户上传的素材（相对工作目录的路径，如 `uploads/chat-xxx.png`）。
+   * `spawn_agents` 可以把它作为子 agent 的默认图片附件。
+   */
+  attachments?: string[];
 }
 
 export interface AgentToolResult {

@@ -4,17 +4,33 @@ import { PreviewPanel } from './PreviewPanel';
 import { ConversationPanel } from './ConversationPanel';
 import { ArtifactGallery, artifactDataUrl } from './ArtifactGallery';
 import { applyPatches, type DocPatch } from '../document/patch';
+import { applyStructure } from '../document/structure';
 import { SessionListPanel } from './SessionListPanel';
 import { DirectoryBrowser } from './DirectoryBrowser';
 import { EditPanel } from './EditPanel';
+import { RenderDialog } from './RenderDialog';
 import { ToolBar } from './ToolBar';
+import type { RenderJobOptions, RenderJobResult } from '../render/options';
 import { shouldFollowSelection, toolForLayer, type ToolId } from './tools';
-import type { Message, DelegationRecord, ChatReference, MentionItem } from './types';
+import type { Message, ChatReference, MentionItem } from './types';
 import type { PreviewData, HostSignal, SessionItem, ThinkingLevel } from './types';
 import { iterElements } from '../document/vocabulary';
 import { fieldsFor, type SelectionSnapshot } from '../editor/inspector';
 import { findElement, findLayer, type DesignDocument } from '../document/vocabulary';
-import { createEditorStack, historyEntries, type EditorStack } from '../editor/editor-stack';
+import { createEditorStack, historyEntries, pushCommand, type EditorStack } from '../editor/editor-stack';
+import {
+  appendReasoningPart,
+  appendTextPart,
+  answerQuestionPart,
+  cancelQuestionPart,
+  finishDelegationPart,
+  finishToolPart,
+  startDelegationPart,
+  startQuestionPart,
+  startToolPart,
+  type AskQuestion,
+  type TurnPart,
+} from '../designharness/session/turn-parts';
 
 // ══════════════════════════════════════════════════════════
 // ⚠️ Agent 层已清空，等待重新设计
@@ -74,16 +90,6 @@ function rememberedWorkDirs(): string[] {
   } catch {
     return [];
   }
-}
-
-/** 工具调用账本事件 → 一行摘要（实时 SSE 与刷新重放共用同一格式，前后一致） */
-function formatToolLine(d: { name?: unknown; ok?: unknown; ms?: unknown; result?: unknown }): string {
-  const name = String(d.name ?? '?');
-  const mark = d.ok ? '✓' : '✗';
-  const ms = typeof d.ms === 'number' ? ` ${d.ms >= 1000 ? (d.ms / 1000).toFixed(1) + 's' : d.ms + 'ms'}` : '';
-  const res = String(d.result ?? '');
-  const brief = res ? ' → ' + res.slice(0, 120) + (res.length > 120 ? '…' : '') : '';
-  return `🔧 ${name} ${mark}${ms}${brief}`;
 }
 
 /**
@@ -201,77 +207,28 @@ export function App() {
           detail?: Record<string, unknown>;
           /** 助手消息的整轮耗时（含工具）；老数据无此字段 → 不渲染计时 */
           durationMs?: number;
+          /** 新格式：助手一轮的有序 parts（文本/思考/工具） */
+          parts?: TurnPart[];
         }>;
         /** 服务端 session meta 记录的当前版式（set-active / 上一轮 chat） */
         activeLayout?: string | null;
       };
       const out: Message[] = [];
-      let card: Message | null = null;
-      const flush = () => {
-        if (card) out.push(card);
-        card = null;
-      };
       for (const e of data.events) {
         if (e.kind === 'message') {
-          flush();
           out.push({
             id: e.id ?? crypto.randomUUID(),
             role: (e.role as 'user' | 'assistant') ?? 'assistant',
             text: e.text ?? '',
             // 历史回放复原耗时（用户要求刷新/切会话后仍显示「用时 X s」）
             ...(typeof e.durationMs === 'number' ? { durationMs: e.durationMs } : {}),
-          });
-        } else if (e.kind === 'action' && e.action === 'agent-spawn') {
-          flush();
-          const d = e.detail ?? {};
-          card = {
-            id: `delegation_${String(d.runId ?? crypto.randomUUID())}`,
-            role: 'assistant',
-            text: '',
-            delegations: [{
-              name: (d.name as string) ?? undefined,
-              agent: String(d.label ?? '子 agent'),
-              task: String(d.brief ?? ''),
-              status: 'running',
-            }],
-          };
-        } else if (e.kind === 'action' && e.action === 'agent-result') {
-          const d = e.detail ?? {};
-          const rec: DelegationRecord = {
-            name: (d.name as string) ?? undefined,
-            agent: String(d.label ?? '子 agent'),
-            task: '',
-            status: d.stopReason === 'completed' ? 'done' : 'failed',
-            result:
-              d.stopReason === 'completed'
-                ? String(d.summary ?? '完成')
-                : String(d.diagnostic ?? d.stopReason ?? '失败'),
-          };
-          if (card) {
-            const i = card.delegations!.findIndex((x) => x.agent === rec.agent && x.status === 'running');
-            if (i >= 0) card.delegations![i] = rec;
-            else card.delegations!.push(rec);
-          } else {
-            card = {
-              id: `delegation_${String(d.runId ?? crypto.randomUUID())}`,
-              role: 'assistant',
-              text: '',
-              delegations: [rec],
-            };
-          }
-        } else if (e.kind === 'action' && e.action === 'tool-call') {
-          // 主 AI 工具循环的中间轮：一行 log 摘要（与实时 SSE 'tool' 同格式）
-          flush();
-          out.push({
-            id: `tool_${crypto.randomUUID()}`,
-            role: 'assistant',
-            kind: 'log',
-            text: formatToolLine(e.detail ?? {}),
+            ...(e.parts?.length ? { parts: e.parts } : {}),
           });
         }
+        // agent-spawn / agent-result / tool-call 审计事件不再单独渲染：
+        // 新格式 assistant message 自带 parts（含 delegation）。
         // 其他 action（open-layout/save-spec/render/pipeline-*）历史不进对话流
       }
-      flush();
       setMessages(out);
       // 恢复服务端记录的 active：有就打开；没有就空预览（不自动开最近/唯一）
       const active = data.activeLayout;
@@ -447,6 +404,8 @@ export function App() {
   // ── 版式编辑状态(产物点击 → 加载 → 逐元素修改 → 保存/重渲)──
   const [layout, setLayout] = useState<PreviewData | null>(null);
   const [layoutBusy, setLayoutBusy] = useState(false);
+  /** 出图设置弹窗（工具栏「出图」不再是"点一下就走"） */
+  const [renderDialogOpen, setRenderDialogOpen] = useState(false);
   /** 选中的图层(检查器与 iframe 双向同步) */
   const [selectedLayer, setSelectedLayer] = useState<string | null>(null);
   /**
@@ -551,6 +510,7 @@ export function App() {
     layout?: unknown;
     doc?: unknown;
     patches?: unknown;
+    structure?: unknown;
     assets?: unknown;
   }) {
     const name = typeof data.layout === 'string' ? data.layout : '';
@@ -558,6 +518,7 @@ export function App() {
     if (!cur || cur.name !== name) return;
 
     let nextDoc: PreviewData['doc'] | null = null;
+    let structural = false;
     if (Array.isArray(data.patches)) {
       const r = applyPatches(cur.doc, data.patches as DocPatch[]);
       if (r.errors.length) {
@@ -565,10 +526,24 @@ export function App() {
         return;
       }
       nextDoc = r.doc;
+    } else if (Array.isArray(data.structure)) {
+      const r = applyStructure(cur.doc, data.structure);
+      if (r.errors.length) {
+        console.warn('[doc-structure] 应用失败', r.errors);
+        return;
+      }
+      nextDoc = r.doc;
+      structural = true;
     } else if (data.doc && typeof data.doc === 'object') {
       nextDoc = data.doc as PreviewData['doc'];
     }
     if (!nextDoc) return;
+
+    // AI 结构变更也进统一撤销栈：删除/增层之后用户还能 Ctrl+Z
+    if (structural) {
+      pushCommand(getStack(name, cur.doc), nextDoc, 'AI 结构编辑');
+      setHistTick((n) => n + 1);
+    }
 
     // 新引用素材的 URL（generate_assets 刚生成的文件）——合并进当前 assets，
     // 否则 PreviewPanel 就地重发图层时拿不到文件地址（刷新 /data 后才对）。
@@ -912,12 +887,32 @@ export function App() {
   const [rightColCollapsed, setRightColCollapsed] = useState<boolean>(() =>
     localStorage.getItem('vinart.rightColCollapsed') === '1',
   );
+  /**
+   * 右栏收起/展开：**宽度动画**（画布连续被推），但动画期间把聊天内容
+   * `display:none`，避免长对话在每一帧重新换行；动画结束再显示内容。
+   */
+  const [rightColAnim, setRightColAnim] = useState<'in' | 'out' | null>(null);
   const toggleRightCol = useCallback(() => {
-    setRightColCollapsed((c) => {
-      localStorage.setItem('vinart.rightColCollapsed', c ? '0' : '1');
-      return !c;
-    });
-  }, []);
+    if (rightColAnim) return;
+    if (rightColCollapsed) {
+      localStorage.setItem('vinart.rightColCollapsed', '0');
+      setRightColCollapsed(false);
+      setRightColAnim('in');
+    } else {
+      localStorage.setItem('vinart.rightColCollapsed', '1');
+      setRightColAnim('out');
+    }
+  }, [rightColCollapsed, rightColAnim]);
+  const finishRightColAnim = useCallback(() => {
+    if (rightColAnim === 'out') setRightColCollapsed(true);
+    setRightColAnim(null);
+  }, [rightColAnim]);
+  // transitionend 偶发丢失（切 tab / reduced motion）时兜底
+  useEffect(() => {
+    if (!rightColAnim) return;
+    const t = window.setTimeout(finishRightColAnim, 260);
+    return () => window.clearTimeout(t);
+  }, [rightColAnim, finishRightColAnim]);
   // ── 左侧对话列表:宽度可拖拽 + 收起/展开(镜像右栏那套) ──
   const LEFT_COL_MIN = 180;
   const LEFT_COL_MAX = 480;
@@ -1088,45 +1083,46 @@ export function App() {
     }
   }, [sessionId]);
 
-  /** 触发 final 重渲(几秒,零 API),完成后刷新画廊与 PNG 预览 */
-  const handleRenderLayoutLive = useCallback(async () => {
-    const cur = layoutRef.current;
-    if (!cur) return;
-    setLayoutBusy(true);
-    setMessages((prev) => [
-      ...prev,
-      { id: crypto.randomUUID(), role: 'assistant', text: `⟳ 重渲 ${cur.name} → final…` },
-    ]);
-    try {
-      const resp = await fetch(layoutApiUrl(cur, 'render', sessionId), { method: 'POST' });
-      const result = (await resp.json()) as { ok: boolean; log?: string };
-      if (result.ok) {
-        setGalleryKey((k) => k + 1);
-        logSessionAction('render', { layout: cur.name });
-        setMessages((prev) => [
-          ...prev,
-          { id: crypto.randomUUID(), role: 'assistant', text: '✓ 重渲完成,成品已更新' },
-        ]);
-      } else {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            kind: 'log',
-            text: `✗ 重渲失败\n${result.log ?? ''}`,
-          },
-        ]);
+  /**
+   * 触发 final 出图（几秒，零模型调用）。
+   *
+   * ⚠️ **不往对话区写任何消息**：进度、成功、失败全在 `RenderDialog` 里显示；
+   * 这里只负责请求、刷新画廊、记一条 session action，并把结果原样返回给弹窗。
+   */
+  const handleRenderLayoutLive = useCallback(
+    async (opts?: RenderJobOptions): Promise<RenderJobResult> => {
+      const cur = layoutRef.current;
+      if (!cur) return { ok: false, log: '没有打开的版式' };
+      setLayoutBusy(true);
+      try {
+        const resp = await fetch(layoutApiUrl(cur, 'render', sessionId), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(opts ?? {}),
+        });
+        // 服务端失败时可能回的是纯文本（409/404），直接 `resp.json()` 会抛
+        // "Unexpected token" 把真正原因吃掉 —— 先读文本再尝试解析。
+        const raw = await resp.text();
+        let result: RenderJobResult;
+        try {
+          result = JSON.parse(raw) as RenderJobResult;
+        } catch {
+          result = { ok: false, log: raw };
+        }
+        if (resp.ok && result.ok) {
+          setGalleryKey((k) => k + 1);
+          logSessionAction('render', { layout: cur.name, ...(opts ?? {}) });
+          return result;
+        }
+        return { ok: false, log: result.log || `HTTP ${resp.status}` };
+      } catch (e) {
+        return { ok: false, log: (e as Error).message };
+      } finally {
+        setLayoutBusy(false);
       }
-    } catch (e) {
-      setMessages((prev) => [
-        ...prev,
-        { id: crypto.randomUUID(), role: 'assistant', text: `✗ 重渲请求失败:${(e as Error).message}` },
-      ]);
-    } finally {
-      setLayoutBusy(false);
-    }
-  }, [layout, sessionId]);
+    },
+    [sessionId, logSessionAction],
+  );
 
   /** 发消息:走会话层 LLM 对话(SSE 流式),消息持久化在服务端转录里 */
   /**
@@ -1165,6 +1161,15 @@ export function App() {
     return raw;
   }, []);
 
+  const handleStop = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      await fetch(`/api/sessions/${sessionId}/abort`, { method: 'POST' });
+    } catch {
+      /* 流结束会兜底 */
+    }
+  }, [sessionId]);
+
   const handleSend = useCallback(
     async (text: string, files?: File[], references?: ChatReference[]) => {
       if (!text.trim() && !files?.length) return;
@@ -1197,50 +1202,59 @@ export function App() {
       // startedAt 用于生成中的实时计时；流结束由 'done' 事件的 durationMs 定格
       setMessages((prev) => [
         ...prev,
-        { id: replyId, role: 'assistant', text: '', reasoning: '', startedAt: Date.now(), streaming: true },
+        { id: replyId, role: 'assistant', text: '', reasoning: '', parts: [], startedAt: Date.now(), streaming: true },
       ]);
       setIsGenerating(true);
-      const setReply = (fn: (t: string) => string) =>
-        setMessages((prev) => prev.map((m) => (m.id === replyId ? { ...m, text: fn(m.text) } : m)));
-      // 委派进度卡片：SSE 'agent' 事件（子 agent spawn/result）实时更新本条回复的 delegations
+      const addReplyText = (text: string) =>
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === replyId
+              ? { ...m, text: m.text + text, parts: appendTextPart(m.parts ?? [], text) }
+              : m,
+          ),
+        );
+      // 子 agent 进度：SSE 'agent' 事件更新当前回复的 delegation parts
       const applyAgentEvent = (data: {
         kind?: string;
+        runId?: string;
         label?: string;
         name?: string;
         brief?: string;
         stopReason?: string;
         summary?: string | null;
         diagnostic?: string | null;
+        artifacts?: string[];
       }) => {
+        const runId = String(data.runId ?? '');
         setMessages((prev) =>
           prev.map((m) => {
             if (m.id !== replyId) return m;
-            const delegations = [...(m.delegations ?? [])];
             if (data.kind === 'agent-spawn') {
-              delegations.push({
-                name: data.name,
-                agent: data.label ?? '子 agent',
-                task: data.brief ?? '',
-                status: 'running',
-              });
-            } else if (data.kind === 'agent-result') {
-              const rec: DelegationRecord = {
-                name: data.name,
-                agent: data.label ?? '子 agent',
-                task: delegations.find((d) => d.agent === data.label && d.status === 'running')?.task ?? '',
-                status: data.stopReason === 'completed' ? 'done' : 'failed',
-                result:
-                  data.stopReason === 'completed'
-                    ? data.summary ?? '完成'
-                    : data.diagnostic ?? data.stopReason ?? '失败',
+              return {
+                ...m,
+                parts: startDelegationPart(m.parts ?? [], {
+                  runId,
+                  label: data.label ?? '子 agent',
+                  ...(data.name ? { name: data.name } : {}),
+                  ...(data.brief ? { task: data.brief } : {}),
+                }),
               };
-              const i = delegations.findIndex((d) => d.agent === rec.agent && d.status === 'running');
-              if (i >= 0) delegations[i] = rec;
-              else delegations.push(rec);
             }
-            return { ...m, delegations };
+            if (data.kind === 'agent-result') {
+              const ok = data.stopReason === 'completed';
+              return {
+                ...m,
+                parts: finishDelegationPart(m.parts ?? [], runId, {
+                  status: ok ? 'done' : 'failed',
+                  summary: data.summary ?? data.diagnostic ?? (ok ? '完成' : '失败'),
+                  ...(data.artifacts ? { artifacts: data.artifacts } : {}),
+                }),
+              };
+            }
+            return m;
           }),
         );
+        if (data.kind === 'agent-result') setGalleryKey((k) => k + 1);
       };
       try {
         // 图片压缩后转 dataURL——与后端 chat 端点的 images 契约对应
@@ -1285,16 +1299,29 @@ export function App() {
               message?: string;
               full?: boolean;
               durationMs?: number;
+              callId?: string;
+              name?: string;
+              args?: string;
+              ok?: boolean;
+              result?: string;
+              ms?: number;
+              questionId?: string;
+              questions?: AskQuestion[];
+              answers?: Record<string, string | string[]>;
             };
-            if (ev === 'chunk' && data.content) setReply((t) => t + data.content);
-            // 思考链：流式期逐段追加；终章（full=true）整段覆盖成权威全文
+            if (ev === 'chunk' && data.content) addReplyText(data.content);
+            // 思考链：逐轮进入 parts；终章 full 只更新兼容字段，不再当正文追加
             if (ev === 'reasoning' && data.content) {
               const text = data.content;
               const isFull = data.full === true;
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === replyId
-                    ? { ...m, reasoning: isFull ? text : (m.reasoning ?? '') + text }
+                    ? {
+                        ...m,
+                        reasoning: isFull ? text : (m.reasoning ?? '') + text,
+                        ...(isFull ? {} : { parts: appendReasoningPart(m.parts ?? [], text) }),
+                      }
                     : m,
                 ),
               );
@@ -1309,18 +1336,80 @@ export function App() {
                 ),
               );
             }
+            if (ev === 'question') {
+              const questionId = String(data.questionId ?? '');
+              if (questionId) {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === replyId
+                      ? {
+                          ...m,
+                          parts: startQuestionPart(m.parts ?? [], {
+                            questionId,
+                            questions: data.questions ?? [],
+                          }),
+                        }
+                      : m,
+                  ),
+                );
+              }
+            }
+            if (ev === 'question-answered' && data.questionId) {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === replyId
+                    ? {
+                        ...m,
+                        parts: answerQuestionPart(m.parts ?? [], data.questionId!, data.answers ?? {}),
+                      }
+                    : m,
+                ),
+              );
+            }
+            if (ev === 'question-cancelled' && data.questionId) {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === replyId
+                    ? { ...m, parts: cancelQuestionPart(m.parts ?? [], data.questionId!) }
+                    : m,
+                ),
+              );
+            }
             if (ev === 'agent') applyAgentEvent(data as Parameters<typeof applyAgentEvent>[0]);
-            // 主 AI 工具调用中间轮：实时插一行 log 摘要（刷新后由账本重放同格式）
+            // 工具调用：start 先摆一行 running，end 用同一 callId 更新
+            if (ev === 'tool-start') {
+              const callId = String(data.callId ?? crypto.randomUUID());
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === replyId
+                    ? {
+                        ...m,
+                        parts: startToolPart(m.parts ?? [], {
+                          callId,
+                          name: String(data.name ?? 'tool'),
+                          ...(typeof data.args === 'string' ? { args: data.args } : {}),
+                        }),
+                      }
+                    : m,
+                ),
+              );
+            }
             if (ev === 'tool') {
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: `tool_${crypto.randomUUID()}`,
-                  role: 'assistant',
-                  kind: 'log',
-                  text: formatToolLine(data as Record<string, unknown>),
-                },
-              ]);
+              const callId = String(data.callId ?? '');
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === replyId
+                    ? {
+                        ...m,
+                        parts: finishToolPart(m.parts ?? [], callId, {
+                          status: data.ok === false ? 'failed' : 'done',
+                          ...(typeof data.result === 'string' ? { result: data.result } : {}),
+                          ...(typeof data.ms === 'number' ? { ms: data.ms } : {}),
+                        }),
+                      }
+                    : m,
+                ),
+              );
             }
             // 素材生成逐张进度（generate_assets 的 ctx.onEvent）
             if (ev === 'asset-progress') {
@@ -1355,7 +1444,22 @@ export function App() {
         void refreshSessions(); // 标题可能已随首条消息更新
         setGalleryKey((k) => k + 1); // 兜底：流结束后无论如何刷一次（事件丢失也不漏图）
       } catch (e) {
-        setReply((t) => t + `\n\n✗ ${(e as Error).message}`);
+        addReplyText(`\n\n✗ ${(e as Error).message}`);
+        // 连接中断时，正在跑的工具不能永远转圈：标成失败
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === replyId
+              ? {
+                  ...m,
+                  parts: (m.parts ?? []).map((p) =>
+                    p.type === 'tool' && p.status === 'running'
+                      ? { ...p, status: 'failed' as const, result: p.result ?? '连接中断' }
+                      : p,
+                  ),
+                }
+              : m,
+          ),
+        );
         setGalleryKey((k) => k + 1); // 异常收尾同样兜底（工具可能已落了部分产物）
         // 异常路径下 'done' 不会来 → 计时器必须手动停表，否则永远走表
         setMessages((prev) =>
@@ -1391,12 +1495,13 @@ export function App() {
           tool={tool}
           onTool={setTool}
           busy={layoutBusy}
+          canRender={!!layout}
           onSignal={(sig) => {
             seqRef.current += 1;
             setHostSignal({ seq: seqRef.current, ...sig });
           }}
           onSave={handleSaveLayoutLive}
-          onRender={handleRenderLayoutLive}
+          onRender={() => setRenderDialogOpen(true)}
           shapeKind={shapeKind}
           onShapeKind={setShapeKind}
         />
@@ -1529,8 +1634,13 @@ export function App() {
           </svg>
         </button>
         <div
-          className={`right-col${rightColCollapsed ? ' collapsed' : ''}`}
-          style={{ width: rightColCollapsed ? 0 : rightColWidth }}
+          className={`right-col${rightColCollapsed ? ' collapsed' : ''}${
+            rightColAnim ? ' animating' : ''
+          }`}
+          style={{ width: rightColCollapsed || rightColAnim === 'out' ? 0 : rightColWidth }}
+          onTransitionEnd={(e) => {
+            if (e.target === e.currentTarget && e.propertyName === 'width') finishRightColAnim();
+          }}
         >
           {/* 拖拽手柄:贴左缘的窄条,hover 高亮;按住左右拖调右栏宽度 */}
           {!rightColCollapsed && (
@@ -1541,10 +1651,23 @@ export function App() {
             onPick={handleDirPicked}
             onClose={() => setDirBrowserOpen(false)}
           />
+          {layout ? (
+            <RenderDialog
+              open={renderDialogOpen}
+              layoutName={layout.name}
+              canvasWidth={layout.doc.canvas.width}
+              canvasHeight={layout.doc.canvas.height}
+              defaultDir={layout.dir}
+              onClose={() => setRenderDialogOpen(false)}
+              onRender={handleRenderLayoutLive}
+            />
+          ) : null}
           <ConversationPanel
             messages={messages}
             isGenerating={isGenerating}
             onSend={handleSend}
+            onStop={handleStop}
+            sessionId={sessionId}
             mentions={mentionItems}
             workDir={workDir}
             dirLocked={sessionId !== null}

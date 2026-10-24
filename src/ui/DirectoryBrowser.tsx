@@ -21,6 +21,12 @@ interface DirectoryBrowserProps {
   /** 确认选择(真实绝对路径) */
   onPick: (path: string) => void;
   onClose: () => void;
+  /** 弹窗标题（默认「选择工作目录」；出图时传「选择出图保存目录」） */
+  title?: string;
+  /** 打开时从哪个目录起步；空 = 盘符列表 */
+  initialDir?: string;
+  /** 确认按钮文案（默认「选择此目录」） */
+  pickLabel?: string;
 }
 
 interface ListResult {
@@ -31,7 +37,14 @@ interface ListResult {
   error?: string;
 }
 
-export function DirectoryBrowser({ open, onPick, onClose }: DirectoryBrowserProps) {
+export function DirectoryBrowser({
+  open,
+  onPick,
+  onClose,
+  title = '选择工作目录',
+  initialDir = '',
+  pickLabel = '选择此目录',
+}: DirectoryBrowserProps) {
   const [current, setCurrent] = useState<string>('');
   const [entries, setEntries] = useState<DirEntry[]>([]);
   const [parent, setParent] = useState<string | null>(null);
@@ -65,8 +78,8 @@ export function DirectoryBrowser({ open, onPick, onClose }: DirectoryBrowserProp
   }, []);
 
   useEffect(() => {
-    if (open) void list('');
-  }, [open, list]);
+    if (open) void list(initialDir);
+  }, [open, initialDir, list]);
 
   useEffect(() => {
     if (mkdirOpen) inputRef.current?.focus();
@@ -108,7 +121,7 @@ export function DirectoryBrowser({ open, onPick, onClose }: DirectoryBrowserProp
     <Dialog
       open={open}
       onClose={onClose}
-      title="选择工作目录"
+      title={title}
       width={560}
       maxHeight={480}
       subtitle={
@@ -168,7 +181,7 @@ export function DirectoryBrowser({ open, onPick, onClose }: DirectoryBrowserProp
             </Button>
             <div style={{ flex: 1 }} />
             <Button variant="primary" disabled={!current || isDriveList} onClick={() => current && onPick(current)}>
-              选择此目录
+              {pickLabel}
             </Button>
           </>
         )

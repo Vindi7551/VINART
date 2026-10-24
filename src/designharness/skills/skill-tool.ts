@@ -3,11 +3,12 @@
  *
  * 对齐 claude-code / harness 的单工具加载模式：目录（systemNote 的
  * <available_skills>）只给摘要，正文按需加载——skill 不占常驻上下文。
- * 模型读完指令后自己组织工具表里的既有工具（spawn/render_design/…）行动。
+ * 模型读完指令后自己组织工具表里的既有工具行动；工具选择由宿主决定，
+ * project/user 的 skill 正文不点名工具。
  *
  * 目录内的其他文件（file 参数）：**不预设结构、不自动枚举**。SKILL.md 正文自己
  * 说明目录里有哪些文件、路径是什么（如「参考 `contracts/production-contract.md`」），
- * 模型按该路径用 file 参数取用——目录可以嵌套任意层。（仅 project / user 层有目录。）
+ * 模型按该路径用 file 参数取用——目录可以嵌套任意层。（三层都有目录；bundled 随代码发布。）
  */
 import { getSkill, listSkills, readSkillFile } from '../skills/registry';
 import type { AgentTool } from '../subagent/types';

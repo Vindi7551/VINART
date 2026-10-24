@@ -19,6 +19,7 @@ ok(Boolean(skill), `getSkill(${NAME}) 能读到`);
 ok(skill.source === 'user' || skill.source === 'project', `source=${skill.source}`);
 
 const refs = [
+  ['references/style-system.md', '风格轴'],
   ['styles/editorial.md', '杂志'],
   ['styles/minimal.md', '极简'],
   ['styles/swiss.md', '瑞士'],
@@ -39,6 +40,7 @@ for (const [rel, needle] of refs) {
 
 ok(skill.content.includes('70%'), 'SKILL.md 写了主/辅风格比例');
 ok(skill.content.includes('不是套餐'), 'SKILL.md 明确「不是套餐」');
+ok(skill.content.includes('效果/材质'), 'SKILL.md 写了效果/材质交接');
 ok(renderSkillCatalog(WORKDIR).includes(NAME), '目录里能看到 design-style');
 
 console.log('\n全部通过');

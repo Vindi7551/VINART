@@ -160,7 +160,15 @@ export function createChatSession(config: SessionConfig): ChatSession {
         let totalCompletion = 0;
 
         /** 单个工具调用执行（正常路径与 DSML 救场路径共用）：含记账事件与 fail-loud 回喂 */
-        const runToolCall = async (name: string, argsJson: string): Promise<string> => {
+        const runToolCall = async (name: string, argsJson: string, callId: string): Promise<string> => {
+          // 先发 start：前端据此先摆出一行 running 工具条，执行完再更新同一行。
+          opts?.onEvent?.({
+            kind: 'tool-call',
+            phase: 'start',
+            callId,
+            name,
+            args: clip(argsJson, 400),
+          });
           const tool = tools.find((t) => t.name === name);
           const t0 = Date.now();
           let resultContent: string;
@@ -176,6 +184,7 @@ export function createChatSession(config: SessionConfig): ChatSession {
                 signal: controller.signal,
                 onEvent: opts?.onEvent,
                 activeLayout: opts?.activeLayout,
+                ...(attachments?.length ? { attachments: attachments.map((a) => a.name) } : {}),
               });
               resultContent = (result.isError ? 'ERROR: ' : '') + result.content;
             } catch (e) {
@@ -187,6 +196,8 @@ export function createChatSession(config: SessionConfig): ChatSession {
           // 这里只是审计摘要。
           opts?.onEvent?.({
             kind: 'tool-call',
+            phase: 'end',
+            callId,
             name,
             args: clip(argsJson, 400),
             ok: !resultContent.startsWith('ERROR: '),
@@ -309,7 +320,7 @@ export function createChatSession(config: SessionConfig): ChatSession {
             });
             for (const [i, inv] of dsmlCalls.entries()) {
               if (controller.signal.aborted) break;
-              const resultContent = await runToolCall(inv.name, inv.arguments);
+              const resultContent = await runToolCall(inv.name, inv.arguments, dsmlStructured[i]!.id);
               requestMessages.push({
                 role: 'tool',
                 tool_call_id: `dsml_${round}_${i}`,
@@ -330,7 +341,7 @@ export function createChatSession(config: SessionConfig): ChatSession {
           // 逐个执行工具（顺序；未知工具 / 参数损坏 / 异常一律 ERROR 回喂，fail-loud）
           for (const call of calls) {
             if (controller.signal.aborted) break;
-            const resultContent = await runToolCall(call.function.name, call.function.arguments);
+            const resultContent = await runToolCall(call.function.name, call.function.arguments, call.id);
             requestMessages.push({ role: 'tool', tool_call_id: call.id, content: resultContent });
           }
           if (controller.signal.aborted) break;

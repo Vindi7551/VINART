@@ -71,6 +71,10 @@ export interface SketchLayer {
 interface SketchElementBase {
   /** 元素显示名/自由角色标签 —— 翻译器**不解析**，只展示 */
   name: string;
+  /** CSS clip-path（硬边裁切，如 polygon(…)）；裁切坐标相对元素盒子 */
+  clip?: string;
+  /** CSS mask-image（软蒙版，如 linear-gradient(…) / url(…)） */
+  mask?: string;
 }
 
 export interface SketchText extends SketchElementBase {
@@ -107,8 +111,10 @@ export interface SketchSvg extends SketchElementBase {
 
 export interface SketchShape extends SketchElementBase {
   type: 'shape';
-  kind: 'rect' | 'ellipse';
+  kind: 'rect' | 'ellipse' | 'polygon';
   rect: SketchBoxRect;
+  /** `kind:'polygon'` 必填；点相对本节点盒子 0–1 */
+  points?: Array<[number, number]>;
 }
 
 export type SketchElement = SketchText | SketchImage | SketchSvg | SketchShape;
@@ -132,15 +138,15 @@ const SKETCH_CANVASES: Record<SketchRatio, { width: number; height: number }> = 
 };
 
 /** 草图的默认字号：画布宽的 2.2%（1200 画布 ≈ 26px）—— 后面由模板/模型覆盖 */
-const DEFAULT_TEXT_FONT_SCALE = 0.022;
-const DEFAULT_TEXT_FILL = '#111111';
+export const DEFAULT_TEXT_FONT_SCALE = 0.022;
+export const DEFAULT_TEXT_FILL = '#111111';
 /**
  * 默认字体 = **字体库里有的中性黑体**（不是系统 Georgia）。
  * 这样没被 patch 的文字也能确定性渲染；标题/正文的搭配由 `patch_doc` 或设计 skill 决定。
  */
-const DEFAULT_FONT_FAMILY = '"Noto Sans SC", sans-serif';
-const DEFAULT_SHAPE_FILL = '#E5E7EB';
-const DEFAULT_PLACEHOLDER_TEXT = '示例文字';
+export const DEFAULT_FONT_FAMILY = '"Noto Sans SC", sans-serif';
+export const DEFAULT_SHAPE_FILL = '#E5E7EB';
+export const DEFAULT_PLACEHOLDER_TEXT = '示例文字';
 
 /** 内置占位图 id —— 见 `docs/PENDING-HARNESS-DOC-CONTEXT.md` §10 */
 export const PLACEHOLDER_ASSET = '@placeholder';
@@ -163,6 +169,10 @@ export function planToIntent(plan: SketchPlan): DesignIntent {
       const { x, y, w } = el.rect;
       // 文字没有 h；图片/svg/shape 有
       const h = 'h' in el.rect ? el.rect.h : 0;
+      const visual = {
+        ...(el.clip ? { clip: el.clip } : {}),
+        ...(el.mask ? { mask: el.mask } : {}),
+      };
 
       switch (el.type) {
         case 'text': {
@@ -174,6 +184,7 @@ export function planToIntent(plan: SketchPlan): DesignIntent {
             frame: { x, y, w },
             align: el.align ?? 'left',
             ...(el.wrap ? { wrap: el.wrap } : {}),
+            ...visual,
             fill: DEFAULT_TEXT_FILL,
             fontFamily: DEFAULT_FONT_FAMILY,
             fontScale: el.fontScale ?? DEFAULT_TEXT_FONT_SCALE,
@@ -191,6 +202,7 @@ export function planToIntent(plan: SketchPlan): DesignIntent {
             asset,
             // 占位图不裁切（contain）；真实素材默认 cover
             fit: el.fit ?? (asset === PLACEHOLDER_ASSET ? 'contain' : 'cover'),
+            ...visual,
           };
           return image;
         }
@@ -201,17 +213,24 @@ export function planToIntent(plan: SketchPlan): DesignIntent {
             name: el.name,
             rect: { x, y, w, h },
             asset: el.asset?.trim() || PLACEHOLDER_ASSET,
+            ...visual,
           };
           return svg;
         }
         case 'shape': {
+          if (el.kind === 'polygon' && (!Array.isArray(el.points) || el.points.length < 3)) {
+            throw new Error(`shape '${el.name}' 是 polygon，但 points 少于 3 个`);
+          }
           const shape: IntentShapeNode = {
             id,
             type: 'shape',
-            kind: el.kind,
             name: el.name,
             rect: { x, y, w, h },
+            ...(el.kind === 'polygon'
+              ? { kind: 'polygon' as const, points: el.points ?? [] }
+              : { kind: el.kind }),
             fill: DEFAULT_SHAPE_FILL,
+            ...visual,
           };
           return shape;
         }
@@ -260,6 +279,14 @@ const BOX_RECT_SCHEMA = {
 
 const ELEMENT_BASE = {
   name: { type: 'string' },
+  clip: {
+    type: 'string',
+    description: '可选：CSS clip-path，如 polygon(0 0, 60% 0, 40% 100%, 0 100%)；相对元素盒子',
+  },
+  mask: {
+    type: 'string',
+    description: '可选：CSS mask-image，如 linear-gradient(135deg, #000 45%, transparent 55%)',
+  },
 } as const;
 
 /**
@@ -350,7 +377,18 @@ export const sketchPlanJsonSchema = {
                   required: ['type', 'kind', 'name', 'rect'],
                   properties: {
                     type: { const: 'shape' },
-                    kind: { type: 'string', enum: ['rect', 'ellipse'] },
+                    kind: { type: 'string', enum: ['rect', 'ellipse', 'polygon'] },
+                    points: {
+                      type: 'array',
+                      description:
+                        'kind=polygon 时必填；每个点是 [x,y]，相对本节点盒子 0–1，按顺序闭合',
+                      items: {
+                        type: 'array',
+                        items: { type: 'number' },
+                        minItems: 2,
+                        maxItems: 2,
+                      },
+                    },
                     ...ELEMENT_BASE,
                     rect: BOX_RECT_SCHEMA,
                   },

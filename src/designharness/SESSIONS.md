@@ -87,6 +87,11 @@ interface SessionIndexEntry {
 所以 `reconcileDirIndex` 以事件流为准修它：**补登**（有文件没条目）/ **删幽灵**（有条目没文件）/
 **修正**（字段与事件流不符）；已一致则**零写盘**。
 
+写入侧是**增量**的（2026-10-24）：`appendEvent` 只拿「刚追加的这条事件」推进
+`updatedAt` / `messageCount` / `title` / `workDir`，**不再为更新摘要回放整个 `.jsonl`**。
+只有「索引里查不到条目、但账本已存在」（缓存丢失/损坏）才回放一次补齐，之后继续增量；
+`reconcileDirIndex` 仍是唯一的全量修复入口。
+
 ## 3. 惰性会话
 
 `createSession(workDir)` **只分配 id + 登记落点**，不落盘、不写索引、**不建目录**。
@@ -147,6 +152,7 @@ interface SessionIndexEntry {
 |---|---|
 | `newSessionId` / `createSession(workDir)` | 分配 id / 惰性建会话 |
 | `appendEvent(id, ev)` | 追加事件（全局串行队列；惰性会话在此落地并写 meta） |
+| `advanceIndexEntry(prev, ev)` | 纯函数：用一条事件推进索引摘要（增量更新的口径，单测直测） |
 | `loadTranscript(id)` / `readEvents(file)` | 读事件流（后者按路径读，reconcile 用） |
 | `deriveMessages` / `deriveTitle` | 事件 → 消息 / 标题 |
 | `listRoots` / `registerRoot` / `claimWorkDir` | 注册表读 / 登记（带对账）/ 认领 |

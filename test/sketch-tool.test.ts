@@ -89,6 +89,49 @@ describe('writeSketchPlan', () => {
     expect(second.ok).toBe(false);
     expect(second.error).toContain('版式已存在');
   });
+
+  it('clip / mask / polygon 能进 doc', () => {
+    const workDir = tmp();
+    const plan: SketchPlan = {
+      canvas: { ratio: '1:1' },
+      layers: [
+        {
+          name: '斜切',
+          elements: [
+            {
+              type: 'image',
+              name: 'photo',
+              rect: { x: 0, y: 0, w: 0.6, h: 1 },
+              clip: 'polygon(0 0, 100% 0, 70% 100%, 0 100%)',
+              mask: 'linear-gradient(#000, transparent)',
+            },
+            {
+              type: 'shape',
+              kind: 'polygon',
+              name: 'cut',
+              rect: { x: 0.6, y: 0, w: 0.4, h: 1 },
+              points: [
+                [0, 0],
+                [1, 0],
+                [0, 1],
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const r = writeSketchPlan(workDir, 'clip-test', plan);
+    expect(r.ok).toBe(true);
+    const doc = JSON.parse(readFileSync(join(workDir, 'designs', 'clip-test', 'doc.json'), 'utf8'));
+    expect(doc.layers[0].elements[0].clip).toContain('polygon');
+    expect(doc.layers[0].elements[0].mask).toContain('linear-gradient');
+    expect(doc.layers[0].elements[1].kind).toBe('polygon');
+    expect(doc.layers[0].elements[1].points).toEqual([
+      [0, 0],
+      [1, 0],
+      [0, 1],
+    ]);
+  });
 });
 
 describe('resolveSketchLayout', () => {
