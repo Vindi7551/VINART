@@ -152,6 +152,10 @@ function makeNode(
   const y = px(el.rect.y, canvas.height);
   const w = px(el.rect.w, canvas.width);
   if (w <= 0) return { node: null, error: `元素 ${id} 的 rect.w 必须为正` };
+  const visual = {
+    ...(isStr(el.clip) && el.clip.trim() ? { clip: el.clip.trim() } : {}),
+    ...(isStr(el.mask) && el.mask.trim() ? { mask: el.mask.trim() } : {}),
+  };
 
   if (el.type === 'text') {
     const fontScale = isNum(el.fontScale) && el.fontScale > 0 ? el.fontScale : DEFAULT_TEXT_FONT_SCALE;
@@ -167,6 +171,7 @@ function makeNode(
         fontFamily: DEFAULT_FONT_FAMILY,
         fontSizePx: Math.max(1, Math.round(fontScale * canvas.width)),
         runs: [{ text: (isStr(el.placeholder) ? el.placeholder.trim() : '') || DEFAULT_PLACEHOLDER_TEXT }],
+        ...visual,
       },
     };
   }
@@ -186,6 +191,7 @@ function makeNode(
         rect: { x, y, w, h },
         asset,
         fit: el.fit ?? (asset === PLACEHOLDER_ASSET ? 'contain' : 'cover'),
+        ...visual,
       },
       ...(asset !== PLACEHOLDER_ASSET ? { asset } : {}),
     };
@@ -194,14 +200,35 @@ function makeNode(
   if (el.type === 'svg') {
     const asset = isStr(el.asset) && el.asset.trim() ? el.asset.trim() : PLACEHOLDER_ASSET;
     return {
-      node: { id, type: 'svg', name, rect: { x, y, w, h }, asset },
+      node: { id, type: 'svg', name, rect: { x, y, w, h }, asset, ...visual },
       ...(asset !== PLACEHOLDER_ASSET ? { asset } : {}),
     };
   }
 
   if (el.type === 'shape') {
+    if (el.kind === 'polygon') {
+      const points = Array.isArray(el.points) ? el.points : [];
+      if (
+        points.length < 3 ||
+        points.some((p) => !Array.isArray(p) || p.length !== 2 || !isNum(p[0]) || !isNum(p[1]))
+      ) {
+        return { node: null, error: `元素 ${id} 的 polygon.points 至少 3 个 [x,y]` };
+      }
+      return {
+        node: {
+          id,
+          type: 'shape',
+          kind: 'polygon',
+          points: points.map((p) => [p[0], p[1]]),
+          name,
+          rect: { x, y, w, h },
+          fill: DEFAULT_SHAPE_FILL,
+          ...visual,
+        },
+      };
+    }
     if (el.kind !== 'rect' && el.kind !== 'ellipse') {
-      return { node: null, error: `元素 ${id} 的 shape.kind 只能是 rect / ellipse` };
+      return { node: null, error: `元素 ${id} 的 shape.kind 只能是 rect / ellipse / polygon` };
     }
     return {
       node: {
@@ -211,6 +238,7 @@ function makeNode(
         name,
         rect: { x, y, w, h },
         fill: DEFAULT_SHAPE_FILL,
+        ...visual,
       },
     };
   }

@@ -101,6 +101,43 @@ describe('applyStructure', () => {
     expect(good.doc.layers.map((l) => l.id)).toEqual(['layer-2', 'layer-1']);
   });
 
+  it('add-elements 支持 clip / mask / polygon', () => {
+    const r = applyStructure(doc(), [
+      {
+        op: 'add-elements',
+        layer: 'layer-2',
+        elements: [
+          {
+            type: 'image',
+            name: 'hero',
+            rect: { x: 0, y: 0, w: 0.5, h: 0.5 },
+            asset: '@placeholder',
+            clip: 'polygon(0 0, 100% 0, 50% 100%)',
+            mask: 'linear-gradient(#000, transparent)',
+          },
+          {
+            type: 'shape',
+            kind: 'polygon',
+            name: 'cut',
+            rect: { x: 0.5, y: 0, w: 0.5, h: 0.5 },
+            points: [
+              [0, 0],
+              [1, 0],
+              [0.5, 1],
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(r.errors).toEqual([]);
+    const image = r.doc.layers[1]!.elements[0] as { clip?: string; mask?: string };
+    expect(image.clip).toContain('polygon');
+    expect(image.mask).toContain('linear-gradient');
+    const shape = r.doc.layers[1]!.elements[1] as { kind: string; points: number[][] };
+    expect(shape.kind).toBe('polygon');
+    expect(shape.points).toHaveLength(3);
+  });
+
   it('任何一条非法就返回 errors，调用方不应写盘', () => {
     const r = applyStructure(doc(), [
       { op: 'add-elements', layer: 'missing', elements: [{ type: 'text', name: 'x', rect: { x: 0, y: 0, w: 0.2 } }] },

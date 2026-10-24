@@ -29,7 +29,8 @@ export function createEditStructureTool(config: { sessionId: string }): AgentToo
       'move-elements {ids[], toLayer, index?}；' +
       'reorder-layers {order[]}（必须包含全部图层 id）。' +
       'elements 复用 sketch_plan 的 SketchElement 格式：text 用 rect{x,y,w}+fontScale/placeholder；' +
-      'image/svg/shape 用 rect{x,y,w,h}+asset/kind。坐标是 0–1；id 自动生成，返回在 added。' +
+      'image/svg/shape 用 rect{x,y,w,h}+asset/kind；shape.kind 支持 rect/ellipse/polygon（polygon 带 points）；' +
+      '所有元素可选 clip（CSS clip-path）与 mask（CSS mask-image）。坐标是 0–1；id 自动生成，返回在 added。' +
       '先用 get_design 拿 layer id / element id。任何一条错整批不写。删除前必须得到用户明确同意。',
     parameters: {
       type: 'object',

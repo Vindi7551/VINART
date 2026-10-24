@@ -36,16 +36,22 @@ image: { type:'image', name, rect:{x,y,w,h}, asset?, fit? }
 svg:   { type:'svg', name, rect:{x,y,w,h}, asset? }
        线框图标用；fill 用来染色（SVG 内部用 currentColor）。
 
-shape: { type:'shape', kind:'rect'|'ellipse', name, rect:{x,y,w,h} }
+shape: { type:'shape', kind:'rect'|'ellipse'|'polygon', name, rect:{x,y,w,h} }
+       polygon 需给 points: [[x,y], ...]（0–1，相对自己的盒子）。
        真正的设计形状（面板 / 徽章 / 装饰），**不是画布底色**。
 ```
+
+所有元素还可选：
+- `clip`: CSS clip-path（如 `polygon(0 0, 100% 0, 50% 100%)`，硬边裁切）；
+- `mask`: CSS mask-image（如 `linear-gradient(#000, transparent)`，软蒙版）。
 
 ## 约束（硬）
 
 - 一律 **0–1 归一化** rect；不要写 px。
 - 不写 `fill` / 字体 / 阴影 / 透明度 / effects——plan 不管外观。
 - **不暴露 group**：需要“一组”时用图层（layers）表达。
-- shape **只支持 `rect` / `ellipse`**，不要 `polygon` / `path`。
+- shape 支持 `rect` / `ellipse` / `polygon`；`path` 暂不支持。
+- `clip` / `mask` 只写 CSS 值，不写 fill；斜切图片用 `clip: polygon(...)`。
 - `name` 是自由标签（`title` / `hero` / `主标题` 都行），不要指望它决定字号。
 - 占位文案写**可读短样例**；占位图用 `@placeholder`。
 - 画布底色用 `canvas.background`，**不要**加一个铺满画布的 shape。
@@ -76,7 +82,8 @@ plan 允许没有 `image`：
 |---|---|
 | 用铺满画布的 `shape` 当背景 | 多一个节点、层级混乱；应写 `canvas.background` |
 | 给 `text` 写 `h` 或 px 字号 | plan 校验不过 / 字号被忽略 |
-| 用 `polygon` / `path` | plan 不支持，会被拒 |
+| 用 `path` | plan 暂不支持 `path` 形状；异形用 polygon |
+| 用 `clip` 却忘了坐标系 | clip 相对元素盒子，不是画布；写百分比最稳 |
 | 用 `group` | plan 不暴露 group |
 | 生成前就把 `asset` 写成真实文件名 | 渲染断图；生成前用 `@placeholder` |
 | 图层顺序随手排 | layers 的顺序就是叠放顺序，前面的在下、后面的在上 |

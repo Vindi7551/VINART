@@ -140,7 +140,7 @@ export function createSketchTool(config: { sessionId: string }): AgentTool {
       '**只新建**版式的 doc.json（草稿），不修改已有版式、不写当前 active。' +
       '必须传 layout（新名字，如 coffee-brand-poster）；名字已存在会报错——' +
       '改现有版式的字段请用 patch_doc，增删元素/图层用 edit_structure，不要重跑本工具。' +
-      'plan 只决定结构/位置/占位图，不要写 px 样式。',
+      'plan 只决定结构/位置/占位图，不要写 px 样式；元素可选 clip / mask，shape 支持 polygon(points)。',
     parameters: {
       type: 'object',
       additionalProperties: false,
