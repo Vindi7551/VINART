@@ -216,15 +216,14 @@ src/
 │   └── assetsgen/      生图订单与生成
 ├── render/
 │   ├── vocabulary/     emit.ts：文档 → HTML/CSS
-│   ├── rasterize/      Playwright / Chromium 截图
-│   └── composite/      预留（当前合成由 Chromium 完成）
+│   └── rasterize/      Playwright / Chromium 截图
 ├── designharness/      模型网关 / 上下文 / 会话 / 技能 / 子 agent / 工具
 ├── fonts/              字体库读取与 @font-face
 └── server/             dev API：会话、版式、渲染、字体、文件
 designassets/           字体、图标、配色、纹理
 skills/                 项目级技能（design-direction / design-style / source-analysis）
 test/                   vitest 单测
-docs/                   设计文档与历史存档
+docs/                   设计文档与待决策记录
 scripts/                通用 TS 运行器与探针
 ```
 
@@ -279,10 +278,12 @@ scripts/                通用 TS 运行器与探针
 | [`src/designharness/SESSIONS.md`](src/designharness/SESSIONS.md) | 会话层：事件流、索引、惰性会话 |
 | [`src/designharness/SKILLS.md`](src/designharness/SKILLS.md) | 技能三层来源与优先级 |
 | [`docs/EDITOR-EVOLUTION.md`](docs/EDITOR-EVOLUTION.md) | 编辑器演进方向（类 PS 路线）与实测证据 |
-| [`CLAUDE.md`](CLAUDE.md) | 仓库工作指引：约定、坑与已知过时文档 |
+| [`docs/PENDING-TEXT-SVG-UPGRADE.md`](docs/PENDING-TEXT-SVG-UPGRADE.md) | 待决策：普通文字渐变描边/装饰线升级 SVG |
+| [`CLAUDE.md`](CLAUDE.md) | AI 工作约定（项目说明以本 README 为准） |
 
-`docs/` 下有一部分是历史存档（例如旧契约的说明），与当前代码不一致时**以源码为准**；
-`CLAUDE.md` 里也标注了哪些文档已过期。
+文档入口是这份 README。`docs/` 只保留当前设计（`EDITOR-EVOLUTION.md`）与待决策记录
+（`PENDING-TEXT-SVG-UPGRADE.md`）；模块细节看上面的模块文档。
+历史研究稿已清理，需要时从 git 历史找回；与代码不一致时以代码为准。
 
 ---
 
@@ -299,9 +300,7 @@ scripts/                通用 TS 运行器与探针
 
 - 项目仍在活跃开发，字段、接口和界面都可能继续调整。
 - 单行（`nowrap`）文字目前不会自动缩字号，可能冲出画框；需要时手动调小字号或加宽。
-- 分层位图与自建合成器尚未实现（`src/bitmap/`、`src/render/composite/` 目前只有说明文档）；
-  当前所有合成由 Chromium 一次截图完成。
-- 部分历史文档尚未清理，遇到冲突以代码为准。
+- 分层位图与自建合成器尚未实现；当前所有合成由 Chromium 一次截图完成。
 
 ---
 

@@ -178,11 +178,7 @@ to be composited on top later` → 生成一张**空桌子** → 主体以**白�
 
 ---
 
-## SVG 素材（规划中）
+## SVG 素材
 
-素材库已在 `designassets/elements/icons/*.svg`（10 个）。
-契约里暂缓的 **icon 能力**回来时，实现落在这个目录：
-- **素材库按名取**（`"icon": "ahorn"`）—— 会重复用的图形
-- **模型产 SVG** —— 一次性的怪异装饰（逃生舱，需安全检查：
-  拒绝 `<script>` / `on*=` / `javascript:`）
-- 三级阶梯：**结构化字段 → 素材库 → 内联**，优先级从上到下
+`generate_assets` 的 `icons` 允许主 AI 直接写线框 SVG（工具只做安全检查 + 落盘）。
+素材库在 `designassets/elements/icons/*.svg`（14 个）；**按名取用尚未接线**。

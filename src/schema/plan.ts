@@ -148,7 +148,7 @@ export const DEFAULT_FONT_FAMILY = '"Noto Sans SC", sans-serif';
 export const DEFAULT_SHAPE_FILL = '#E5E7EB';
 export const DEFAULT_PLACEHOLDER_TEXT = '示例文字';
 
-/** 内置占位图 id —— 见 `docs/PENDING-HARNESS-DOC-CONTEXT.md` §10 */
+/** 内置占位图 id —— 素材生成前使用，预览/出图时由内置 SVG 顶上 */
 export const PLACEHOLDER_ASSET = '@placeholder';
 
 // ══════════════════════════════════════════════════════════════════════

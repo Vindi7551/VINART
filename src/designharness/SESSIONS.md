@@ -5,14 +5,9 @@
 >
 > **真源**：`src/designharness/session/transcript.ts`（类型 / 常量 / 行为）
 > + `src/server/index.ts`（HTTP 面）。本文是给人读的设计说明；
-> 逐条**实测**结论在探针 `scripts/_probe-sessions-store.ts` / `_probe-workdir-claim.ts` /
-> `_probe-ui-workdir.ts` / `_probe-ui-session-home.ts`。
+> 相关断言在 `test/`（`npm test`）。
 >
 > **核心原则：会话事件流（JSONL）是持久层；索引与内存态都是派生物** —— 崩溃安全、可重放、可对账重建。
-
-> ⚠️ **待决策（2026-10-18 记录，未实现）**：harness 与词表 / emit / 编辑器的接线，
-> 尤其是"AI 读当前 doc"的三种方案（服务端内存 / chat 带 doc / chat 前 flush），见
-> [`docs/PENDING-HARNESS-DOC-CONTEXT.md`](../../docs/PENDING-HARNESS-DOC-CONTEXT.md)。先记录，别当已实现。
 
 ## 0. 语义：会话 = 一次连续的设计工作史
 
